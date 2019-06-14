@@ -4,8 +4,8 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-     name='bqtools',
-     version='0.1',
+     name='bqtools-json',
+     version='0.2',
      scripts=[] ,
      author="Mike Moore",
      author_email="z_z_zebra@yahoo.com",
@@ -15,7 +15,9 @@ setuptools.setup(
      url="https://github.com/Mikemoore63/bqtools",
      packages=setuptools.find_packages(),
      install_requires=[
-         "jinja2"
+         "jinja2",
+         "google-cloud",
+         "datetime"
       ],
      classifiers=[
          "Programming Language :: Python :: 3",
