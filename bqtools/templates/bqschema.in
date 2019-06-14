@@ -1,0 +1,54 @@
+{% macro schema(fieldlist,spacer="") -%}
+{{ spacer }}[
+{% for fields in fieldlist -%}
+    {{ spacer }}{ "name":"{{ fields.name }}","type":"{{ fields.type }}"{{ ',"mode":"'+fields.mode + '"' if fields.mode is defined }}{{',"description":"'+fields.description+'"' if fields.description is defined }}{{ " }," if fields.type != 'RECORD' and not loop.last }}{{ " }" if fields.type != 'RECORD' and loop.last }}
+{% if fields.type == "RECORD" -%},"fields":
+{{ schema(fields.fields,spacer=spacer+"    ") }}
+{% if not loop.last %}    {{ spacer }} },{% else %} {{ spacer }} } {% endif %}
+{% endif -%}
+{% endfor -%}
+{{ spacer }}]   
+{%- endmacro %}
+{% for table in resourcelist -%}
+{% if table.type != "VIEW" -%}
+cat > /tmp/schema.$$.json <<'EOF'
+{% if table.type != 'EXTERNAL' and table.schema is defined and table.schema.fields is defined %}{{ schema(table.schema.fields) }}{% endif %}
+{% if table.type == 'EXTERNAL' -%}
+{
+    {% if table.externalDataConfiguration.autodetect is defined %}"autodetect": "{{ table.externalDataConfiguration.autodetect }}",{% else %}
+    {% if table.externalDataConfiguration.schema is defined %}"schema":{{ schema(table.externalDataConfiguration.schema.fields,spacer="    ") }}{% endif %}
+    {% endif %}
+    {% if table.externalDataConfiguration.sourceFormat is defined %}"sourceFormat": "{{ table.externalDataConfiguration.sourceFormat }}",{% endif %}
+    {% if table.externalDataConfiguration.csvOptions is defined %}"csvOptions": {
+         {{ '"allowJaggedRows":' + table.externalDataConfiguration.csvOptions.allowJaggedRows|string + "," if table.externalDataConfiguration.csvOptions.allowJaggedRows is defined }}
+         {{ '"allowQuotedNewlines":' + table.externalDataConfiguration.csvOptions.allowQuotedNewlines|string + "," if table.externalDataConfiguration.csvOptions.allowQuotedNewlines is defined }}
+         {{ '"encoding":"' + table.externalDataConfiguration.csvOptions.encoding + '",' if table.externalDataConfiguration.csvOptions.encoding is defined }}
+         {{ '"fieldDelimiter":"' + table.externalDataConfiguration.csvOptions.fieldDelimiter + '",' if table.externalDataConfiguration.csvOptions.fieldDelimiter is defined }}
+         {{ '"quote":"' + table.externalDataConfiguration.csvOptions.quote + '",' if table.externalDataConfiguration.csvOptions.quote is defined }}
+         {{ '"skipLeadingRows":"' + table.externalDataConfiguration.csvOptions.skipLeadingRows|string + '",' if table.externalDataConfiguration.csvOptions.skipLeadingRows is defined }}
+    },{% endif %}
+    {% if table.externalDataConfiguration.googleSheetsOptions is defined %}"googleSheetsOptions": {
+         {{ '"skipLeadingRows":' + table.externalDataConfiguration.googleSheetsOptions.skipLeadingRows  if table.externalDataConfiguration.googleSheetsOptions.skipLeadingRows is defined }}
+    },{% endif %}
+    {% if table.externalDataConfiguration.sourceUris is defined %}
+    "sourceUris": [
+        {% for sri in table.externalDataConfiguration.sourceUris %}
+          "{{ sri }}"
+        {% endfor %}
+    ]
+    {% endif %}
+}
+{% endif -%}
+EOF
+{% if table.type != 'EXTERNAL' %}bq mk --project_id={{ table.tableReference.projectId }}  {{ " --expiration="+table.expirationTime  if table.expirationTime  is defined }} {% if table.timePartitioning is defined %}{{ " --time_partitioning_type="+table.timePartitioning.type if table.timePartitioning.type is defined }}{{ " --time_partitioning_expiration="+table.timePartitioning.expirationMs  if table.timePartitioning.expirationMs  is defined }}{% endif %} --schema /tmp/schema.$$.json {{ "--description='"+table.description +"'" if table.description is defined }} -t {{table.tableReference.datasetId}}.{{table.tableReference.tableId}}
+{% else %}
+bq mk --project_id={{ table.tableReference.projectId }} {{ "--data_location="+table.location if table.location is defined }} {{ "--expiration="+table.expirationTime  if table.expirationTime  is defined }} {% if table.timePartitioning is defined %}{{ "--time_partitioning_type="+table.timePartitioning.type if table.timePartitioning.type is defined }}{{ "--time_partitioning_expiration="+table.timePartitioning.expirationMs  if table.timePartitioning.expirationMs  is defined }}{% endif %} --external_table_definition=/tmp/schema.$$.json {{ "--description='"+table.description +"'" if table.description is defined }} {{table.tableReference.datasetId}}.{{table.tableReference.tableId}}
+{% endif %}
+{% else -%}
+cat > /tmp/schema.$$.query <<'EOF'
+{{ table.view.query }}
+EOF
+QUERY=`cat /tmp/schema.$$.query`;export QUERY
+bq mk --project_id={{ table.tableReference.projectId }} {{ "--data-location="+table.location if table.location is defined }} {{ "--use_legacy_sql"  if table.view.useLegacySql is not defined }}{{ "--use_legacy_sql"  if table.view.useLegacySql  }}{{ "--nouse_legacy_sql"  if table.view.useLegacySql == false }} --view="${QUERY}" {{ "--description='"+table.description +"'" if table.description is defined }}  {{table.tableReference.datasetId}}.{{table.tableReference.tableId}}
+{% endif -%}
+{% endfor -%}
