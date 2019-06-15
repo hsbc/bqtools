@@ -20,7 +20,7 @@ Goals
 import bqtools
 
 # if you load a json object say something like
-c = {
+foo = {
         "id":1,
         "description":""
         "aboolean":False
