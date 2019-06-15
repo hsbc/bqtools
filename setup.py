@@ -11,7 +11,7 @@ setuptools.setup(
      author_email="z_z_zebra@yahoo.com",
      description="A Big Query json utility package",
      long_description=long_description,
-     long_description_content_type="text/markdown",
+     long_description_content_type='text/markdown',
      url="https://github.com/Mikemoore63/bqtools",
      packages=setuptools.find_packages(),
      test_suite='nose.collector',
