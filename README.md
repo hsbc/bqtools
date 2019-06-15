@@ -2,10 +2,11 @@ This is bqtools a handy set of utils to help create big query tables from json o
 Plus a set of common functions to ease writing biq query python code
 
 Goals
-* Simplify hadling and move between big query stryuctured data and json data
-* Allow you to create big query table schemas from json structures
+* Simplify handling and move between big query stryuctured data and json data
+* Allow you to create big query table schemas from json structures (as resource or schema objects) uses reflection of types
 * Provides easy generation of views for day partitioned tabled
   * head - latest data
+  * diff views for time snap shots of data i.e. each day partition has current view of data
 * Calculate valid json structures from representative json data that can be used as basis of big query schemas
 * Clean json data such that it can be loaded into big query
   * Replace bare lists with dictionaries
@@ -15,6 +16,7 @@ Goals
 * Simplify common tasks of handling big query data
   * Basic tests on dataset or tables existing
   * Schema patching compare an existing schema to a template json object calculate if changed and generate a merged schema that can be used in a patch
+  * Flattening views to avoid view depth limits
   
 ```
 import bqtools
