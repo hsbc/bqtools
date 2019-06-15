@@ -9,7 +9,7 @@ Goals
 * Calculate valid json structures from representative json data that can be used as basis of big query schemas
 * Clean json data such that it can be loaded into big query
   * Replace bare lists with dictionaries
-  * Replace field  names with vallid values that can be column names in big query (removes spaces, characters not allowed in field names using same algorithms big query uses when auto detecting schemas)
+  * Replace field  names with valid values that can be column names in big query (removes spaces, characters not allowed in field names using same algorithms big query uses when auto detecting schemas)
   * Encodes json output of dates, datetimes, times, timedeltas encoded in format acceptable for big query corresponding field types
 * Generate code for bq command line tool from bq table structures
 * Simplify common tasks of handling big query data

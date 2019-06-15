@@ -875,7 +875,7 @@ SELECT
     FROM
       `{2}.{3}.{4}`
     WHERE
-      scantime < (
+      {1} < (
       SELECT
         MAX({1})
       FROM
@@ -965,3 +965,118 @@ ON fls.id = ut.id AND fls.{3}  = {4}
 
 
     return views
+
+def evolve_schema(insertobj, table, client,bigquery,logger=None):
+    """
+
+    :param insertobj: json object that represents schema expected
+    :param table: a table object from python api thats been git through client.get_table
+    :param client: a big query client object
+    :param bigquery: big query service as created with google discovery discovery.build("bigquery","v2")
+    :param logger: a google logger class
+    :return: evolved True or False
+    """
+
+    schema = list(table.schema)
+    tablechange=False
+
+    evolved = match_and_addtoschema(insertobj, schema)
+
+    if evolved:
+        if logger is not None:
+            logger.warning(
+                u"Evolving schema as new field(s) on {}:{}.{} views with * will need reapplying".format(
+                    table.project, table.dataset_id, table.table_id))
+
+        treq = bigquery.tables().get(projectId=table.project, datasetId=table.dataset_id, tableId=table.table_id)
+        tableData = treq.execute()
+        oschema = tableData.get('schema')
+        tablechange, pschema = recurse_and_add_to_schema(schema, oschema['fields'])
+        update = {'schema': {"fields": pschema}}
+        preq = bigquery.tables().patch(projectId=table.project, datasetId=table.dataset_id,
+                                       tableId=table.table_id,
+                                       body=update)
+        preq.execute()
+        client.get_table(table)
+        # table.reload()
+
+    return evolved
+
+class ViewCompiler(object):
+    def __init__(self):
+        self.view_depth_optimiser=[]
+
+    def compile(self, dataset, name, sql):
+
+        standardSQL = True
+        compiledSQL = sql
+        prefix = ""
+        if sql.strip().lower().find(u"#standardsql") == 0:
+            prefix = u"#standardSQL\n"
+        else:
+            standardSQL = False
+            prefix = u"#legacySQL\n"
+
+        # get rid of nested comments as they can break this even if in a string in a query
+        prefix = prefix + """
+-- ===================================================================================
+-- 
+--                             ViewCompresser Output
+--     
+--                      \/\/\/\/\/\/Original SQL Below\/\/\/\/
+"""
+        for line in sql.splitlines():
+            prefix = prefix + "-- " + line + "\n"
+        prefix = prefix + """
+-- 
+--                      /\/\/\/\/\/\Original SQL Above/\/\/\/\
+--                      
+--                            Compiled SQL below
+-- ===================================================================================
+"""
+        for i in self.view_depth_optimiser:
+            # relaces a table or view name with sql
+            if standardSQL == False:
+                compiledSQL = compiledSQL.replace(
+                    "[" + i + "]",
+                    "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i]['unnested'] + ")")
+            else:
+                compiledSQL = compiledSQL.replace(
+                    "`" + i.replace(':', '.') + "`",
+                    "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i]['unnested'] + ")")
+
+        self.view_depth_optimiser[dataset.project + ":" + dataset.dataset_id + "." + name] = {"raw": sql,
+                                                                                                "unnested": compiledSQL}
+
+        # look to keep queriesbelow maximumsize
+        if len(prefix + compiledSQL) > 256000:
+            # strip out comment
+            if standardSQL:
+                prefix="#standardSQL\n"
+            else:
+                prefix="#legacySQL\n"
+            # if still too big strip out other comments
+            # and extra space
+            if len(prefix + compiledSQL) > 256000:
+                nsql = ''
+                for line in compiledSQL.split("\n").trim():
+                    # if not a comment
+                    if line[:2] != "--":
+                        ' '.join(line.split())
+                        nsql = nsql + "\n" + line
+                compiledSQL = nsql
+
+                # if still too big go back to original sql stripped
+                if len(prefix + compiledSQL) > 256000:
+                    if len(sql) > 256000:
+                        nsql = ''
+                        for line in origsql.split("\n").trim():
+                            # if not a comment
+                            if line[:1] != "#":
+                                ' '.join(line.split())
+                                nsql = nsql + "\n" + line
+                                compiledSQL = nsql
+                    else:
+                        compiledSQL = sql
+
+        return (prefix + compiledSQL)

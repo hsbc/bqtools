@@ -20423,7 +20423,7 @@ SELECT
     FROM
       `foo.ar.bob`
     WHERE
-      scantime < (
+      _PARTITIONTIME < (
       SELECT
         MAX(_PARTITIONTIME)
       FROM
@@ -20508,7 +20508,7 @@ SELECT
     FROM
       `foo.ar.bob`
     WHERE
-      scantime < (
+      _PARTITIONTIME < (
       SELECT
         MAX(_PARTITIONTIME)
       FROM
@@ -20593,7 +20593,7 @@ SELECT
     FROM
       `foo.ar.bob`
     WHERE
-      scantime < (
+      _PARTITIONTIME < (
       SELECT
         MAX(_PARTITIONTIME)
       FROM
@@ -20678,7 +20678,7 @@ SELECT
     FROM
       `foo.ar.bob`
     WHERE
-      scantime < (
+      _PARTITIONTIME < (
       SELECT
         MAX(_PARTITIONTIME)
       FROM
