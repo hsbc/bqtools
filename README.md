@@ -15,4 +15,37 @@ Goals
 * Simplify common tasks of handling big query data
   * Basic tests on dataset or tables existing
   * Schema patching compare an existing schema to a template json object calculate if changed and generate a merged schema that can be used in a patch
+  
+```
+import bqtools
+
+# if you load a json object say something like
+c = {
+        "id":1,
+        "description":""
+        "aboolean":False
+      }
+      
+# generate a schema
+table = {
+   "type":"TABLE",
+   "location":os.environ["location"],
+   "tableReference":{
+       "projectId": os.environ["projectid"],
+       "datasetId": os.environ["dataset"],
+       "tableId": key
+   },
+   "timePartitioning":{
+       "type": "DAY",
+       "expirationMs": "94608000000"
+   },
+   "schema": {}
+}
+
+# use bqtools to create a schema structure
+table["schema"]["fields"] = bqtools.get_bq_schema_from_json_repr(foo)
+
+
+
+```
     
