@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
      name='bqtools-json',
-     version='0.4.1',
+     version='0.4.2',
      scripts=[] ,
      author="Mike Moore",
      author_email="z_z_zebra@yahoo.com",
