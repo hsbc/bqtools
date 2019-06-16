@@ -52,11 +52,11 @@ class BQTError(Exception):
 class InconsistentJSONStructure(BQTError):
     """Error for inconsistent structures"""
 
-    CUSTOM_ERROR_MESSAGE = 'The json structure passed has inconsistent types for the same key and thus cannot be made into a BQ schema or valid json new line for loading onto big query\n{1}'
+    CUSTOM_ERROR_MESSAGE = 'The json structure passed has inconsistent types for the same key {0} and thus cannot be made into a BQ schema or valid json new line for loading onto big query\n{1} type previously {2}'
 
-    def __init__(self, resource_name, e):
+    def __init__(self, resource_name, e,ttype):
         super(InconsistentJSONStructure, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e, ttype))
 
 class NotADictionary(BQTError):
     CUSTOM_ERROR_MESSAGE = 'The json structure passed is not a dictionary\n{1}'
@@ -113,15 +113,13 @@ def get_json_struct(jsonobj,template=None):
             elif isinstance(jsonobj[key], dict):
                 value = get_json_struct(jsonobj[key])
             elif isinstance(jsonobj[key], list):
-                if len(jsonobj[key]) == 0:
-                    value = [{}]
-                else:
+                value = [{}]
+                if len(jsonobj[key]) > 0:
                     if not isinstance(jsonobj[key][0],dict):
                         nv = []
                         for vali in jsonobj[key]:
                             nv.append({"value":vali})
                         jsonobj[key]=nv
-                    value = [{}]
                     for li in jsonobj[key]:
                         value[0] = get_json_struct(li,value[0])
             else:
@@ -138,10 +136,10 @@ def get_json_struct(jsonobj,template=None):
                             for vali in jsonobj[key]:
                                 nv.append({"value": vali})
                             jsonobj[key] = nv
-                    for li in jsonobj[key]:
-                        template[newkey][0] = get_json_struct(li,template[newkey][0])
+                        for li in jsonobj[key]:
+                            template[newkey][0] = get_json_struct(li, template[newkey][0])
             else:
-                raise InconsistentJSONStructure(key)
+                raise InconsistentJSONStructure(key,str(jsonobj[key]),str(template[newkey]))
     return template
 
 def clean_json_for_bq(anobject):
@@ -155,6 +153,7 @@ def clean_json_for_bq(anobject):
         raise NotADictionary(str(anobject))
     for key in anobject:
         newkey = INVALIDBQFIELDCHARS.sub("_", key)
+
         value = anobject[key]
         if isinstance(value, dict):
             value = clean_json_for_bq(value)
