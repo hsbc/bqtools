@@ -4,7 +4,11 @@
 This modules purpose is to test bqtoolls
 
 """
+from __future__ import division
 from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import unicode_literals
+
 import bqtools
 import unittest
 from deepdiff import DeepDiff 
@@ -19762,6 +19766,7 @@ class testScannerMethods(unittest.TestCase):
             sa2.append(i)
 
         diff = DeepDiff(sa, sa2, ignore_order=True)
+        diff = dict(diff)
 
         print("============================================ evolve test 1 diff start  ====================================")
         print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))

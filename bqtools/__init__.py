@@ -1,6 +1,7 @@
 from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
+from __future__ import unicode_literals
 from jinja2 import Environment, select_autoescape, FileSystemLoader, TemplateNotFound
 from datetime import datetime, date, timedelta, time
 import re
@@ -110,6 +111,10 @@ def get_json_struct(jsonobj,template=None):
                 value = 0
             elif isinstance(jsonobj[key], float):
                 value = 0.0
+            elif isinstance(jsonobj[key], date):
+                value = jsonobj[key]
+            elif isinstance(jsonobj[key], datetime):
+                value = jsonobj[key]
             elif isinstance(jsonobj[key], dict):
                 value = get_json_struct(jsonobj[key])
             elif isinstance(jsonobj[key], list):
@@ -139,7 +144,17 @@ def get_json_struct(jsonobj,template=None):
                         for li in jsonobj[key]:
                             template[newkey][0] = get_json_struct(li, template[newkey][0])
             else:
-                raise InconsistentJSONStructure(key,str(jsonobj[key]),str(template[newkey]))
+                # work out best way to loosen types with worst case change to string
+                newtype = ""
+                if isInstance(jsonobj[key], float) and isinstance(template[newkey], int):
+                    newtype = 0.0
+                elif isInstance(jsonobj[key], datetime) and isinstance(template[newkey], date):
+                    newtype = jsonobj[key]
+                if not (isInstance(jsonobj[key], dict) or isInstance(jsonobj[key], list)) and not (isinstance(template[newkey], list) or isinstance(template[newkey], dict)):
+                    template[newkey] = newType
+                else:
+                    # this is so different type cannot be loosened
+                    raise InconsistentJSONStructure(key,str(jsonobj[key]),str(template[newkey]))
     return template
 
 def clean_json_for_bq(anobject):
@@ -1001,6 +1016,68 @@ def evolve_schema(insertobj, table, client,bigquery,logger=None):
 
     return evolved
 
+def create_default_bq_resources(template,basename,project,dataset,location):
+    """
+
+    :param template: a template json object to create a big query schema for
+    :param basename: a base name of the table to create that will also be used as a basis for views
+    :param project: the project to create resources in
+    :param dataset: the datasets to create them in
+    :param location: The locatin
+    :return: a list of big query table resources as dicionaries that can be passe dto code genearteor or used in rest calls
+    """
+    resourcelist=[]
+    table = {
+        "type": "TABLE",
+        "location": location,
+        "tableReference": {
+            "projectId": project,
+            "datasetId": dataset,
+            "tableId": basename
+        },
+        "timePartitioning": {
+            "type": "DAY",
+            "expirationMs": "94608000000"
+        },
+        "schema": {}
+    }
+    table["schema"]["fields"] = get_bq_schema_from_json_repr(template)
+    resourcelist.append(table)
+    views = gen_diff_views(project,
+                                   datset,
+                                   basename,
+                                   create_schema(template))
+    table = {
+        "type": "VIEW",
+        "tableReference": {
+            "projectId": project,
+            "datasetId": datset,
+            "tableId": "{}head".format(basename)
+        },
+        "view": {
+            "query": HEADVIEW.format(project, datset, basename),
+            "useLegacySql": False
+
+        }
+    }
+    resourcelist.append(table)
+    for vi in views:
+        table = {
+            "type": "VIEW",
+            "tableReference": {
+                "projectId": project,
+                "datasetId": datset,
+                "tableId": vi["name"]
+            },
+            "view": {
+                "query": vi["query"],
+                "useLegacySql": False
+
+            }
+        }
+        resourcelist.append(table)
+    return resourcelist
+
 class ViewCompiler(object):
     def __init__(self):
         self.view_depth_optimiser=[]
@@ -1079,3 +1156,4 @@ class ViewCompiler(object):
                         compiledSQL = sql
 
         return (prefix + compiledSQL)
+
