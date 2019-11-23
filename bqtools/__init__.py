@@ -11,6 +11,7 @@ from google.cloud import bigquery
 import pprint
 import logging
 import copy
+import logging
 
 
 INVALIDBQFIELDCHARS = re.compile(r"[^a-zA-Z0-9_]")
@@ -107,7 +108,7 @@ def get_json_struct(jsonobj,template=None):
                 value = ""
             elif isinstance(jsonobj[key], unicode):
                 value = u""
-            elif isinstance(jsonobj[key], int):
+            elif isinstance(jsonobj[key], int) or isinstance(jsonobj[key], long):
                 value = 0
             elif isinstance(jsonobj[key], float):
                 value = 0.0
@@ -146,12 +147,12 @@ def get_json_struct(jsonobj,template=None):
             else:
                 # work out best way to loosen types with worst case change to string
                 newtype = ""
-                if isInstance(jsonobj[key], float) and isinstance(template[newkey], int):
+                if isinstance(jsonobj[key], float) and isinstance(template[newkey], int):
                     newtype = 0.0
-                elif isInstance(jsonobj[key], datetime) and isinstance(template[newkey], date):
+                elif isinstance(jsonobj[key], datetime) and isinstance(template[newkey], date):
                     newtype = jsonobj[key]
-                if not (isInstance(jsonobj[key], dict) or isInstance(jsonobj[key], list)) and not (isinstance(template[newkey], list) or isinstance(template[newkey], dict)):
-                    template[newkey] = newType
+                if not (isinstance(jsonobj[key], dict) or isinstance(jsonobj[key], list)) and not (isinstance(template[newkey], list) or isinstance(template[newkey], dict)):
+                    template[newkey] = newtype
                 else:
                     # this is so different type cannot be loosened
                     raise InconsistentJSONStructure(key,str(jsonobj[key]),str(template[newkey]))
@@ -1051,11 +1052,11 @@ def create_default_bq_resources(template,basename,project,dataset,location):
         "type": "VIEW",
         "tableReference": {
             "projectId": project,
-            "datasetId": datset,
+            "datasetId": dataset,
             "tableId": "{}head".format(basename)
         },
         "view": {
-            "query": HEADVIEW.format(project, datset, basename),
+            "query": HEADVIEW.format(project, dataset, basename),
             "useLegacySql": False
 
         }
@@ -1066,7 +1067,7 @@ def create_default_bq_resources(template,basename,project,dataset,location):
             "type": "VIEW",
             "tableReference": {
                 "projectId": project,
-                "datasetId": datset,
+                "datasetId": dataset,
                 "tableId": vi["name"]
             },
             "view": {
@@ -1157,3 +1158,248 @@ class ViewCompiler(object):
 
         return (prefix + compiledSQL)
 
+# class DefaulltCopyDriver(Object):
+#     def preTableCopyFilter(self,sourcePath):
+#         """
+#         Call back callled before copy a path is passed in project.dataset.table
+#         :param sourcePath: project.dataset.table  is format of string passed
+#         :return: Trues if the path is to be included in the copy
+#         """
+#         return True
+#
+#     def preDatasetCopyFilter(self,sourcePath):
+#         """
+#         Call back callled before copy a path is passed in project.dataset
+#         :param sourcePath: project.dataset.table  is format of string passed
+#         :return: Trues if the path is to be included in the copy
+#         """
+#         return True
+#
+#     def dstTableName(self,sourcePath,dstproject,dstdataset_name):
+#         """
+#         Function to calculate full path of destination table allows table name to be override.
+#         :param sourcePath:  a path to a source table i.e. project.dataset.table
+#         :param dstproject: a path to destination project this maybe identical to srcproject
+#         :param dstdataset_name:  a destination dataset maybe the sasme as src dataset
+#         :return: a path to the new table name in project.dataste.table format
+#         """
+#         assert(dstproject is not None)
+#         assert (dstdataset_name is not None)
+#         parts=sourcePath.split(".")
+#         return "{}.{}.{}@".format((dstproject,dstdataset_name,parts[2]))
+#
+#     def dayPartitionDeepCheck(self):
+#         """
+#
+#         :return: True if should check rows and bytes counts False if notrequired
+#         """
+#         return True
+#
+#     def getLogger(self):
+#         """
+#         Returns the python logger to use for logging errors and issues
+#         :return:
+#         """
+#         return logging
+
+# def copyBQDatset(srcproject_name,srcdataset_name,dstdataset_name,dstproject=None,maxday=None,minday=None,srcBucket=None,dstBucklet=None,copyDriver=None):
+#     return
+#
+# def dayPartitionByParitionCopy(srcproject_name,srcdataset_name,dstdataset_name,5=None,maxday=None,minday=None,srcBucket=None,dstBucklet=None,copyDriver=None):
+#     """
+#     A method totry andrepairday partitiontables.Startingpoint is srctable has anissue. So moving todestination.
+#     Tables must have matchingstructures and exist. use copy table jobs tocopy allpartitions.i.e srctable$yymmdd dsttable$yymmdd
+#     Errors logged but ignored as tring to recover data from corrupt table is the goal.
+#     :param srcproject_name: src project and pays for extracts and copies (if possible) must have job execution
+#     :param srcdataset_name: src tables dataset name
+#     :param dstdataset_name: destination table dataset name
+#     :param dstprojects: destination project pays for loads if not set src isassumed
+#     :param maxday: python datetime in utc use max day andworks back to min day orlast partition use max partition to workout min ifnone stat from today.
+#     :param minday: python datetime in utc use min as lastday
+#     :param srcBucket: when cross region is where objects are extracted too MUST be in same region as source dataset (9write access required)
+#     :param dstBucklet: when cross region where objects are copied too MUST be in same region 9write access required)
+#     :param copyDriver: a copy driverclass this drives filtering of tables and depth of checking
+#     :return: Array of jobs
+#     """
+#
+#     srcclient = bigquery.Client(())
+#
+#     jobs = []
+#
+#     if maxday is not None:
+#         maxday = maxday.replace(tzinfo=pytz.utc)
+#     if minday is not None:
+#         minday = minday.replace(tzinfo=pytz.utc)
+#     if dsttable_name is None:
+#         dsttable_name = srctable_name
+#     if srcproject is None:
+#         srcproject=self.tgtproject
+#
+#     srcdataset_ref = client.dataset(srcdataset_name,project=srcproject)
+#
+#     try:
+#         srcdataset = client.get_dataset(srcdataset_ref)
+#     except NotFound:
+#         copydriver.getLogger()().error(u"Day partion repair source data set:{} does not exist".format(srcdataset_name))
+#         return jobs
+#
+#     srctable_ref = srcdataset.table(srctable_name)
+#     try:
+#         srctable = client.get_table(srctable_ref)
+#     except NotFound:
+#         copydriver.getLogger()().error(u"Day partion repair source table :{} does not exist".format(srctable_name))
+#         return jobs
+#
+#
+#     dstdataset_ref = client.dataset(dstdataset_name)
+#     try:
+#         dstdataset = client.get_dataset(dstdataset_ref)
+#     except NotFound:
+#         copydriver.getLogger()().error(u"Day partion repair source data set:{} does not exist".format(srcdataset_name))
+#         return jobs
+#
+#
+#     dsttable_ref = dstdataset.table(dsttable_name)
+#     try:
+#         dsttable = client.get_table(dsttable_ref)
+#     except NotFound:
+#         copydriver.getLogger()().error(u"Day partion repair source table :{} does not exist".format(srctable_name))
+#         return jobs
+#
+#     # check tables and day partioned
+#     if srctable.table_type != 'TABLE' or dsttable.table_type  != 'TABLE':
+#         copydriver.getLogger()().error(u"Src {}:{} or destination{}:{} is not a table".format(srctable_name,srctable.type,dsttable_name,dsttable.type))
+#         return jobs
+#
+#     if srctable.partitioning_type is None  or srctable.partitioning_type != 'DAY' or dsttable.partitioning_type is None  or dsttable.partitioning_type != 'DAY':
+#         copydriver.getLogger()().error(
+#             u"Src {}:{} or destination {}:{} is not a day partioned table".format(srctable_name, srctable.partitioning_type, dsttable_name,
+#                                                                                 dsttable.partitioning_type))
+#         return jobs
+#
+#     # this is not ok
+#     if srctable.modified > dsttable.modified:
+#         copydriver.getLogger()().error(
+#             u"Src {}:{} last modified after destination{}:{} ".format(srctable_name,
+#                                                                      srctable.modified,
+#                                                                      dsttable_name,
+#                                                                      dsttable.modified))
+#         return jobs
+#
+#     # A wild assumption of schema match does not work
+#     # In reality destination MUST equal source
+#     # Given forseti is dynamic in this regard needtohandle
+#     srcschemaobj = self.genTemplateDict(srctable.schema)
+#     self.evolve_schema(srcschemaobj, dsttable, client=client)
+#
+#     # get max partion tostart from
+#     if maxday is None or maxday > srctable.modified:
+#         maxday = srctable.modified.replace(tzinfo=pytz.utc)
+#         copydriver.getLogger()().info(u"Using last modified on src table {}:{} as maxday to start at".format(srctable_name,maxday))
+#
+#     srcpartionExpirationSecs = long(srctable.partition_expiration) / 1000
+#     earliestStart = datetime.utcnow().replace(tzinfo=pytz.utc) - timedelta(seconds=srcpartionExpirationSecs)
+#     if minday is None or minday < earliestStart:
+#         minday = earliestStart
+#         copydriver.getLogger()().info(
+#             u"Using last modified on src table - expiration {}:{} as minday to start at".format(srctable_name, minday))
+#
+#     # never duplicate data solook atdates on target we are going to start at max
+#     # and work back so sind min and max and will start bfrommin back if maxday is greater
+#     dstquery = """#legacySQL
+# SELECT
+#   MIN(_PARTITIONTIME) as minP
+# FROM
+#   [{}:{}.{}]
+# ORDER BY 1 desc""".format(dsttable.project,dstdataset_name,dsttable_name)
+#
+#
+#     for row in self.runQuery(client,dstquery,"Detecting date range on dest table {} to avoid duplicating data".format(dsttable_name)):
+#         minp = row["minP"]
+#         if minp is not None and minp <= maxday:
+#             copydriver.getLogger()().info(
+#                 u"Using min time from destination table day partition {}:{} as maxday to start at as more than maxday {}".format(dsttable_name, minp,maxday))
+#             # last partition loaded so start from 1 below
+#             maxday = minp - timedelta(days=1)
+#
+#     srcquery = """#legacySQL
+# SELECT
+#   MIN(_PARTITIONTIME) as minP,
+#   MAX(_PARTITIONTIME) as maxP
+# FROM
+#   [{}:{}.{}]
+# WHERE _PARTITIONDATE <= TIMESTAMP("{}")
+# ORDER BY 1 desc""".format(dsttable.project, srcdataset_name, srctable_name,maxday.strftime("%Y-%m-%d 00:00:00.000 UTC"))
+#
+#     hasdata = False
+#
+#     # an exception here in BQ implies error
+#     # with table so fall back on human
+#     try:
+#         for row in self.runQuery(client,srcquery,u"Detecting date range on dest table {} to avoid duplicating data".format(dsttable_name)):
+#             hasdata = True
+#             minp = row["minP"]
+#             maxp = row["maxP"]
+#             if minp is not None and minp > minday:
+#                 copydriver.getLogger()().info(
+#                     u"Using min time from source table day partition {}:{} as maxday to start at as more than maxday {}".format(srctable_name, minp,minday))
+#                 minday = minp
+#             if maxp is not None and maxp < maxday:
+#                 copydriver.getLogger()().info(
+#                     u"Using max time from source table day partition {}:{} as maxday to start at is less than maxday {}".format(srctable_name, maxp,maxday))
+#                 maxday = maxp
+#             if minp is None and maxp is None:
+#                 hasdata = False
+#     except BQQueryError as e:
+#         copydriver.getLogger()().info(
+#             u"Looks like src table  {}:{}.{} is corrupted relying on date ranges calculated so far {}:{}".format(
+#                 srctable.project,srcdataset_name,srctable_name,maxday,minday))
+#         hasdata = True
+#
+#
+#     if not hasdata:
+#         copydriver.getLogger()().info(
+#             u"No data in table skipping {}".format(
+#                 srctable_name))
+#         return jobs
+#
+#     if maxday < minday:
+#         copydriver.getLogger()().info(
+#             u"Table {} maxday  {} less than min day {} nothing to do".format(
+#                 srctable_name,maxday, minday))
+#         return jobs
+#
+#     # do partition by partition copy
+#     copydriver.getLogger()().info(u"Creating {} day partion day jobs".format((maxday - minday).days))
+#     jobsscheduled = 0
+#
+#     currentday = maxday
+#     jobnum=0
+#     while currentday >= minday:
+#         jobnum = jobnum + 1
+#         postfix = "$" + currentday.strftime("%Y%m%d")
+#         currentday = currentday - timedelta(days=1)
+#         jobsscheduled = jobsscheduled + 1
+#         if jobsscheduled % 30 == 0:
+#             copydriver.getLogger()().info(u"Created  jobs {} for source {}:{}.{}".format(jobsscheduled,srcproject,srcdataset_name,srctable_name))
+#
+#         # Cowardly donot overwrite destination partitions with data skip these
+#         srcpartition_ref  = srcdataset.table(srctable_name + postfix)
+#         dstpartition_ref = dstdataset.table(dsttable_name + postfix)
+#         srcpartition = client.get_table(srcpartition_ref)
+#         dstpartition = client.get_table(dstpartition_ref)
+#         job_config = bigquery.CopyJobConfig()
+#         job_config.create_disposition = 'CREATE_IF_NEEDED'
+#         job_config.write_disposition = 'WRITE_APPEND'
+#         copy_job = client.copy_table(
+#             srcpartition, dstpartition, job_config = job_config)
+#
+#         jobs.append({"job": {"id": copy_job, "description": "Post Job for repair from table:{}".format(srcpartition.table_id)}})
+#         if (jobnum % 7) == 0:
+#             self.waitForBQJobs(jobs)
+#             jobs=[]
+#
+#     # return jobs aslist
+#     # Allows lotstobequeuedand then just wait forjobs to end
+#     # Should be reasonable for lots of tables
+#     return jobs
