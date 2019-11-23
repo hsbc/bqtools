@@ -1045,7 +1045,7 @@ def create_default_bq_resources(template,basename,project,dataset,location):
     table["schema"]["fields"] = get_bq_schema_from_json_repr(template)
     resourcelist.append(table)
     views = gen_diff_views(project,
-                                   datset,
+                                   dataset,
                                    basename,
                                    create_schema(template))
     table = {
