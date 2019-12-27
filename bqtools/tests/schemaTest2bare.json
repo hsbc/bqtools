@@ -1,0 +1,39 @@
+{
+  "string": "a string",
+  "integer": 0,
+  "record": {
+    "string2": "another string",
+    "float": 3.1415926,
+    "boolean2": true,
+    "appended1": "String 3"
+  },
+  "array": [
+    {
+      "string3": "yet another string",
+      "integer3": 32,
+      "foo": 1.0
+    }
+  ],
+  "stringarray": [
+    "test1",
+    "test2",
+    "test3"
+  ],
+  "intarray": [
+    1,
+    2,
+    3
+  ],
+  "mixArray": [
+    {
+      "a": "hello"
+    },
+    {
+      "b": "hi",
+      "d": "foo"
+    },
+    {
+      "c": 100
+    }
+  ]
+}

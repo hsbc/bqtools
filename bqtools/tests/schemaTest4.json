@@ -1,0 +1,195 @@
+{
+  "name": "",
+  "description": "",
+  "initialNodeCount": 0,
+  "nodeConfig": {
+    "machineType": "",
+    "diskSizeGb": 0,
+    "oauthScopes": [
+      {
+        "scope": ""
+      }
+    ],
+    "serviceAccount": "",
+    "metadata": [
+      {
+        "key": "",
+        "value": ""
+      }
+    ],
+    "imageType": "",
+    "labels": [
+      {
+        "key": "",
+        "value": ""
+      }
+    ],
+    "localSsdCount": 0,
+    "tags": [
+      {
+        "tag": ""
+      }
+    ],
+    "preemptible": false,
+    "accelerators": [
+      {
+        "acceleratorCount": "",
+        "acceleratorType": ""
+      }
+    ]
+  },
+  "masterAuth": {
+    "username": "",
+    "password": "",
+    "clientCertificateConfig": {
+      "issueClientCertificate": false
+    },
+    "clusterCaCertificate": "",
+    "clientCertificate": "",
+    "clientKey": ""
+  },
+  "loggingService": "",
+  "monitoringService": "",
+  "network": "",
+  "clusterIpv4Cidr": "",
+  "addonsConfig": {
+    "httpLoadBalancing": {
+      "disabled": false
+    },
+    "horizontalPodAutoscaling": {
+      "disabled": false
+    },
+    "kubernetesDashboard": {
+      "disabled": false
+    },
+    "networkPolicyConfig": {
+      "disabled": false
+    }
+  },
+  "subnetwork": "",
+  "nodePools": [
+    {
+      "name": "",
+      "config": {
+        "machineType": "",
+        "diskSizeGb": 0,
+        "minCpuPlatform": "",
+        "oauthScopes": [
+          {
+            "scope": ""
+          }
+        ],
+        "serviceAccount": "",
+        "metadata": [
+          {
+            "key": "",
+            "value": ""
+          }
+        ],
+        "imageType": "",
+        "labels": [
+          {
+            "key": "",
+            "value": ""
+          }
+        ],
+        "localSsdCount": 0,
+        "tags": [
+          {
+            "tag": ""
+          }
+        ],
+        "preemptible": false,
+        "accelerators": [
+          {
+            "acceleratorCount": "",
+            "acceleratorType": ""
+          }
+        ]
+      },
+      "initialNodeCount": 0,
+      "selfLink": "",
+      "version": "",
+      "instanceGroupUrls": [
+        {
+          "uri": ""
+        }
+      ],
+      "status": "",
+      "statusMessage": "",
+      "autoscaling": {
+        "enabled": false,
+        "minNodeCount": 0,
+        "maxNodeCount": 0
+      },
+      "management": {
+        "autoUpgrade": false,
+        "autoRepair": false,
+        "upgradeOptions": {
+          "autoUpgradeStartTime": "",
+          "description": ""
+        }
+      }
+    }
+  ],
+  "locations": [
+    {
+      "location": ""
+    }
+  ],
+  "enableKubernetesAlpha": false,
+  "resourceLabels": [
+    {
+      "key": "",
+      "value": ""
+    }
+  ],
+  "labelFingerprint": "",
+  "legacyAbac": {
+    "enabled": false
+  },
+  "networkPolicy": {
+    "provider": "",
+    "enabled": false
+  },
+  "ipAllocationPolicy": {
+    "useIpAliases": false,
+    "createSubnetwork": false,
+    "subnetworkName": "",
+    "clusterIpv4Cidr": "",
+    "nodeIpv4Cidr": "",
+    "servicesIpv4Cidr": "",
+    "clusterSecondaryRangeName": "",
+    "servicesSecondaryRangeName": "",
+    "clusterIpv4CidrBlock": "",
+    "nodeIpv4CidrBlock": "",
+    "servicesIpv4CidrBlock": ""
+  },
+  "masterAuthorizedNetworksConfig": {
+    "enabled": false,
+    "cidrBlocks": [
+      {
+        "displayName": "",
+        "cidrBlock": ""
+      }
+    ]
+  },
+  "selfLink": "",
+  "zone": "",
+  "endpoint": "",
+  "initialClusterVersion": "",
+  "currentMasterVersion": "",
+  "currentNodeVersion": "",
+  "createTime": "",
+  "status": "",
+  "statusMessage": "",
+  "nodeIpv4CidrSize": 0,
+  "servicesIpv4Cidr": "",
+  "instanceGroupUrls": [
+    {
+      "uri": ""
+    }
+  ],
+  "currentNodeCount": 0,
+  "expireTime": ""
+}
