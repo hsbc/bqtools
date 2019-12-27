@@ -3,24 +3,25 @@
 This modules purpose is to test bqtools-json
 
 """
+from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-from __future__ import absolute_import
 from __future__ import unicode_literals
 
-import bqtools
-import unittest
-from deepdiff import DeepDiff
-import difflib
-import pprint
 import copy
-import logging
+import difflib
 import json
+import logging
+import pprint
+import unittest
 
+from deepdiff import DeepDiff
 from google.cloud import bigquery
 
+import bqtools
 
-class testScannerMethods(unittest.TestCase):
+
+class TestScannerMethods(unittest.TestCase):
     def load_data(self, file_name):
         with open(file_name) as json_file:
             return json.load(json_file)
@@ -51,21 +52,21 @@ class testScannerMethods(unittest.TestCase):
 
     def test_toDict(self):
         schema2Dict = (
-                bigquery.SchemaField('string', 'STRING'),
-                bigquery.SchemaField('integer', 'INTEGER'),
+            bigquery.SchemaField('string', 'STRING'),
+            bigquery.SchemaField('integer', 'INTEGER'),
+            bigquery.SchemaField('float', 'FLOAT'),
+            bigquery.SchemaField('boolean', 'BOOLEAN'),
+            bigquery.SchemaField('record', 'RECORD', fields=(
+                bigquery.SchemaField('string2', 'STRING'),
                 bigquery.SchemaField('float', 'FLOAT'),
-                bigquery.SchemaField('boolean', 'BOOLEAN'),
-                bigquery.SchemaField('record', 'RECORD', fields=(
-                    bigquery.SchemaField('string2', 'STRING'),
-                    bigquery.SchemaField('float', 'FLOAT'),
-                    bigquery.SchemaField('integer2', 'INTEGER'),
-                    bigquery.SchemaField('boolean2', 'BOOLEAN')
-                )),
-                bigquery.SchemaField('array', 'RECORD', mode='REPEATED', fields=(
-                    bigquery.SchemaField('string3', 'STRING'),
-                    bigquery.SchemaField('integer3', 'INTEGER')
-                ))
-            )
+                bigquery.SchemaField('integer2', 'INTEGER'),
+                bigquery.SchemaField('boolean2', 'BOOLEAN')
+            )),
+            bigquery.SchemaField('array', 'RECORD', mode='REPEATED', fields=(
+                bigquery.SchemaField('string3', 'STRING'),
+                bigquery.SchemaField('integer3', 'INTEGER')
+            ))
+        )
 
         expectedResult = [
             {
@@ -1014,8 +1015,8 @@ from `foo.ar.bob` as tabob
 LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2""",
             "description": "View used as basis for diffview:A test schema"},
-            'bobdiffday': {
-                "query": """#standardSQL
+                     'bobdiffday': {
+                         "query": """#standardSQL
 SELECT
     o.scantime as origscantime,
     l.scantime as laterscantime,
@@ -1099,8 +1100,8 @@ ON
     AND l.recordfloat=o.recordfloat
     AND l.recordstring2=o.recordstring2
     AND l.recordboolean2=o.recordboolean2""",
-                "description": "Diff of day of underlying table bob description: A test schema"},
-            'bobdiffweek': {'query': """#standardSQL
+                         "description": "Diff of day of underlying table bob description: A test schema"},
+                     'bobdiffweek': {'query': """#standardSQL
 SELECT
     o.scantime as origscantime,
     l.scantime as laterscantime,
@@ -1184,9 +1185,9 @@ ON
     AND l.recordfloat=o.recordfloat
     AND l.recordstring2=o.recordstring2
     AND l.recordboolean2=o.recordboolean2""",
-                            'description': 'Diff of week of underlying table bob description: A '
-                                           'test schema'},
-            'bobdiffmonth': {'query': """#standardSQL
+                                     'description': 'Diff of week of underlying table bob description: A '
+                                                    'test schema'},
+                     'bobdiffmonth': {'query': """#standardSQL
 SELECT
     o.scantime as origscantime,
     l.scantime as laterscantime,
@@ -1270,9 +1271,9 @@ ON
     AND l.recordfloat=o.recordfloat
     AND l.recordstring2=o.recordstring2
     AND l.recordboolean2=o.recordboolean2""",
-                             'description': 'Diff of month of underlying table bob description: A '
-                                            'test schema'},
-            'bobdifffortnight': {'query': """#standardSQL
+                                      'description': 'Diff of month of underlying table bob description: A '
+                                                     'test schema'},
+                     'bobdifffortnight': {'query': """#standardSQL
 SELECT
     o.scantime as origscantime,
     l.scantime as laterscantime,
@@ -1356,8 +1357,8 @@ ON
     AND l.recordfloat=o.recordfloat
     AND l.recordstring2=o.recordstring2
     AND l.recordboolean2=o.recordboolean2""",
-                                 'description': 'Diff of fortnight of underlying table bob '
-                                                'description: A test schema'}}
+                                          'description': 'Diff of fortnight of underlying table bob '
+                                                         'description: A test schema'}}
         for vi in views:
             expected = vexpected[vi['name']]['query'].splitlines(1)
             actual = vi['query'].splitlines(1)
@@ -1373,7 +1374,7 @@ ON
                                  vi['query'],
                                  vexpected[
                                      vi['name']][
-                                     'query']))
+                                         'query']))
             self.assertEqual(vi['query'], vexpected[vi['name']]['query'],
                              "Query for view {} is not equal to what is expected\n:{}:\n:{"
                              "}:".format(
@@ -1440,11 +1441,11 @@ ON
                                      "type": 'STRING',
                                      "description": None,
                                      "mode": 'NULLABLE'
-                                     }]
-                               }
-                              ]
-                         }]
-                   },
+                                    }]
+                              }
+                             ]
+                        }]
+                  },
                   {"name": 'array',
                    "type": 'RECORD',
                    "description": None,
@@ -1459,7 +1460,7 @@ ON
                         "description": None,
                         "mode": 'NULLABLE'}
                    ]}
-                  ]
+                 ]
         depth = bqtools.calc_field_depth(toTest)
         self.assertEqual(depth, 3, "measured field depth should be 3")
         bqtools.trunc_field_depth(toTest, 2)
