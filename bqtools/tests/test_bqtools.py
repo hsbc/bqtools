@@ -1943,6 +1943,7 @@ class TestScannerMethods(unittest.TestCase):
     #        print("new {}".format(self.pp.pformat(pschema)))
 
     def test_sync(self):
+        logging.basicConfig(level=logging.DEBUG)
         multi_drivers = []
         multi_drivers.append(bqtools.MultiBQSyncCoordinator(["methodical-bee-162815.billing_demo"],
                                                             ["methodical-bee-162815.billing_demo3"],
@@ -1967,10 +1968,16 @@ class TestScannerMethods(unittest.TestCase):
 
         for multi_driver in multi_drivers:
             multi_driver.sync()
+
+            if multi_driver.rows_synced - multi_driver.rows_avoided == 0:
+                speed_up = "Infinity"
+            else:
+                speed_up = float(multi_driver.rows_synced)/float(multi_driver.rows_synced - multi_driver.rows_avoided)
+
             multi_driver.logger.info(
-                "Tables synced {}, Views synced {}, Rows synced {}, Rows Avooided {}".format(
+                "Tables synced {}, Views synced {}, Rows synced {}, Rows Avooided {}, speed up {}".format(
                     multi_driver.tables_synced, multi_driver.views_synced, multi_driver.rows_synced,
-                    multi_driver.rows_avoided))
+                    multi_driver.rows_avoided,speed_up))
 
         self.assertEqual(True, True, "Copy completed")
 

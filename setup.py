@@ -9,8 +9,9 @@ json structures.
 """
 
 import setuptools
+from io import open
 
-with open("README.md", "r") as fh:
+with open("README.md", "r", encoding='utf-8') as fh:
     long_description = fh.read()
 
 setuptools.setup(
@@ -20,7 +21,7 @@ setuptools.setup(
     author="Mike Moore",
     author_email="z_z_zebra@yahoo.com",
     description="A Big Query json utility package",
-    long_description_content_type='text/markdown',
+    long_description_content_type="text/markdown",
     long_description=long_description,
     url="https://github.com/Mikemoore63/bqtools",
     packages=setuptools.find_packages(),
@@ -28,11 +29,13 @@ setuptools.setup(
     use_2to3=True,
     tests_require=['nose'],
     include_package_data=True,
+    license="MIT",
     install_requires=[
         "jinja2",
         "google-cloud",
         "datetime",
         "google-cloud-bigquery",
+        "google-cloud-storage",
         "pprint",
         "deepdiff>=3.3.0"
     ],

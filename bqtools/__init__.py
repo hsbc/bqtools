@@ -2240,7 +2240,7 @@ def sync_bq_processor(stop_event, copy_driver, q):
     assert isinstance(q,
                       queue.Queue), "Must be passed a queue for background thread " \
                                           "Driver"
-    while not stop_event.is_set():
+    while not stop_event.isSet():
         try:
             _, task = q.get(timeout=1)
             if task is None:
