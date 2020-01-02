@@ -992,6 +992,988 @@ class TestScannerMethods(unittest.TestCase):
     #        print("old {}".format(self.pp.pformat(osa)))
     #        print("new {}".format(self.pp.pformat(pschema)))
 
+        # resultant schema and objects shoulld loook like this
+        self.schemaTest2nonbare = self.load_data("bqtools/tests/schemaTest2nonbare.json")
+
+        self.schemaTest4 = self.load_data("bqtools/tests/schemaTest4.json")
+
+        self.schemaTest3 = self.load_data("bqtools/tests/schemaTest3.json")
+        self.monsterSchema = self.load_data("bqtools/tests/monsterSchema.json")
+
+    def test_toDict(self):
+        schema2Dict = (
+            bigquery.SchemaField('string', 'STRING'),
+            bigquery.SchemaField('integer', 'INTEGER'),
+            bigquery.SchemaField('float', 'FLOAT'),
+            bigquery.SchemaField('boolean', 'BOOLEAN'),
+            bigquery.SchemaField('record', 'RECORD', fields=(
+                bigquery.SchemaField('string2', 'STRING'),
+                bigquery.SchemaField('float', 'FLOAT'),
+                bigquery.SchemaField('integer2', 'INTEGER'),
+                bigquery.SchemaField('boolean2', 'BOOLEAN')
+            )),
+            bigquery.SchemaField('array', 'RECORD', mode='REPEATED', fields=(
+                bigquery.SchemaField('string3', 'STRING'),
+                bigquery.SchemaField('integer3', 'INTEGER')
+            ))
+        )
+
+        expectedResult = [
+            {
+                "name": 'string',
+                "type": 'STRING',
+                "description": None,
+                "mode": 'NULLABLE',
+                "fields": []},
+            {
+                "name": 'integer',
+                "type": 'INTEGER',
+                "description": None,
+                "mode": 'NULLABLE',
+                "fields": []},
+            {
+                "name": 'float',
+                "type": 'FLOAT',
+                "description": None,
+                "mode": 'NULLABLE',
+                "fields": []},
+            {
+                "name": 'boolean',
+                "type": 'BOOLEAN',
+                "description": None,
+                "mode": 'NULLABLE',
+                "fields": []},
+            {
+                "name": 'record',
+                "type": 'RECORD',
+                "description": None,
+                "mode": 'NULLABLE',
+                "fields": [
+                    {"name": 'string2',
+                     "type": 'STRING',
+                     "description": None,
+                     "mode": 'NULLABLE',
+                     "fields": []},
+                    {
+                        "name": 'float',
+                        "type": 'FLOAT',
+                        "description": None,
+                        "mode": 'NULLABLE',
+                        "fields": []},
+                    {
+                        "name": 'integer2',
+                        "type": 'INTEGER',
+                        "description": None,
+                        "mode": 'NULLABLE',
+                        "fields": []},
+                    {
+                        "name": 'boolean2',
+                        "type": 'BOOLEAN',
+                        "description": None,
+                        "mode": 'NULLABLE',
+                        "fields": []}
+                ]},
+            {
+                "name": 'array',
+                "type": 'RECORD',
+                "description": None,
+                "mode": 'REPEATED',
+                "fields": [
+                    {"name": 'string3',
+                     "type": 'STRING',
+                     "description": None,
+                     "mode": 'NULLABLE',
+                     "fields": []},
+                    {
+                        "name": 'integer3',
+                        "type": 'INTEGER',
+                        "description": None,
+                        "mode": 'NULLABLE',
+                        "fields": []}
+                ]}
+        ]
+        sa = []
+
+        # print("showing each field")
+        for bqi in schema2Dict:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa.append(i)
+        diff = DeepDiff(expectedResult, sa, ignore_order=True)
+        self.assertEqual(diff, {},
+                         "Unexpected result in toDict expected nothing insteadest got {}".format(
+                             self.pp.pprint(diff)))
+
+    def test_createschema(self):
+        bqSchema = bqtools.create_schema(self.schemaTest1)
+        expectedSchema = (
+            bigquery.SchemaField('string', 'STRING'),
+            bigquery.SchemaField('integer', 'INTEGER'),
+            bigquery.SchemaField('float', 'FLOAT'),
+            bigquery.SchemaField('boolean', 'BOOLEAN'),
+            bigquery.SchemaField('record', 'RECORD', fields=(
+                bigquery.SchemaField('string2', 'STRING'),
+                bigquery.SchemaField('float', 'FLOAT'),
+                bigquery.SchemaField('integer2', 'INTEGER'),
+                bigquery.SchemaField('boolean2', 'BOOLEAN')
+            )),
+            bigquery.SchemaField('array', 'RECORD', mode='REPEATED', fields=(
+                bigquery.SchemaField('string3', 'STRING'),
+                bigquery.SchemaField('integer3', 'INTEGER')
+            ))
+        )
+
+        # print("testing result")
+        # self.pp.pprint(bqSchema)
+        sa = []
+
+        # print("showing each field")
+        for bqi in bqSchema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa.append(i)
+        # print("Schema as dict")
+        # self.pp.pprint(sa)
+        isa = sa
+
+        # print("Expected result")
+        # self.pp.pprint(expectedSchema)
+        sa = []
+
+        # print("showing each expected field")
+        for bqi in expectedSchema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa.append(i)
+        # print("expected Schema as dict")
+        diff = DeepDiff(isa, sa, ignore_order=True)
+        # self.pp.pprint(diff)
+        a = "Schema test1 schema does not match target {}".format(len(diff))
+        self.assertEqual(diff, {}, a)
+
+    def test_createschema2(self):
+        # print("Creating a new schema")
+
+        bqSchema2 = bqtools.create_schema(self.schemaTest2)
+        sa2 = []
+
+        # print("showing each field schema2")
+        for bqi in bqSchema2:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+        # print("Schema2 as dict")
+        # self.pp.pprint(sa2)
+        expectedSchema2 = (
+            bigquery.SchemaField('string', 'STRING'),
+            bigquery.SchemaField('integer', 'INTEGER'),
+            bigquery.SchemaField('record', 'RECORD', fields=(
+                bigquery.SchemaField('string2', 'STRING'),
+                bigquery.SchemaField('float', 'FLOAT'),
+                bigquery.SchemaField('boolean2', 'BOOLEAN'),
+                bigquery.SchemaField('appended1', 'STRING')
+            )),
+            bigquery.SchemaField('array', 'RECORD', mode='REPEATED', fields=(
+                bigquery.SchemaField('string3', 'STRING'),
+                bigquery.SchemaField('integer3', 'INTEGER'),
+                bigquery.SchemaField('foo', 'FLOAT')
+            )),
+            bigquery.SchemaField('anotherarray', 'RECORD', mode='REPEATED', fields=(
+                bigquery.SchemaField('test1', 'INTEGER'),
+                bigquery.SchemaField('test2', 'BOOLEAN')
+            ))
+        )
+        sa = []
+        for bqi in expectedSchema2:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+        # self.pp.pprint(diff)
+        a = "Schema test1 schema does not match target {}".format(diff)
+        self.assertEqual(diff, {}, a)
+        logger = logging.getLogger("testBQTools")
+
+        evolved = bqtools.match_and_addtoschema({"string": "hello"}, expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 1")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52}, expectedSchema2,
+                                                logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 2")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52, "record": {}},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 3")
+        evolved = bqtools.match_and_addtoschema(
+            {"string": "hello", "integer": 52, "record": {"string2": "hello2"}}, expectedSchema2,
+            logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 4")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"}},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 6")
+
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": []},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 7")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello"}]},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 8")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42}]},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 9")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141}]},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 10")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}]},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 11")
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [{"test1": 52, "test2": False},
+                                                                  {"test1": 52, "test2": True}]},
+                                                expectedSchema2, logger=logger)
+        self.assertEqual(evolved, False, "Expected no evolve but got evolve true evolve test 12")
+
+        # evolve tests bbelow prepare baseline
+        copyoforigschema = list(expectedSchema2)
+        savedSchema = copy.deepcopy(copyoforigschema)
+
+        sa = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa.append(i)
+
+        # Evolutio test 1
+        # add some stuff 2 layers down in an array
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [{"test1": 52, "test2": False},
+                                                                  {"test1": 52, "test2": True,
+                                                                   "fred": "I am an evolved string",
+                                                                   "iamanotherevolve": 32}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 13")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+        diff = dict(diff)
+
+        print(
+            "============================================ evolve test 1 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 1 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[4]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name':
+                                                                              'iamanotherevolve',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'fred',
+                                                                          'type': 'STRING'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'}},
+                          'iterable_item_removed': {'root[4]': {'description': None,
+                                                                'fields': [{'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test1',
+                                                                            'type': 'INTEGER'},
+                                                                           {'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test2',
+                                                                            'type': 'BOOLEAN'}],
+                                                                'mode': 'REPEATED',
+                                                                'name': 'anotherarray',
+                                                                'type': 'RECORD'}}}, diff,
+                         "Schema evolution not as expected {}".format(self.pp.pformat(diff)))
+        # Evolution test 2
+        #  this just adds a fiedl at top level
+        copyoforigschema = copy.deepcopy(savedSchema)
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "hellomike": 3.1415926,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [{"test1": 52, "test2": False},
+                                                                  {"test1": 52, "test2": True}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 14")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 2 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 2 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[5]': {'description': None,
+                                                              'fields': [],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'hellomike',
+                                                              'type': 'FLOAT'}}}, diff,
+                         "Schema evolution not as expected {}".format(self.pp.pformat(diff)))
+
+        # Evolution test 3
+        # this is an object with root schema evolution
+        # Plus child objects with 2 different changes in them
+        # plus another with both
+        copyoforigschema = copy.deepcopy(savedSchema)
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "hellomike": 3.1415926,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [{"test1": 52, "test2": False,
+                                                                   "fred": "I am an evolution"},
+                                                                  {"test1": 52, "test2": True,
+                                                                   "iamanotherevolution": 1.3},
+                                                                  {"test1": 52, "test2": True,
+                                                                   "iamanotherevolution": 1.3,
+                                                                   "fred": "I am same previous "
+                                                                           "evolution"}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 14")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 3 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 3 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[4]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'fred',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name':
+                                                                              'iamanotherevolution',
+                                                                          'type': 'FLOAT'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'},
+                                                  'root[5]': {'description': None,
+                                                              'fields': [],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'hellomike',
+                                                              'type': 'FLOAT'}},
+                          'iterable_item_removed': {'root[4]': {'description': None,
+                                                                'fields': [{'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test1',
+                                                                            'type': 'INTEGER'},
+                                                                           {'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test2',
+                                                                            'type': 'BOOLEAN'}],
+                                                                'mode': 'REPEATED',
+                                                                'name': 'anotherarray',
+                                                                'type': 'RECORD'}}}, diff,
+                         "Schema evolution not as expected {}".format(self.pp.pformat(diff)))
+        # Evolution test 4
+        # this is an object with root schema evolution
+        # Plus child objects with 2 different changes in them
+        copyoforigschema = copy.deepcopy(savedSchema)
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "hellomike": 3.1415926,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [
+                                                     {"test1": 52, "test2": False,
+                                                      "fred": "I am an evolution"},
+                                                     {"test1": 52, "test2": True,
+                                                      "iamanotherevolution": 1.3}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 14")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 4 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 4 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[4]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'fred',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name':
+                                                                              'iamanotherevolution',
+                                                                          'type': 'FLOAT'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'},
+                                                  'root[5]': {'description': None,
+                                                              'fields': [],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'hellomike',
+                                                              'type': 'FLOAT'}},
+                          'iterable_item_removed': {'root[4]': {'description': None,
+                                                                'fields': [{'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test1',
+                                                                            'type': 'INTEGER'},
+                                                                           {'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test2',
+                                                                            'type': 'BOOLEAN'}],
+                                                                'mode': 'REPEATED',
+                                                                'name': 'anotherarray',
+                                                                'type': 'RECORD'}}}, diff,
+                         "Schema evolution not as expected")
+        # Evolution test 5
+        # add an array with strings an dno key this should fail
+        copyoforigschema = copy.deepcopy(savedSchema)
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "hellomike": 3.1415926,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [
+                                                     {"test1": 52, "test2": False,
+                                                      "fred": "I am an evolution"},
+                                                     {"test1": 52, "test2": True,
+                                                      "iamanotherevolution": 1.3},
+                                                     {"test1": 52, "test2": True,
+                                                      "iamanotherevolution": 1.3,
+                                                      "bill": ["hello", "fred", "break this"]}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 14")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 5 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 5 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[4]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'fred',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name':
+                                                                              'iamanotherevolution',
+                                                                          'type': 'FLOAT'},
+                                                                         {'description': None,
+                                                                          'fields': [
+                                                                              {'description': None,
+                                                                               'fields': [],
+                                                                               'mode': 'NULLABLE',
+                                                                               'name': 'value',
+                                                                               'type': 'STRING'}],
+                                                                          'mode': 'REPEATED',
+                                                                          'name': 'bill',
+                                                                          'type': 'RECORD'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'},
+                                                  'root[5]': {'description': None,
+                                                              'fields': [],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'hellomike',
+                                                              'type': 'FLOAT'}},
+                          'iterable_item_removed': {'root[4]': {'description': None,
+                                                                'fields': [{'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test1',
+                                                                            'type': 'INTEGER'},
+                                                                           {'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test2',
+                                                                            'type': 'BOOLEAN'}],
+                                                                'mode': 'REPEATED',
+                                                                'name': 'anotherarray',
+                                                                'type': 'RECORD'}}}, diff,
+                         "Schema evolution not as expected")
+
+        # Evolution test 6
+        # add an array with strings an dno key this should fail
+        copyoforigschema = copy.deepcopy(savedSchema)
+        evolved = bqtools.match_and_addtoschema({"string": "hello", "integer": 52,
+                                                 "hellomike": 3.1415926,
+                                                 "record": {"string2": "hello2", "float": 1.3,
+                                                            "boolean2": False,
+                                                            "appended1": "another string"},
+                                                 "array": [{"string3": "hello", "integer3": 42,
+                                                            "foo": 3.141},
+                                                           {"integer3": 42, "foo": 3.141}],
+                                                 "anotherarray": [
+                                                     {"test1": 52, "test2": False,
+                                                      "fred": "I am an evolution"},
+                                                     {"test1": 52, "test2": True,
+                                                      "iamanotherevolution": 1.3},
+                                                     {"test1": 52, "test2": True,
+                                                      "iamanotherevolution": 1.3,
+                                                      "bill": {}}]},
+                                                copyoforigschema, logger=logger)
+        self.assertEqual(evolved, True,
+                         "Expected evolve but got no evolve False for evolve test 14")
+
+        sa2 = []
+        for bqi in copyoforigschema:
+            i = bqtools.to_dict(bqi)
+            # self.pp.pprint(i)
+            sa2.append(i)
+
+        diff = DeepDiff(sa, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 6 diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 6 diff end  "
+            "====================================")
+
+        self.assertEqual({'iterable_item_added': {'root[4]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'fred',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name':
+                                                                              'iamanotherevolution',
+                                                                          'type': 'FLOAT'},
+                                                                         {'description': None,
+                                                                          'fields': [
+                                                                              {'description': None,
+                                                                               'fields': [],
+                                                                               'mode': 'NULLABLE',
+                                                                               'name':
+                                                                                   'xxxDummySchemaAsNoneDefinedxxx',
+                                                                               'type': 'STRING'}],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'bill',
+                                                                          'type': 'RECORD'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'},
+                                                  'root[5]': {'description': None,
+                                                              'fields': [],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'hellomike',
+                                                              'type': 'FLOAT'}},
+                          'iterable_item_removed': {'root[4]': {'description': None,
+                                                                'fields': [{'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test1',
+                                                                            'type': 'INTEGER'},
+                                                                           {'description': None,
+                                                                            'fields': [],
+                                                                            'mode': 'NULLABLE',
+                                                                            'name': 'test2',
+                                                                            'type': 'BOOLEAN'}],
+                                                                'mode': 'REPEATED',
+                                                                'name': 'anotherarray',
+                                                                'type': 'RECORD'}}}, diff,
+                         "Schema evolution not as expected")
+
+    def test_patchbare(self):
+        startschema = bqtools.create_schema(self.schema2startnobare)
+        resultschema = bqtools.create_schema(self.schemaTest2nonbare)
+
+        origobject = copy.deepcopy(self.schemaTest2bare)
+
+        evolved = bqtools.match_and_addtoschema(self.schemaTest2bare, startschema)
+        self.assertEqual(evolved, True,
+                         "Bare llist and multi dict evolution has not happened as expected")
+        diff = DeepDiff(resultschema, startschema, ignore_order=True)
+
+        print(
+            "============================================ mixed arrays added  diff start  "
+            "====================================")
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ mixed arrays added  diff end  "
+            "====================================")
+
+    def test_patch(self):
+
+        bqSchema2 = bqtools.create_schema(self.schemaTest2)
+        bqSchema = bqtools.create_schema(self.schemaTest1)
+
+        sa = []
+
+        for bqi in bqSchema:
+            i = bqtools.to_dict(bqi)
+            sa.append(i)
+
+        osa = copy.deepcopy(sa)
+
+        change, pschema = bqtools.recurse_and_add_to_schema(bqSchema2, sa)
+        diff = DeepDiff(pschema, osa, ignore_order=True)
+
+        # patching never removes fields so expect additions
+        # so after list of root[] should be one longer
+        expectedDiff = {'iterable_item_added': {'root[2]': {'description': None,
+                                                            'fields': [{'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'integer2',
+                                                                        'type': 'INTEGER'},
+                                                                       {'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'float',
+                                                                        'type': 'FLOAT'},
+                                                                       {'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'string2',
+                                                                        'type': 'STRING'},
+                                                                       {'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'boolean2',
+                                                                        'type': 'BOOLEAN'}],
+                                                            'mode': 'NULLABLE',
+                                                            'name': 'record',
+                                                            'type': 'RECORD'},
+                                                'root[5]': {'description': None,
+                                                            'fields': [{'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'integer3',
+                                                                        'type': 'INTEGER'},
+                                                                       {'description': None,
+                                                                        'fields': [],
+                                                                        'mode': 'NULLABLE',
+                                                                        'name': 'string3',
+                                                                        'type': 'STRING'}],
+                                                            'mode': 'REPEATED',
+                                                            'name': 'array',
+                                                            'type': 'RECORD'}},
+                        'iterable_item_removed': {'root[2]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'integer2',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'float',
+                                                                          'type': 'FLOAT'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'string2',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'boolean2',
+                                                                          'type': 'BOOLEAN'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'appended1',
+                                                                          'type': 'STRING'}],
+                                                              'mode': 'NULLABLE',
+                                                              'name': 'record',
+                                                              'type': 'RECORD'},
+                                                  'root[5]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'integer3',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'string3',
+                                                                          'type': 'STRING'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'foo',
+                                                                          'type': 'FLOAT'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'array',
+                                                              'type': 'RECORD'},
+                                                  'root[6]': {'description': None,
+                                                              'fields': [{'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test1',
+                                                                          'type': 'INTEGER'},
+                                                                         {'description': None,
+                                                                          'fields': [],
+                                                                          'mode': 'NULLABLE',
+                                                                          'name': 'test2',
+                                                                          'type': 'BOOLEAN'}],
+                                                              'mode': 'REPEATED',
+                                                              'name': 'anotherarray',
+                                                              'type': 'RECORD'}}}
+
+        self.assertEqual(diff, expectedDiff,
+                         "Patch diff is not what is expected {}".format(self.pp.pformat(diff)))
+        self.assertEqual(change, True,
+                         "Patch diff change result {} is not what is expected {}".format(change,
+                                                                                         self.pp.pformat(
+                                                                                             diff)))
+
+        bqSchema3 = bqtools.create_schema(self.schemaTest3)
+        bqSchema4 = bqtools.create_schema(self.schemaTest4)
+
+        sa2 = []
+
+        for bqi in bqSchema3:
+            i = bqtools.to_dict(bqi)
+            sa2.append(i)
+
+        osa = copy.deepcopy(sa2)
+
+        change, pschema = bqtools.recurse_and_add_to_schema(bqSchema4, sa2)
+        diff = DeepDiff(pschema, osa, ignore_order=True)
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), change))
+
+    #        print("old {}".format(self.pp.pformat(osa)))
+    #        print("new {}".format(self.pp.pformat(pschema)))
+
+    def test_patch2(self):
+
+        bqSchema2 = bqtools.create_schema(self.schemaTest2)
+        bqSchema = bqtools.create_schema(self.schemaTest2)
+
+        sa = []
+
+        for bqi in bqSchema:
+            i = bqtools.to_dict(bqi)
+            sa.append(i)
+
+        osa = copy.deepcopy(sa)
+
+        change, pschema = bqtools.recurse_and_add_to_schema(bqSchema2, sa)
+        diff = DeepDiff(pschema, osa, ignore_order=True)
+
+        # patching never removes fields so expect additions
+        # so after list of root[] should be one longer
+        expectedDiff = {}
+
+        self.assertEqual(diff, expectedDiff,
+                         "Patch diff is not what is expected {}".format(self.pp.pformat(diff)))
+
+        self.assertEqual(change, False,
+                         "Patch diff change result {} is not what is expected {}".format(change,
+                                                                                         self.pp.pformat(
+                                                                                             diff)))
+
+    #        print("Patched schema diff {}".format(self.pp.pformat(diff)))
+    #        print("old {}".format(self.pp.pformat(osa)))
+    #        print("new {}".format(self.pp.pformat(pschema)))
+
+    def test_sync(self):
+        multi_drivers = []
+        multi_drivers.append(bqtools.MultiBQSyncCoordinator(["methodical-bee-162815.billing_demo"],
+                                                            ["methodical-bee-162815.billing_demo3"],
+                                                            srcbucket="copy_dataset_src",
+                                                            dstbucket="copy_dataset_dst"))
+
+
+        multi_drivers.append(bqtools.MultiBQSyncCoordinator(
+            ["methodical-bee-162815.billing_demo", "methodical-bee-162815.eimforseti2"],
+            ["methodical-bee-162815.billing_demo3", "methodical-bee-162815.eimforseti3"],
+            srcbucket="copy_dataset_src",
+            dstbucket="copy_dataset_dst"))
+
+
+        multi_drivers.append(bqtools.MultiBQSyncCoordinator(
+            ["methodical-bee-162815.billing_demo", "methodical-bee-162815.eimforseti2",
+             "methodical-bee-162815.forseti2"],
+            ["methodical-bee-162815.billing_demo3", "methodical-bee-162815.eimforseti3",
+             "methodical-bee-162815.forseti3"],
+            srcbucket="copy_dataset_src",
+            dstbucket="copy_dataset_dst"))
+
+        for multi_driver in multi_drivers:
+            multi_driver.sync()
+            multi_driver.logger.info(
+                "Tables synced {}, Views synced {}, Rows synced {}, Rows Avooided {}".format(
+                    multi_driver.tables_synced, multi_driver.views_synced, multi_driver.rows_synced,
+                    multi_driver.rows_avoided))
+
+        self.assertEqual(True, True, "Copy completed")
+
     def test_gendiff(self):
         bqSchema2 = bqtools.create_schema(self.schemaTest2)
         views = bqtools.gen_diff_views('foo', 'ar', 'bob', bqSchema2, description="A test schema")
