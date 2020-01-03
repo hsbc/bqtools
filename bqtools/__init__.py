@@ -2018,41 +2018,106 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     if dsttable.expires != srctable.expires:
         dsttable.expires = srctable.expires
         fields.append("expires")
+
     # if fields added lengths will differ
     # as initial copy used original these will be same order
-    if NEW_SCHEMA != OLD_SCHEMA:
-        dsttable.schema = NEW_SCHEMA
-        fields.append("schema")
+    # merge and comare schemas
+    def compare_and_merge_schema_fields(input):
+        working_schema = []
+        changes = 0
 
-    # and update the table
-    if len(fields) > 0:
-        try:
-            copy_driver.destination_client.update_table(dsttable,
-                                                    fields)
-        except Exception:
-            copy_driver.increment_tables_failed()
-            raise
+        field_names_found={}
 
-        dsttable = copy_driver.source_client.get_table(dsttable_ref)
-        copy_driver.get_logger().info(
-            "Patched table {}.{}.{}".format(copy_driver.destination_project,
-                                         copy_driver.destination_dataset,
-                                            table_name))
+        for schema_item  in input["oldchema"]:
+            match = False
+            for tgt_schema_item in input["newschema"]:
+                if tgt_schema_item.name == schema_item.name:
+                    field_names_found[schema_item.name]=True
+                    match = True
+                    # cannot patch type changes so have to recreate
+                    if tgt_schema_item.field_type != schema_item.field_type:
+                        changes += 1
+                        input["workingchema"] = working_schema
+                        input["changes"] = changes
+                        input["deleteandrecreate"]=True
+                        return input
+                    if tgt_schema_item.description != schema_item.description:
+                        changes += 1
+                    if tgt_schema_item.field_type != "RECORD":
+                        working_schema.append(tgt_schema_item)
+                    else:
+                        # cannot change mode for record either repeated or not
+                        if tgt_schema_item.mode != schema_item.mode:
+                            changes += 1
+                            input["workingchema"] = working_schema
+                            input["changes"] = changes
+                            input["deleteandrecreate"]=True
+                            return input
+
+                        output = compare_and_merge_schema_fields(
+                            {"oldchema": list(schema_item.fields), "newschema": list(tgt_schema_item.fields)})
+                        changes += output["changes"]
+                        if output["changes"] > 0:
+                            tgt_schema_item.fields = output["workingchema"]
+                        working_schema.append(tgt_schema_item)
+                        if "deleteandrecreate" in output and output["deleteandrecreate"]:
+                            input["deleteandrecreate"] = output["deleteandrecreate"]
+                            return input
+
+                    break
+            # retain stuff that existed previously
+            # nominally a change but as not an addition deemed not to be
+            if not match:
+                working_schema.append(schema_item)
+
+        # add any new structures
+        for tgt_schema_item in input["newschema"]:
+            if tgt_schema_item.name  not in field_names_found:
+                working_schema.append(tgt_schema_item)
+                changes += 1
+
+        input["workingchema"] = working_schema
+        input["changes"] = changes
+        return input
+
+    output = compare_and_merge_schema_fields({"oldchema":OLD_SCHEMA, "newschema":NEW_SCHEMA})
+    if "deleteandrecreate" in output:
+        remove_deleted_destination_table(copy_driver, table_name)
+        create_and_copy_table(copy_driver, table_name)
     else:
-        copy_driver.increment_tables_avoided()
+        if output["changes"] > 0:
+            dsttable.schema = output["workingchema"]
+            fields.append("schema")
 
-    copy_driver.add_bytes_synced(srctable.num_bytes)
-    copy_driver.add_rows_synced(srctable.num_rows)
-    if dsttable.num_rows != srctable.num_rows or \
-            dsttable.num_bytes != srctable.num_bytes or \
-            srctable.modified >= dsttable.modified or \
-            copy_driver.table_data_change(srctable, dsttable):
-        copy_driver.copy_q.put((0, (copy_table_data,
-                                    [copy_driver, table_name, srctable.partitioning_type,
-                                     dsttable.num_rows, srctable.num_rows])))
-    else:
-        copy_driver.add_bytes_avoided(srctable.num_bytes)
-        copy_driver.add_rows_avoided(srctable.num_rows)
+        # and update the table
+        if len(fields) > 0:
+            try:
+                copy_driver.destination_client.update_table(dsttable,
+                                                        fields)
+            except Exception:
+                copy_driver.increment_tables_failed_sync()
+                raise
+
+            dsttable = copy_driver.source_client.get_table(dsttable_ref)
+            copy_driver.get_logger().info(
+                "Patched table {}.{}.{}".format(copy_driver.destination_project,
+                                             copy_driver.destination_dataset,
+                                                table_name))
+        else:
+            copy_driver.increment_tables_avoided()
+
+        copy_driver.add_bytes_synced(srctable.num_bytes)
+        copy_driver.add_rows_synced(srctable.num_rows)
+        if dsttable.num_rows != srctable.num_rows or \
+                dsttable.num_bytes != srctable.num_bytes or \
+                srctable.modified >= dsttable.modified or \
+                copy_driver.table_data_change(srctable, dsttable):
+            copy_driver.copy_q.put((0, (copy_table_data,
+                                        [copy_driver, table_name, srctable.partitioning_type,
+                                         dsttable.num_rows, srctable.num_rows])))
+        else:
+            copy_driver.add_bytes_avoided(srctable.num_bytes)
+            copy_driver.add_rows_avoided(srctable.num_rows)
 
 
 def remove_deleted_destination_table(copy_driver, table_name):
@@ -2067,8 +2132,9 @@ def remove_deleted_destination_table(copy_driver, table_name):
         table = copy_driver.destination_client.get_table(table_ref)
         copy_driver.destination_client.delete_table(table)
         copy_driver.get_logger().info(
-            "Deleted table/view {}.{}".format(copy_driver.destination_project,
-                                              copy_driver.destination_dataset))
+            "Deleted table/view {}.{}.{}".format(copy_driver.destination_project,
+                                              copy_driver.destination_dataset,
+                                              table_name))
 
 
 def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_rows):
