@@ -109,10 +109,24 @@ def main(argv):
             multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided)
 
         multi_bq_copy.logger.info(
-            "Tables synced {}, Views synced {}, Rows synced {}, Rows Avoided {}, speed up {"
-            "}".format(
-                multi_bq_copy.tables_synced, multi_bq_copy.views_synced, multi_bq_copy.rows_synced,
-                multi_bq_copy.rows_avoided, speed_up))
+            """Tables synced {}
+Tables avoided {}
+Tables failed {}
+Views synced {}
+Views avoided {}
+Views failed {}
+Rows synced {}
+Rows Avoided {}
+Speed up {}""".format(
+                multi_bq_copy.tables_synced,
+                multi_bq_copy.tables_avoided,
+                multi_bq_copy.tables_failed_sync,
+                multi_bq_copy.views_synced,
+                multi_bq_copy.view_avoided,
+                multi_bq_copy.views_failed_sync,
+                multi_bq_copy.rows_synced,
+                multi_bq_copy.rows_avoided,
+                speed_up))
 
 
 if __name__ == '__main__':

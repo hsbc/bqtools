@@ -1507,7 +1507,7 @@ class DefaultBQSyncDriver(object):
     def tables_avoided(self):
         return self.__tables_avoided
 
-    def increment_tables_tables_avoided(self):
+    def increment_tables_avoided(self):
         self.__tables_avoided += 1
 
     @property
@@ -1853,8 +1853,6 @@ class MultiBQSyncCoordinator(object):
             total += copy_driver.view_avoided
         return total
 
-    def increment_view_avoided(self):
-        self.__view_avoided += 1
 
     def sync(self):
         """
@@ -2631,6 +2629,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     views_to_apply[source_row["table_name"]] = {
                         "use_standard_sql": source_row["use_standard_sql"],
                         "view_definition": expected_definition, "action": "patch_view"}
+                else:
+                    copy_driver.increment_view_avoided()
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
