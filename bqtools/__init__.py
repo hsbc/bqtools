@@ -1744,6 +1744,10 @@ class DefaultBQSyncDriver(object):
         view_definition = view_definition.replace(
             r'[{}:{}.'.format(self.source_project, self.source_dataset),
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
+        # this should not be required but seems it is
+        view_definition = view_definition.replace(
+            r'[{}.{}.'.format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset))
 
         return view_definition
 
@@ -1892,6 +1896,10 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
             "`{}.{}.".format(self.destination_project, self.destination_dataset))
         view_definition = view_definition.replace(
             r'[{}:{}.'.format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset))
+        # this should not be required but seems it is
+        view_definition = view_definition.replace(
+            r'[{}.{}.'.format(self.source_project, self.source_dataset),
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
         return view_definition
 
