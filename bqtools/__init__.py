@@ -2589,7 +2589,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     # start by copying structure and once aligned copy data
     # start by creating tables that do not exist
     # done with tape sort comparing table names
-    schema_q = queue.PriorityQueue()
+    schema_q = queue.Queue()
     copy_driver.schema_q = schema_q
 
     thread_list = []
@@ -2601,7 +2601,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         t.start()
         thread_list.append(t)
 
-    copy_q = queue.PriorityQueue()
+    copy_q = queue.Queue()
     copy_driver.copy_q = copy_q
 
     for i in range(copy_data_threads):
