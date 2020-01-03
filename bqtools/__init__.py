@@ -1968,7 +1968,7 @@ def create_and_copy_table(copy_driver, table_name):
     try:
         copy_driver.destination_client.create_table(destination_table)
     except Exception:
-        copy_driver.increment_tables_failed()
+        copy_driver.increment_tables_failed_sync()
         raise
 
     copy_driver.get_logger().info(
