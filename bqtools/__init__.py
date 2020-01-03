@@ -1981,7 +1981,7 @@ def create_and_copy_table(copy_driver, table_name):
     if srctable.num_rows != 0:
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
-        copy_driver.copy_q.put((0, (copy_table_data,
+        copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
                                     [copy_driver, table_name, srctable.partitioning_type, 0,
                                      srctable.num_rows])))
 
@@ -2112,7 +2112,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
-            copy_driver.copy_q.put((0, (copy_table_data,
+            copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
                                         [copy_driver, table_name, srctable.partitioning_type,
                                          dsttable.num_rows, srctable.num_rows])))
         else:
@@ -2266,7 +2266,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             diff = True
                             break
                     if diff:
-                        copy_driver.copy_q.put((0, (cross_region_copy,
+                        copy_driver.copy_q.put((-1 * source_row["rowNumber"], (cross_region_copy,
                                                     [copy_driver, "{}${}".format(table_name,
                                                                       source_row[
                                                                           "partitionName"])])))
@@ -2282,7 +2282,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
                 elif destination_ended or source_row["partitionName"] < destination_row[
                     "partitionName"]:
-                    copy_driver.copy_q.put((0, (cross_region_copy,
+                    copy_driver.copy_q.put((-1 * source_row["rowNumber"], (cross_region_copy,
                                                 [copy_driver, "{}${}".format(table_name,
                                                                              source_row[
                                                                                  "partitionName"])])))
@@ -2589,7 +2589,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     # start by copying structure and once aligned copy data
     # start by creating tables that do not exist
     # done with tape sort comparing table names
-    schema_q = queue.Queue()
+    schema_q = queue.PriorityQueue()
     copy_driver.schema_q = schema_q
 
     thread_list = []
@@ -2601,7 +2601,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         t.start()
         thread_list.append(t)
 
-    copy_q = queue.Queue()
+    copy_q = queue.PriorityQueue()
     copy_driver.copy_q = copy_q
 
     for i in range(copy_data_threads):
