@@ -17,7 +17,6 @@ with open("README.md", "r", encoding='utf-8') as fh:
 setuptools.setup(
     name='bqtools-json',
     version='0.4.25',
-    scripts=[],
     author="Mike Moore",
     author_email="z_z_zebra@yahoo.com",
     description="A Big Query json utility package",
@@ -30,6 +29,7 @@ setuptools.setup(
     tests_require=['nose'],
     include_package_data=True,
     license="MIT",
+    scripts=['bqtools/bqsync'],
     install_requires=[
         "jinja2",
         "google-cloud",
