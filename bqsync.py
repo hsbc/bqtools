@@ -109,7 +109,7 @@ def main(argv):
             multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided)
 
         multi_bq_copy.logger.info(
-            "Tables synced {}, Views synced {}, Rows synced {}, Rows Avooided {}, speed up {"
+            "Tables synced {}, Views synced {}, Rows synced {}, Rows Avoided {}, speed up {"
             "}".format(
                 multi_bq_copy.tables_synced, multi_bq_copy.views_synced, multi_bq_copy.rows_synced,
                 multi_bq_copy.rows_avoided, speed_up))

@@ -1484,6 +1484,38 @@ class DefaultBQSyncDriver(object):
         self.__rows_avoided = 0
         self.__tables_synced = 0
         self.__views_synced = 0
+        self.__views_failed_sync = 0
+        self.__tables_failed_sync = 0
+        self.__tables_avoided = 0
+        self.__view_avoided = 0
+
+    @property
+    def views_failed_sync(self):
+        return self.__views_failed_sync
+
+    def increment_views_failed_sync(self):
+        self.__views_failed_sync += 1
+
+    @property
+    def tables_failed_sync(self):
+        return self.__tables_failed_sync
+
+    def increment_tables_failed_sync(self):
+        self.__tables_failed_sync += 1
+
+    @property
+    def tables_avoided(self):
+        return self.__tables_avoided
+
+    def increment_tables_tables_avoided(self):
+        self.__tables_avoided += 1
+
+    @property
+    def view_avoided(self):
+        return self.__view_avoided
+
+    def increment_view_avoided(self):
+        self.__view_avoided += 1
 
     @property
     def bytes_synced(self):
@@ -1491,7 +1523,7 @@ class DefaultBQSyncDriver(object):
 
     @property
     def copy_views(self):
-        self.__copy_views
+        return self.__copy_views
 
     def add_bytes_synced(self,bytes):
         self.__bytes_synced+=bytes
@@ -1752,8 +1784,8 @@ class MultiBQSyncCoordinator(object):
             copy_driver = MultiBQSyncDriver(src_project_dataset.split(".")[0], src_project_dataset.split(".")[1], dst_project_dataset.split(".")[1], dstproject=dst_project_dataset.split(".")[0],
                  srcbucket=srcbucket, dstbucket=dstbucket, remove_deleted_tables=remove_deleted_tables,
                  copy_data=copy_data,
-                 copy_views=copy_views)
-            copy_driver.coordinater = self
+                 copy_views=copy_views,
+                 coordinator=self)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -1793,6 +1825,37 @@ class MultiBQSyncCoordinator(object):
             total += copy_driver.rows_avoided
         return total
 
+    @property
+    def views_failed_sync(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.views_failed_sync
+        return total
+
+    @property
+    def tables_failed_sync(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.tables_failed_sync
+        return total
+
+    @property
+    def tables_avoided(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.tables_avoided
+        return total
+
+    @property
+    def view_avoided(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.view_avoided
+        return total
+
+    def increment_view_avoided(self):
+        self.__view_avoided += 1
+
     def sync(self):
         """
         Synchronise all the datasets in the driver
@@ -1807,10 +1870,18 @@ class MultiBQSyncCoordinator(object):
         return view_definition
 
 class MultiBQSyncDriver(DefaultBQSyncDriver):
+    def __init__(self,srcproject, srcdataset, dstdataset, dstproject=None,
+                 srcbucket=None, dstbucket=None, remove_deleted_tables=True,
+                 copy_data=True,
+                 copy_views=True,coordinator=None):
+        DefaultBQSyncDriver.__init__(self,srcproject, srcdataset, dstdataset, dstproject,
+                 srcbucket, dstbucket, remove_deleted_tables,
+                 copy_data,
+                 copy_views)
+        self.__coordinater = coordinator
+
     @property
     def coordinater(self):
-        if getattr(self, "__coordinator", None) is None:
-            self.__coordinater = None
         return self.__coordinater
 
     @coordinater.setter
@@ -1824,9 +1895,10 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         view_definition = view_definition.replace(
             r'[{}:{}.'.format(self.source_project, self.source_dataset),
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
+        return view_definition
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
-        self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
+        return self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
 
 def create_and_copy_table(copy_driver, table_name):
     """
@@ -1881,12 +1953,19 @@ def create_and_copy_table(copy_driver, table_name):
             destination_table.encryption_config = "/".join(parts)
 
     # and create the table
-    copy_driver.destination_client.create_table(destination_table)
-    copy_driver.get_logger().info(
-        "Created table {}.{}".format(copy_driver.destination_project,
-                                     copy_driver.destination_dataset))
+    try:
+        copy_driver.destination_client.create_table(destination_table)
+    except Exception:
+        copy_driver.increment_tables_failed()
+        raise
 
-    # anything to copy
+    copy_driver.get_logger().info(
+        "Created table {}.{}.{}".format(copy_driver.destination_project,
+                                     copy_driver.destination_dataset,
+                                        table_name))
+
+    # anything to copy we have just created table
+    # so destination we know is 0
     if srctable.num_rows != 0:
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
@@ -1935,12 +2014,20 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
     # and update the table
     if len(fields) > 0:
-        copy_driver.destination_client.update_table(dsttable,
+        try:
+            copy_driver.destination_client.update_table(dsttable,
                                                     fields)
+        except Exception:
+            copy_driver.increment_tables_failed()
+            raise
+
         dsttable = copy_driver.source_client.get_table(dsttable_ref)
         copy_driver.get_logger().info(
-            "Patched table {}.{}".format(copy_driver.destination_project,
-                                         copy_driver.destination_dataset))
+            "Patched table {}.{}.{}".format(copy_driver.destination_project,
+                                         copy_driver.destination_dataset,
+                                            table_name))
+    else:
+        copy_driver.increment_tables_avoided()
 
     copy_driver.add_bytes_synced(srctable.num_bytes)
     copy_driver.add_rows_synced(srctable.num_rows)
@@ -2101,9 +2188,10 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             diff = True
                             break
                     if diff:
-                        cross_region_copy(copy_driver, "{}${}".format(table_name,
+                        copy_driver.copy_q.put((0, (cross_region_copy,
+                                                    [copy_driver, "{}${}".format(table_name,
                                                                       source_row[
-                                                                          "partitionName"]))
+                                                                          "partitionName"])])))
                     else:
                         copy_driver.add_rows_avoided(source_row["rowNum"])
                     try:
@@ -2116,9 +2204,10 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
                 elif destination_ended or source_row["partitionName"] < destination_row[
                     "partitionName"]:
-                    cross_region_copy(copy_driver, "{}${}".format(table_name,
-                                                                  source_row[
-                                                                      "partitionName"]))
+                    copy_driver.copy_q.put((0, (cross_region_copy,
+                                                [copy_driver, "{}${}".format(table_name,
+                                                                             source_row[
+                                                                                 "partitionName"])])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -2131,8 +2220,6 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                     except StopIteration:
                         destination_ended = True
 
-        wait_for_jobs(copy_driver.jobs, copy_driver.get_logger(),
-                      "Waiting for loads to complete".format(table_name))
 
 
 def cross_region_copy(copy_driver, table_name):
@@ -2339,15 +2426,18 @@ def create_destination_view(copy_driver,table_name,view_input):
     try:
         copy_driver.destination_client.create_table(destination_table)
         copy_driver.get_logger().info(
-            "Created view {}".format(table_name))
+            "Created view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
     except exceptions.PreconditionFailed as e:
-        copy_driver.get_logger().exception("Pre conditionfailed creating view {}".format(table_name))
+        copy_driver.increment_views_failed_sync()
+        copy_driver.get_logger().exception("Pre conditionfailed creating view {}:{}".format(table_name,view_input["view_definition"]))
     except exceptions.BadRequest as e:
+        copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Bad request creating view {}".format(table_name))
+            "Bad request creating view {}:{}".format(table_name,view_input["view_definition"]))
     except exceptions.NotFound as e:
+        copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Not Found creating view {}".format(table_name))
+            "Not Found creating view {}:{}".format(table_name,view_input["view_definition"]))
 
 def patch_destination_view(copy_driver,table_name,view_input):
     """
@@ -2392,13 +2482,18 @@ def patch_destination_view(copy_driver,table_name,view_input):
             copy_driver.destination_client.update_table(dsttable,fields)
             copy_driver.get_logger().info(
                 "Patched view {}".format(table_name))
+        else:
+            copy_driver.increment_view_avoided()
     except exceptions.PreconditionFailed as e:
+        copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
             "Pre conditionfailed patching view {}".format(table_name))
     except exceptions.BadRequest as e:
+        copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
             "Bad request patching view {}".format(table_name))
     except exceptions.NotFound as e:
+        copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
             "Not Found patching view {}".format(table_name))
 
@@ -2461,6 +2556,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     while not source_ended or not destination_ended:
         if not destination_ended and not source_ended and destination_row["table_name"] == \
                 source_row["table_name"]:
+            copy_driver.increment_tables_synced()
             schema_q.put((0, (compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
@@ -2477,6 +2573,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             except StopIteration:
                 source_ended = True
         elif source_ended or source_row["table_name"] > destination_row["table_name"]:
+            copy_driver.increment_tables_synced()
             schema_q.put((0, (
             remove_deleted_destination_table, [copy_driver, destination_row["table_name"]])))
             try:
@@ -2527,6 +2624,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         while not source_ended or not destination_ended:
             if not destination_ended and not source_ended and destination_row["table_name"] == \
                     source_row["table_name"]:
+                copy_driver.increment_views_synced()
                 expected_definition = copy_driver.update_source_view_definition(
                     source_row["view_definition"], source_row["use_standard_sql"])
                 if expected_definition != destination_row["view_definition"]:
@@ -2542,6 +2640,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 except StopIteration:
                     destination_ended = True
             elif destination_ended or source_row["table_name"] < destination_row["table_name"]:
+                copy_driver.increment_views_synced()
                 expected_definition = copy_driver.update_source_view_definition(
                     source_row["view_definition"], source_row["use_standard_sql"])
                 views_to_apply[source_row["table_name"]] = {
