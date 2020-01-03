@@ -2266,7 +2266,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             diff = True
                             break
                     if diff:
-                        copy_driver.copy_q.put((-1 * source_row["rowNumber"], (cross_region_copy,
+                        copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
                                                     [copy_driver, "{}${}".format(table_name,
                                                                       source_row[
                                                                           "partitionName"])])))
@@ -2282,7 +2282,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
                 elif destination_ended or source_row["partitionName"] < destination_row[
                     "partitionName"]:
-                    copy_driver.copy_q.put((-1 * source_row["rowNumber"], (cross_region_copy,
+                    copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
                                                 [copy_driver, "{}${}".format(table_name,
                                                                              source_row[
                                                                                  "partitionName"])])))
