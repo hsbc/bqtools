@@ -19,11 +19,13 @@ import os
 import pprint
 import re
 import threading
+
 # handle python 2 and 3 versions of this
 try:
    import queue
 except ImportError:
    import Queue as queue
+
 from datetime import datetime, date, timedelta, time
 from time import sleep
 
