@@ -65,7 +65,8 @@ But as resumable can be restarted at anytime.
  
 NB Tested in Python 2.7 and Python 3.6 and with bigquery libraries from 0.32.0 to 1.23.1 not all features
 are supported in older libraries such as clustering etc. Testing has also avoided those so far. If you
-are interested in testing and improving and contributing ideas contact mike.moore@hsbc.com
+are interested in testing and improving and contributing ideas raise issues on the project or take a fork 
+and propose pull requests.
  
 As failures can occur it is best to make sure a lifecycle rule of delete after 1 day is set on the
 buckets for usage.
