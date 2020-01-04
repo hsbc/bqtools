@@ -95,3 +95,7 @@ A json file like below can be used (say this was lifeCycle.json);
 The following command would set the life cycle on the bucket
  
     gsutil lifecycle set lifeCycle.json url
+    
+It is also worth noting bqsync for reasonable datasets when used is highly likely to hit quota limits notable extract 
+bytes per day (as of writing 11 terabytes a day). It may also hit max quotas and load/extracts per table and copies per 
+table.  
