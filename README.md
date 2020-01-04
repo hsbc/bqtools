@@ -49,5 +49,9 @@ table["schema"]["fields"] = bqtools.get_bq_schema_from_json_repr(foo)
 
 ```
 
-Demonstrates some of power of tools via [bqsync](./BQSYNCUSAGE.md)
+Demonstrates some of power of tools via [bqsync](./BQSYNCUSAGE.md) that is installed if you install via pip.
+
+    pip install bqtools-json
+    
+Or you can find the source for this [here](./bqtools/bqsync)
     
