@@ -52,8 +52,9 @@ ability to create tables and views in destination datasets.
  
 bqsync is resumable i.e. it will pick up where it left off tables schemas are copied first alphabetically
 and there data asynchronously (largest row sets are prioritised) then views all table copying is completed
-on first pair and only when first pair is complete does it move to the next. It is assumed bqsync will be rerun to resolve issue, bqsync will update tables and schemas for schema
- changes (assumes additions).
+on first pair and only when first pair is complete does it move to the next. It is assumed bqsync will be rerun to 
+resolve issue, bqsync will update tables and schemas for schema changes (assumes additions) it will also handle
+non backward compatible in many cases by deleting recretaing tables and recopying data.
  
 Unlike dataset copying this tools has support for CMEK keys in source and destination it does this in 2major ways;
 * If the source table is encrypted with a global key the key is simply reused in the destination location.
