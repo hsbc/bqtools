@@ -57,7 +57,7 @@ on first pair and only when first pair is complete does it move to the next. It 
 resolve issue, bqsync will update tables and schemas for schema changes (assumes additions) it will also handle
 non backward compatible in many cases by deleting recreataing tables and recopying data.
  
-Unlike [https://cloud.google.com/bigquery/docs/copying-datasets](dataset copying) this tools has support for CMEK keys 
+Unlike [dataset copying](https://cloud.google.com/bigquery/docs/copying-datasets) this tools has support for CMEK keys 
 in source and destination it does this in 2 major ways;
 
 * If the source table is encrypted with a global key the key is simply reused in the destination location.
