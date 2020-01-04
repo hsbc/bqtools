@@ -1403,7 +1403,8 @@ class DefaultBQSyncDriver(object):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True):
+                 copy_views=True,
+                 check_depth=-1):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done inc ontext of source project)
@@ -1437,6 +1438,7 @@ class DefaultBQSyncDriver(object):
         self.__copy_views = copy_views
         self.reset_stats()
         self.__logger = logging
+        self.__check_depth = check_depth
 
         # now check that from a service the copy makes sense
         assert dataset_exists(self.source_client, self.source_client.dataset(
@@ -1494,6 +1496,14 @@ class DefaultBQSyncDriver(object):
         self.__tables_failed_sync = 0
         self.__tables_avoided = 0
         self.__view_avoided = 0
+
+    @property
+    def check_depth(self):
+        return self.__check_depth
+
+    @check_depth.setter
+    def check_depth(self,value):
+        self.__check_depth = value
 
     @property
     def views_failed_sync(self):
@@ -1699,14 +1709,39 @@ class DefaultBQSyncDriver(object):
         """
         default = ""
         SCHEMA = list(table.schema)
+
+        """
+        
+        Use FRAM_FINGERPRINT as hash of each value and then summed
+        basically a merkel function
+        
+        """
+        expression_list = []
         for field in SCHEMA:
-            if re.search("update.*time",field.name.lower()) or re.search("modifi.*time",field.name.lower()):
+            if self.check_depth >= 0  or \
+                    (self.check_depth  >= -1 and (re.search("update.*time", field.name.lower()) or \
+                     re.search("modifi.*time",field.name.lower()) or \
+                     re.search("creat.*time", field.name.lower()))):
                 if field.field_type == "STRING":
-                    return ",MAX(IFNULL({0},'')) as maxUpdateTime".format(field.name)
+                    expression_list.append("IFNULL({0},'')".format(field.name))
                 elif field.field_type == "TIMESTAMP":
-                    return ",MAX(IFNULL({0},TIMESTAMP('1970-01-01'))) as maxUpdateTime".format(field.name)
+                    expression_list.append(
+                        "CAST(IFNULL({0},TIMESTAMP('1970-01-01')) AS STRING)".format(field.name))
                 elif field.field_type == "INTEGER" or field.field_type == "INT64":
-                    return ",MAX(IFNULL({0},0)) as maxUpdateTime".format(field.name)
+                    expression_list.append("CAST(IFNULL({0},0) AS STRING)".format(field.name))
+                elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
+                        field.field_type == "NUMERIC":
+                    expression_list.append("CAST(IFNULL({0},0.0) AS STRING)".format(field.name))
+                elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                    expression_list.append("CAST(IFNULL({0},false) AS STRING)".format(field.name))
+                elif field.field_type == "BYTES":
+                    expression_list.append("CAST(IFNULL({0},'') AS STRING)".format(field.name))
+        if len(expression_list) > 0:
+            default = """,
+AVG(FARM_FINGERPRINT(CONCAT({0}))) as avgFingerprint,
+STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
+                ",".join(expression_list))
+
         return default
 
     @property
@@ -2057,24 +2092,37 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                         output = compare_and_merge_schema_fields(
                             {"oldchema": list(schema_item.fields), "newschema": list(tgt_schema_item.fields)})
                         changes += output["changes"]
+                        # if changes then need to create a new schema with new fields
+                        # field is immutable so convert to api rep
+                        # alter and convert back
                         if output["changes"] > 0:
-                            tgt_schema_item.fields = output["workingchema"]
-                        working_schema.append(tgt_schema_item)
+                            newfields = []
+                            for schema_item in output["workingchema"]:
+                                newfields.append(schema_item.to_api_repr())
+                            tmp_work = tgt_schema_item.to_api_repr()
+                            tmp_work["fields"] =  newfields
+                            working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
+                        else:
+                            working_schema.append(tgt_schema_item)
                         if "deleteandrecreate" in output and output["deleteandrecreate"]:
                             input["deleteandrecreate"] = output["deleteandrecreate"]
                             return input
 
                     break
-            # retain stuff that existed previously
-            # nominally a change but as not an addition deemed not to be
-            if not match:
-                working_schema.append(schema_item)
+
+        # retain stuff that existed previously
+        # nominally a change but as not an addition deemed not to be
+        if not match:
+            working_schema.append(schema_item)
 
         # add any new structures
         for tgt_schema_item in input["newschema"]:
             if tgt_schema_item.name  not in field_names_found:
                 working_schema.append(tgt_schema_item)
                 changes += 1
+
+        if len(working_schema) < len(input["newschema"]):
+            pass
 
         input["workingchema"] = working_schema
         input["changes"] = changes
@@ -2100,9 +2148,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
             dsttable = copy_driver.source_client.get_table(dsttable_ref)
             copy_driver.get_logger().info(
-                "Patched table {}.{}.{}".format(copy_driver.destination_project,
+                "Patched table {}.{}.{} {}".format(copy_driver.destination_project,
                                              copy_driver.destination_dataset,
-                                                table_name))
+                                                table_name,",".join(fields)))
         else:
             copy_driver.increment_tables_avoided()
 
@@ -2439,13 +2487,13 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1,call_back_on_complete=Non
                     else:
                         if job.job_type == "load" and job.output_rows is not None:
                             logger.info(
-                                u"{}:BQ {} Job completed:{} rows loaded {}".format(desc,job.job_type,job.job_id, job.output_rows))
+                                u"{}:BQ {} Job completed:{} rows loaded {:,d}".format(desc,job.job_type,job.job_id, job.output_rows))
                         if call_back_on_complete is not None and job.job_id in call_back_on_complete:
                             call_back_on_complete[job.job_id](job)
 
             else:
                 didnothing = False
-                logger.info(u"{}:BQ {} Job completed:{}".format(desc,job.job_type,job.job_id))
+                logger.debug(u"{}:BQ {} Job completed:{}".format(desc,job.job_type,job.job_id))
 
         if didnothing:
             sleep(sleepTime)

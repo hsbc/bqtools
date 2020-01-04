@@ -111,13 +111,13 @@ def main(argv):
 
         multi_bq_copy.logger.info(
             """Tables synced {}
-Tables avoided {}
-Tables failed {}
-Views synced {}
-Views avoided {}
-Views failed {}
-Rows synced {}
-Rows Avoided {}
+Tables avoided {:,d}
+Tables failed {:,d}
+Views synced {:,d}
+Views avoided {:,d}
+Views failed {:,d}
+Rows synced {:,d}
+Rows Avoided {:1,.3f}
 Speed up {}""".format(
                 multi_bq_copy.tables_synced,
                 multi_bq_copy.tables_avoided,
