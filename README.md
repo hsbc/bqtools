@@ -49,5 +49,5 @@ table["schema"]["fields"] = bqtools.get_bq_schema_from_json_repr(foo)
 
 ```
 
-Demonstrates some of power of tools via [bqsync](BQSYNCUSAGE.me)
+Demonstrates some of power of tools via [bqsync](./BQSYNCUSAGE.me)
     
