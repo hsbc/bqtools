@@ -4,7 +4,7 @@ Note in a copy assumption is that all source projects and datasets are in 1 regi
  
 basic usage is as follows
  
-    bqsync.py --src_project_datasets=[project1.dataset1,project1.dataset2,project2.dataset3] \
+    bqsync--src_project_datasets=[project1.dataset1,project1.dataset2,project2.dataset3] \
     --dst_project_datasset=[project1.dataset4,project2.dataset5,project3.dataset6] \
     --src_bucket=bucket_name --dst_bucket=another_bucket_name \
     --copy_data=True \
