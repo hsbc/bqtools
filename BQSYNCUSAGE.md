@@ -36,11 +36,13 @@ and move to the next logging an error. If set to False views are not recreated.
 *remove_deleted_tables* - defaults to True removes tables/views in destination datset that do not exist
 in source dataset
  
-bqsync attempts to optimise synchronisation by comparing rows, bytes and last modified times for non
-partitioned tables. For partitioned tables it compares each partition (row numbers, and max of any
-column(s) who lowercase with regexp search (does not nee dto be at start) matching  (modifi.\*time,
-update.\*time) so filds like lastModifiedtime or lastUpdatedTime or modificationTime would all match
-these) in both locations, only partitions with a mismatch are copied otherwise skipped. It copies within big query if source and destination regions are identical.
+bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
+partitioned tables. 
+For partitioned tables it compares each partition (row numbers, andaverage hash snd stdev hash 
+column(s) who lowercase with regexp search (does not need to be at start) matching  (modifi.\*time,
+update.\*time, creat\*time) so fields like lastModifiedtime or lastUpdatedTime or modificationTime would all match
+these) in both locations, only partitions with a mismatch are copied otherwise skipped. It copies within big query 
+if source and destination regions are identical.
  
 bqsync relies on application default credentials and boto files for configuration (for proxy etc).
  
