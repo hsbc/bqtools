@@ -117,8 +117,8 @@ Views synced {:,d}
 Views avoided {:,d}
 Views failed {:,d}
 Rows synced {:,d}
-Rows Avoided {:1,.3f}
-Speed up {}""".format(
+Rows Avoided {:,d}
+Speed up {:1,.5f}""".format(
                 multi_bq_copy.tables_synced,
                 multi_bq_copy.tables_avoided,
                 multi_bq_copy.tables_failed_sync,
