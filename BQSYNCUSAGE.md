@@ -1,6 +1,7 @@
 # bqsync
 A utility for synchronising big query datasets between regions.
-Note in a copy assumption is that all source projects and datasets are in 1 region and all destination projects and datasets are also in the same region. The source region and destination region MAY be different.
+Note in a copy assumption is that all source projects and datasets are in 1 region and all destination projects and 
+datasets are also in the same region. The source region and destination region MAY be different.
  
 basic usage is as follows
  
@@ -38,7 +39,7 @@ in source dataset
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
-For partitioned tables it compares each partition (row numbers, andaverage hash snd stdev hash 
+For partitioned tables it compares each partition (row numbers, andaverage hash snd stdev hash (farm_fingerprint)
 column(s) who lowercase with regexp search (does not need to be at start) matching  (modifi.\*time,
 update.\*time, creat\*time) so fields like lastModifiedtime or lastUpdatedTime or modificationTime would all match
 these) in both locations, only partitions with a mismatch are copied otherwise skipped. It copies within big query 
@@ -54,11 +55,14 @@ bqsync is resumable i.e. it will pick up where it left off tables schemas are co
 and there data asynchronously (largest row sets are prioritised) then views all table copying is completed
 on first pair and only when first pair is complete does it move to the next. It is assumed bqsync will be rerun to 
 resolve issue, bqsync will update tables and schemas for schema changes (assumes additions) it will also handle
-non backward compatible in many cases by deleting recretaing tables and recopying data.
+non backward compatible in many cases by deleting recreataing tables and recopying data.
  
-Unlike dataset copying this tools has support for CMEK keys in source and destination it does this in 2major ways;
+Unlike [https://cloud.google.com/bigquery/docs/copying-datasets](dataset copying) this tools has support for CMEK keys 
+in source and destination it does this in 2 major ways;
+
 * If the source table is encrypted with a global key the key is simply reused in the destination location.
 * If the source table has a regional key say HSM key then it encrypts the new table with a key of exactly
+
 the same name with location changed to the new location. That means for thise to work the target
 key **MUST** exist in the location with exactly matching name. Plus be accesible to destination projects
 service account.
@@ -98,4 +102,4 @@ The following command would set the life cycle on the bucket
     
 It is also worth noting bqsync for reasonable datasets when used is highly likely to hit quota limits notable extract 
 bytes per day (as of writing 11 terabytes a day). It may also hit max quotas and load/extracts per table and copies per 
-table.  
+table.
