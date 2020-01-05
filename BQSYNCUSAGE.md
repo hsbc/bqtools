@@ -17,6 +17,7 @@ Arguments
 *src_project_datasets* - A comma separated list of projects and datasets to copy to the destination
 projects and datasets. Each item in list is project followed by a period '.' and then the dataset.
 The list in this argument **MUST** contain same number as in the *dst_project_dataset* argument.
+
 *dst_project_datasets* - A comma separated list of projects and datasets to copy into. These maybe
 in a different region if they are then the *src_bucket* and *dst_bucket* **MUST** be specified.
  
