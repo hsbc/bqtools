@@ -1496,6 +1496,30 @@ class DefaultBQSyncDriver(object):
         self.__tables_failed_sync = 0
         self.__tables_avoided = 0
         self.__view_avoided = 0
+        self.__extract_fails = 0
+        self.__load_fails = 0
+        self.__copy_fails = 0
+
+    @property
+    def copy_fails(self):
+        return self.__copy_fails
+
+    def increment_copy_fails(self):
+        self.__copy_fails += 1
+
+    @property
+    def load_fails(self):
+        return self.__load_fails
+
+    def increment_load_fails(self):
+        self.__load_fails += 1
+
+    @property
+    def extract_fails(self):
+        return self.__extract_fails
+
+    def increment_extract_fails(self):
+        self.__extract_fails += 1
 
     @property
     def check_depth(self):
@@ -1898,6 +1922,26 @@ class MultiBQSyncCoordinator(object):
             total += copy_driver.view_avoided
         return total
 
+    @property
+    def extract_fails(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.extract_fails
+        return total
+
+    @property
+    def load_fails(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.load_fails
+        return total
+
+    @property
+    def copy_fails(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.copy_fails
+        return total
 
     def sync(self):
         """
@@ -2184,6 +2228,11 @@ def remove_deleted_destination_table(copy_driver, table_name):
                                               copy_driver.destination_dataset,
                                               table_name))
 
+# need to be able to compare close numbers
+# https://stackoverflow.com/questions/5595425/what-is-the-best-way-to-compare-floats-for-almost-equality-in-python
+#
+def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
+    return abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_rows):
     """
@@ -2214,8 +2263,9 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
 
     # if same region now just do a table copy
     if copy_driver.same_region:
+        jobs = []
         if partitioning_type != "DAY" or dst_rows == 0 or src_rows <= 5000:
-            in_region_copy(copy_driver, table_name)
+            jobs.append(in_region_copy(copy_driver, table_name))
         else:
             source_ended = False
             destination_ended = False
@@ -2245,12 +2295,20 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                     diff = False
                     rowdict = dict(list(source_row.items()))
                     for key in rowdict:
-                        if source_row[key] != destination_row[key]:
+                        # if different
+                        # if not a float thats ok
+                        # but if a float assume math so has rounding truncation
+                        # type errors so only check within float
+                        # accuracy tolerance
+                        if source_row[key] != destination_row[key] and (
+                                not isinstance(source_row[key], float) or not isclose(source_row[key],
+                                                                                  destination_row[
+                                                                                      key])):
                             diff = True
                             break
                     if diff:
-                        in_region_copy(copy_driver,
-                                       "{}${}".format(table_name, source_row["partitionName"]))
+                        jobs.append(in_region_copy(copy_driver,
+                                       "{}${}".format(table_name, source_row["partitionName"])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -2261,8 +2319,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
                 elif destination_ended or source_row["partitionName"] < destination_row[
                     "partitionName"]:
-                    in_region_copy(copy_driver,
-                                   "{}${}".format(table_name, source_row["partitionName"]))
+                    jobs.append(in_region_copy(copy_driver,
+                                   "{}${}".format(table_name, source_row["partitionName"])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -2274,6 +2332,17 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
+
+        def copy_complete_callback(job):
+            if job.error_result is not None:
+                copy_driver.increment_copy_fails()
+
+        callbacks = {}
+        for job in jobs:
+            callbacks[job.job_id] = copy_complete_callback
+
+        wait_for_jobs(jobs, copy_driver.logger, desc="Wait for copy jobs",
+                      call_back_on_complete=callbacks)
 
     # else not same region so have to extract
     # copy object and
@@ -2310,7 +2379,15 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                     diff = False
                     rowdict = dict(list(source_row.items()))
                     for key in rowdict:
-                        if source_row[key] != destination_row[key]:
+                        # if different
+                        # if not a float thats ok
+                        # but if a float assume math so has rounding truncation
+                        # type errors so only check within float
+                        # accuracy tolerance
+                        if source_row[key] != destination_row[key] and (
+                                not isinstance(source_row[key], float) or not isclose(source_row[key],
+                                                                                  destination_row[
+                                                                                      key])):
                             diff = True
                             break
                     if diff:
@@ -2376,41 +2453,47 @@ def cross_region_copy(copy_driver, table_name):
                                  location=copy_driver.source_location)
 
     def cross_region_rewrite(job):
-        blob_uris = int(job._job_statistics().get('destinationUriFileCounts')[0])
-        client = storage.Client(project=copy_driver.source_project)
-        src_bucket = client.get_bucket(copy_driver.source_bucket)
-        dst_bucket = client.get_bucket(copy_driver.destination_bucket)
-        for blob_num in range(blob_uris):
-            ablobname = blobname.replace("*","{:012d}".format(blob_num))
-            src_blob = storage.blob.Blob(ablobname, src_bucket)
-
-            dst_blob = storage.blob.Blob(ablobname, dst_bucket)
-            (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
-
-            # wait for rewrite to finish
-            while token is not None:
-                (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob, token=token)
-
-            src_blob.delete()
-
-        dst_uri = "gs://{}/{}".format(copy_driver.destination_bucket, blobname)
-        bqclient = copy_driver.destination_client
-        dsttable = bqclient.dataset(copy_driver.destination_dataset).table(table_name)
-        job_config = bigquery.LoadJobConfig()
-        job_config.source_format = bigquery.job.SourceFormat.AVRO
-        # compress trade compute for network bandwidth
-        job_config.compression = bigquery.job.Compression.DEFLATE
-        job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
-        job = bqclient.load_table_from_uri([dst_uri], dsttable, job_config=job_config,
-                                           location=copy_driver.destination_location)
-
-        def delete_blob(job):
+        if job.error_result:
+            copy_driver.increment_extract_fails()
+        else:
+            blob_uris = int(job._job_statistics().get('destinationUriFileCounts')[0])
             client = storage.Client(project=copy_driver.source_project)
+            src_bucket = client.get_bucket(copy_driver.source_bucket)
             dst_bucket = client.get_bucket(copy_driver.destination_bucket)
             for blob_num in range(blob_uris):
-                ablobname = blobname.replace("*", "{:012d}".format(blob_num))
+                ablobname = blobname.replace("*","{:012d}".format(blob_num))
+                src_blob = storage.blob.Blob(ablobname, src_bucket)
+
                 dst_blob = storage.blob.Blob(ablobname, dst_bucket)
-                dst_blob.delete()
+                (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
+
+                # wait for rewrite to finish
+                while token is not None:
+                    (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob, token=token)
+
+                src_blob.delete()
+
+            dst_uri = "gs://{}/{}".format(copy_driver.destination_bucket, blobname)
+            bqclient = copy_driver.destination_client
+            dsttable = bqclient.dataset(copy_driver.destination_dataset).table(table_name)
+            job_config = bigquery.LoadJobConfig()
+            job_config.source_format = bigquery.job.SourceFormat.AVRO
+            # compress trade compute for network bandwidth
+            job_config.compression = bigquery.job.Compression.DEFLATE
+            job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
+            job = bqclient.load_table_from_uri([dst_uri], dsttable, job_config=job_config,
+                                               location=copy_driver.destination_location)
+
+        def delete_blob(job):
+            if job.error_result:
+                copy_driver.increment_load_fails()
+            else:
+                client = storage.Client(project=copy_driver.source_project)
+                dst_bucket = client.get_bucket(copy_driver.destination_bucket)
+                for blob_num in range(blob_uris):
+                    ablobname = blobname.replace("*", "{:012d}".format(blob_num))
+                    dst_blob = storage.blob.Blob(ablobname, dst_bucket)
+                    dst_blob.delete()
 
         callbackobj = {job.job_id: delete_blob}
         wait_for_jobs([job], copy_driver.get_logger(),
@@ -2438,7 +2521,9 @@ def in_region_copy(copy_driver, table_name):
     job = bqclient.copy_table(
         srctable, dsttable, job_config=job_config)
 
-    copy_driver.add_job(job)
+    return job
+
+
 
 def sync_bq_processor(stop_event, copy_driver, q):
     """
@@ -2483,17 +2568,25 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1,call_back_on_complete=Non
                 if job.done():
                     didnothing = False
                     if job.error_result:
-                        logger.error(u"{}:Error BQ {} Job {} error {}".format(desc,job.job_type,job.job_id,str(job.error_result)))
+                        logger.error(
+                            u"{}:Error BQ {} Job {} error {}".format(desc, job.job_type, job.job_id,
+                                                                     str(job.error_result)))
                     else:
-                        if job.job_type == "load" and job.output_rows is not None:
+                        if (job.job_type == "load") and \
+                                job.output_rows is not None:
                             logger.info(
-                                u"{}:BQ {} Job completed:{} rows loaded {:,d}".format(desc,job.job_type,job.job_id, job.output_rows))
-                        if call_back_on_complete is not None and job.job_id in call_back_on_complete:
-                            call_back_on_complete[job.job_id](job)
+                                u"{}:BQ {} Job completed:{} rows {}ed {:,d}".format(desc,
+                                                                                    job.job_type,
+                                                                                    job.job_id,
+                                                                                    job.job_type,
+                                                                                    job.output_rows))
+                    if call_back_on_complete is not None and job.job_id in \
+                            call_back_on_complete:
+                        call_back_on_complete[job.job_id](job)
 
             else:
                 didnothing = False
-                logger.debug(u"{}:BQ {} Job completed:{}".format(desc,job.job_type,job.job_id))
+                logger.debug(u"{}:BQ {} Job completed:{}".format(desc, job.job_type, job.job_id))
 
         if didnothing:
             sleep(sleepTime)

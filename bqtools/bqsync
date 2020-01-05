@@ -118,6 +118,9 @@ Views avoided {:,d}
 Views failed {:,d}
 Rows synced {:,d}
 Rows Avoided {:,d}
+Extract Fails {:,d}
+Load Fails {:,d}
+Copy Fails {:,d}
 Speed up {:1,.5f}""".format(
                 multi_bq_copy.tables_synced,
                 multi_bq_copy.tables_avoided,
@@ -127,7 +130,22 @@ Speed up {:1,.5f}""".format(
                 multi_bq_copy.views_failed_sync,
                 multi_bq_copy.rows_synced,
                 multi_bq_copy.rows_avoided,
+                multi_bq_copy.extract_fails,
+                multi_bq_copy.load_fails,
+                multi_bq_copy.copy_fails,
                 speed_up))
+
+
+    exitcode = 0
+
+    if multi_bq_copy.tables_failed_sync > 0 or \
+            multi_bq_copy.views_failed_sync > 0 or \
+            multi_bq_copy.extract_fails > 0 or \
+            multi_bq_copy.load_fails > 0 or \
+            multi_bq_copy.copy_fails > 0:
+        exitcode = -1
+
+    exit(exitcode)
 
 
 if __name__ == '__main__':
