@@ -51,6 +51,13 @@ the views) such they work in the new region. If views cannot be created it will 
 move to the next
 logging an error. If set to False views are not recreated.""")
 
+flags.DEFINE_integer('check_depth', -1,
+                  """The amount of checking that data is identcal
+-2 - Check rowcounts only
+-1 - Add in hash check on key times i.e. modified, updated,created, cluster fields
+ 0 - All level 0 root fields
+ 1 - All fields one below root fields etc.""")
+
 
 def main(argv):
     del argv  # Unused.
@@ -60,6 +67,8 @@ def main(argv):
                                                    "--help for help"
     assert FLAGS.dst_project_datasets is not None, "Destination project.dataset(s) must be set " \
                                                    "use --help for help"
+    assert FLAGS.check_depth > -2, "Check depth for data comparison MUST be > -2 see --help " \
+                                   "for details"
 
     # deal with if we have proxies, intercept certificates etc
     ca_certificates_file = boto.config.get('Boto', 'ca_certificates_file', "system")
@@ -94,7 +103,8 @@ def main(argv):
                                                    FLAGS.dst_bucket,
                                                    FLAGS.remove_deleted_tables,
                                                    FLAGS.copy_data,
-                                                   FLAGS.copy_views)
+                                                   FLAGS.copy_views,
+                                                   check_depth=FLAGS.check_depth)
 
     # tweak logging
     multi_bq_copy.logger = logging

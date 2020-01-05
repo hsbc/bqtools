@@ -1743,23 +1743,23 @@ class DefaultBQSyncDriver(object):
         expression_list = []
         for field in SCHEMA:
             if self.check_depth >= 0  or \
-                    (self.check_depth  >= -1 and (re.search("update.*time", field.name.lower()) or \
+                    (self.check_depth >= -1 and (re.search("update.*time", field.name.lower()) or \
                      re.search("modifi.*time",field.name.lower()) or \
                      re.search("creat.*time", field.name.lower()))):
                 if field.field_type == "STRING":
-                    expression_list.append("IFNULL({0},'')".format(field.name))
+                    expression_list.append("IFNULL(`{0}`,'')".format(field.name))
                 elif field.field_type == "TIMESTAMP":
                     expression_list.append(
-                        "CAST(IFNULL({0},TIMESTAMP('1970-01-01')) AS STRING)".format(field.name))
+                        "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(field.name))
                 elif field.field_type == "INTEGER" or field.field_type == "INT64":
-                    expression_list.append("CAST(IFNULL({0},0) AS STRING)".format(field.name))
+                    expression_list.append("CAST(IFNULL(`{0}`,0) AS STRING)".format(field.name))
                 elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
                         field.field_type == "NUMERIC":
-                    expression_list.append("CAST(IFNULL({0},0.0) AS STRING)".format(field.name))
+                    expression_list.append("CAST(IFNULL(`{0}`,0.0) AS STRING)".format(field.name))
                 elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
-                    expression_list.append("CAST(IFNULL({0},false) AS STRING)".format(field.name))
+                    expression_list.append("CAST(IFNULL(`{0}`,false) AS STRING)".format(field.name))
                 elif field.field_type == "BYTES":
-                    expression_list.append("CAST(IFNULL({0},'') AS STRING)".format(field.name))
+                    expression_list.append("CAST(IFNULL(`{0}`,'') AS STRING)".format(field.name))
         if len(expression_list) > 0:
             default = """,
 AVG(FARM_FINGERPRINT(CONCAT({0}))) as avgFingerprint,
@@ -1838,28 +1838,45 @@ class MultiBQSyncCoordinator(object):
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True):
+                 copy_views=True,
+                 check_depth=-1):
         assert len(srcproject_and_dataset_list) == len(dstproject_and_dataset_list),"Source and destination lists must be same length"
         assert len(srcproject_and_dataset_list) > 0, "Fro multi copy we need at least 1 source and 1 destination"
 
         # create the underlying copy drivers to copy each dataset
         # the sequence of these should be any cross dataset views are created correctly
         self.__copy_drivers = []
+        self.__check_depth = check_depth
 
         # create a copy driver for each pair of source destinations
         # note assumption is a set will always be from same source location to destination location
         for itemnum,src_project_dataset in enumerate(srcproject_and_dataset_list):
             dst_project_dataset = dstproject_and_dataset_list[itemnum]
-            copy_driver = MultiBQSyncDriver(src_project_dataset.split(".")[0], src_project_dataset.split(".")[1], dst_project_dataset.split(".")[1], dstproject=dst_project_dataset.split(".")[0],
-                 srcbucket=srcbucket, dstbucket=dstbucket, remove_deleted_tables=remove_deleted_tables,
-                 copy_data=copy_data,
-                 copy_views=copy_views,
-                 coordinator=self)
+            copy_driver = MultiBQSyncDriver(src_project_dataset.split(".")[0],
+                                            src_project_dataset.split(".")[1],
+                                            dst_project_dataset.split(".")[1],
+                                            dstproject=dst_project_dataset.split(".")[0],
+                                            srcbucket=srcbucket, dstbucket=dstbucket,
+                                            remove_deleted_tables=remove_deleted_tables,
+                                            copy_data=copy_data,
+                                            copy_views=copy_views,
+                                            check_depth=self.__check_depth,
+                                            coordinator=self)
             self.__copy_drivers.append(copy_driver)
 
     @property
     def logger(self):
         return self.__copy_drivers[0].logger
+
+    @property
+    def check_depth(self):
+        self.__check_depth
+
+    @check_depth.setter
+    def check_depth(self,value):
+        self.__check_depth = value
+        for copy_driver in self.__copy_drivers:
+            copy_driver.check_depth = self.__check_depth
 
     @logger.setter
     def logger(self,value):
@@ -1960,11 +1977,14 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self,srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True,coordinator=None):
+                 copy_views=True,
+                 check_depth=-1,
+                 coordinator=None):
         DefaultBQSyncDriver.__init__(self,srcproject, srcdataset, dstdataset, dstproject,
                  srcbucket, dstbucket, remove_deleted_tables,
                  copy_data,
-                 copy_views)
+                 copy_views,
+                 check_depth)
         self.__coordinater = coordinator
 
     @property
