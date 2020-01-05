@@ -10,7 +10,8 @@ basic usage is as follows
     --src_bucket=bucket_name --dst_bucket=another_bucket_name \
     --copy_data=True \
     --copy_views=True \
-    --remove_deleted_tables=True
+    --remove_deleted_tables=True \
+    --check_depth=-1
  
 Arguments
  
@@ -37,6 +38,11 @@ and move to the next logging an error. If set to False views are not recreated.
  
 *remove_deleted_tables* - defaults to True removes tables/views in destination datset that do not exist
 in source dataset
+
+*check_depth* - defaults to -1. Sets amount of data checking non partitioned tables only use update time and row count.
+Day partioned -2 can do rows per pratition -1 or rows per partition plus avg and stdev of farmfingerprint hash of fields
+such as created time, update time, modified time, 0 does all level 0 fields hashs and std dev, 1 will do depth 1 adding 
+depth effectively trades accuracy for timeliness  
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
