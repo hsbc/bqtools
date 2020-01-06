@@ -114,12 +114,12 @@ def main(argv):
 
     # provide some stats
     if multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided == 0:
-        speed_up = "Infinity"
+        speed_up = float('inf')
     else:
         speed_up = float(multi_bq_copy.rows_synced) / float(
             multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided)
 
-        multi_bq_copy.logger.info(
+    multi_bq_copy.logger.info(
             """Tables synced {}
 Tables avoided {:,d}
 Tables failed {:,d}

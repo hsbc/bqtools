@@ -2304,7 +2304,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             except StopIteration:
                 destination_ended = True
 
-            while not source_ended or not destination_ended:
+            while not (source_ended and destination_ended):
                 if not destination_ended and not source_ended and destination_row[
                     "partitionName"] == \
                         source_row["partitionName"]:
@@ -2333,15 +2333,15 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
-                elif destination_ended or source_row["partitionName"] < destination_row[
-                    "partitionName"]:
+                elif (destination_ended and not source_ended) or (not source_ended and source_row["partitionName"] < destination_row[
+                    "partitionName"]):
                     jobs.append(in_region_copy(copy_driver,
                                    "{}${}".format(table_name, source_row["partitionName"])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
-                elif source_ended or source_row["partitionName"] > destination_row["partitionName"]:
+                elif (source_ended and not destination_ended) or (not destination_ended and source_row["partitionName"] > destination_row["partitionName"]):
                     remove_deleted_destination_table(
                         copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
                     try:
@@ -2388,7 +2388,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             except StopIteration:
                 destination_ended = True
 
-            while not source_ended or not destination_ended:
+            while not (source_ended and destination_ended):
                 if not destination_ended and not source_ended and destination_row[
                     "partitionName"] == \
                         source_row["partitionName"]:
@@ -2421,8 +2421,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
-                elif destination_ended or source_row["partitionName"] < destination_row[
-                    "partitionName"]:
+                elif (destination_ended and not source_ended) or (not source_ended and source_row["partitionName"] < destination_row[
+                    "partitionName"]):
                     copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
                                                 [copy_driver, "{}${}".format(table_name,
                                                                              source_row[
@@ -2431,7 +2431,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
-                elif source_ended or source_row["partitionName"] > destination_row["partitionName"]:
+                elif (source_ended and not destination_ended) or (not destination_ended and source_row["partitionName"] > destination_row["partitionName"]):
                     remove_deleted_destination_table(
                         copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
                     try:
@@ -2477,17 +2477,38 @@ def cross_region_copy(copy_driver, table_name):
             src_bucket = client.get_bucket(copy_driver.source_bucket)
             dst_bucket = client.get_bucket(copy_driver.destination_bucket)
             for blob_num in range(blob_uris):
-                ablobname = blobname.replace("*","{:012d}".format(blob_num))
+                ablobname = blobname.replace("*", "{:012d}".format(blob_num))
                 src_blob = storage.blob.Blob(ablobname, src_bucket)
 
                 dst_blob = storage.blob.Blob(ablobname, dst_bucket)
-                (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
+                srcnotfound = True
+                try:
+                    (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
 
-                # wait for rewrite to finish
-                while token is not None:
-                    (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob, token=token)
+                    # wait for rewrite to finish
+                    while token is not None:
+                        (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob,
+                                                                                 token=token)
 
-                src_blob.delete()
+                    srcnotfound = False
+
+                except exceptions.NotFound as e:
+                    copy_driver.logger.exception(
+                        "Failed to copy blob gs://{}/{} to destination as not found".format(
+                            copy_driver.source_bucket,
+                            ablobname, copy_driver.destination_bucket))
+
+                if not srcnotfound:
+                    try:
+                        src_blob.delete()
+                    except exceptions.NotFound as e:
+                        copy_driver.logger.exception(
+                            "Failed to delete blob gs://{}/{}".format(copy_driver.source_bucket,                                                          ablobname))
+                    except exceptions.TooManyRequests:
+                        # just ignor too many requests
+                        pass
+                    except Exceptions as e:
+                        pass
 
             dst_uri = "gs://{}/{}".format(copy_driver.destination_bucket, blobname)
             bqclient = copy_driver.destination_client
@@ -2742,6 +2763,7 @@ def patch_destination_view(copy_driver,table_name,view_input):
         copy_driver.get_logger().exception(
             "Not Found patching view {}".format(table_name))
 
+
 def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     """
     Function to use copy driver  to copy tables from 1 dataset to another
@@ -2783,14 +2805,16 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     source_ended = False
     destination_ended = False
 
-    source_generator = run_query(copy_driver.source_client, source_query, "List source tables",copy_driver.get_logger(),
+    source_generator = run_query(copy_driver.source_client, source_query, "List source tables",
+                                 copy_driver.get_logger(),
                                  location=copy_driver.source_location)
     try:
         source_row = next(source_generator)
     except StopIteration:
         source_ended = True
 
-    destination_generator = run_query(copy_driver.destination_client, destination_query,copy_driver.get_logger(),
+    destination_generator = run_query(copy_driver.destination_client, destination_query,
+                                      copy_driver.get_logger(),
                                       "List destination tables",
                                       location=copy_driver.destination_location)
     try:
@@ -2798,35 +2822,41 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     except StopIteration:
         destination_ended = True
 
-    while not source_ended or not destination_ended:
+    while not (source_ended and destination_ended):
         if not destination_ended and not source_ended and destination_row["table_name"] == \
                 source_row["table_name"]:
             copy_driver.increment_tables_synced()
-            schema_q.put((0, (compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
+            schema_q.put(
+                (0, (compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
-            try:
-                destination_row = next(destination_generator)
-            except StopIteration:
-                destination_ended = True
-        elif destination_ended or source_row["table_name"] < destination_row["table_name"]:
-            schema_q.put((0, (create_and_copy_table, [copy_driver, source_row["table_name"]])))
-            try:
-                source_row = next(source_generator)
-            except StopIteration:
-                source_ended = True
-        elif source_ended or source_row["table_name"] > destination_row["table_name"]:
-            copy_driver.increment_tables_synced()
-            schema_q.put((0, (
-            remove_deleted_destination_table, [copy_driver, destination_row["table_name"]])))
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
                 destination_ended = True
 
-    wait_for_queue(schema_q,"Table schemas sychronization",0.1,copy_driver.get_logger())
+        elif (destination_ended and not source_ended) or (
+                not source_ended and source_row["table_name"] < destination_row["table_name"]):
+            schema_q.put((0, (create_and_copy_table, [copy_driver, source_row["table_name"]])))
+            try:
+                source_row = next(source_generator)
+            except StopIteration:
+                source_ended = True
+
+        elif (source_ended and not destination_ended) or (
+                not destination_ended and source_row["table_name"] > destination_row[
+            "table_name"]):
+            copy_driver.increment_tables_synced()
+            schema_q.put((0, (
+                remove_deleted_destination_table, [copy_driver, destination_row["table_name"]])))
+            try:
+                destination_row = next(destination_generator)
+            except StopIteration:
+                destination_ended = True
+
+    wait_for_queue(schema_q, "Table schemas sychronization", 0.1, copy_driver.get_logger())
 
     if copy_driver.copy_views:
 
@@ -2886,7 +2916,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     destination_row = next(destination_generator)
                 except StopIteration:
                     destination_ended = True
-            elif destination_ended or source_row["table_name"] < destination_row["table_name"]:
+            elif (destination_ended and not source_ended) or (
+                    not source_ended and source_row["table_name"] < destination_row[
+                "table_name"]):
                 copy_driver.increment_views_synced()
                 expected_definition = copy_driver.update_source_view_definition(
                     source_row["view_definition"], source_row["use_standard_sql"])
@@ -2897,7 +2929,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     source_row = next(source_generator)
                 except StopIteration:
                     source_ended = True
-            elif source_ended or source_row["table_name"] > destination_row["table_name"]:
+            elif (source_ended and not destination_ended) or (
+                    not destination_ended and source_row["table_name"] > destination_row[
+                "table_name"]):
                 schema_q.put((0, (
                     remove_deleted_destination_table,
                     [copy_driver, destination_row["table_name"]])))
