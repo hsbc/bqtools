@@ -19,21 +19,14 @@ import os
 import pprint
 import re
 import threading
-
-# handle python 2 and 3 versions of this
-import six
-
-# handle python 2 and 3 versions of this
-try:
-   import queue
-except ImportError:
-   import Queue as queue
-
 from datetime import datetime, date, timedelta, time
 from time import sleep
 
+# handle python 2 and 3 versions of this
+import six
 from google.cloud import bigquery, exceptions, storage
 from jinja2 import Environment, select_autoescape, FileSystemLoader
+from six.moves import queue
 
 # import logging
 
