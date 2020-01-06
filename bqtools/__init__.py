@@ -2503,7 +2503,8 @@ def cross_region_copy(copy_driver, table_name):
                         src_blob.delete()
                     except exceptions.NotFound as e:
                         copy_driver.logger.exception(
-                            "Failed to delete blob gs://{}/{}".format(copy_driver.source_bucket,                                                          ablobname))
+                            "Failed to delete blob gs://{}/{}".format(copy_driver.source_bucket,
+                                                                      ablobname))
                     except exceptions.TooManyRequests:
                         # just ignor too many requests
                         pass
@@ -2534,11 +2535,19 @@ def cross_region_copy(copy_driver, table_name):
 
         callbackobj = {job.job_id: delete_blob}
         wait_for_jobs([job], copy_driver.get_logger(),
-                      desc="Wait for load job for table {}".format(table_name),
+                      desc="Wait for load job for table {}.{}.{}".format(
+                          copy_driver.destination_project,
+                          copy_driver.destination_dataset,
+                          table_name),
                       call_back_on_complete=callbackobj)
 
-    callbackobj = {job.job_id:cross_region_rewrite}
-    wait_for_jobs([job],copy_driver.get_logger(),desc="Wait for extract job for table {}".format(table_name),call_back_on_complete=callbackobj)
+    callbackobj = {job.job_id: cross_region_rewrite}
+    wait_for_jobs([job], copy_driver.get_logger(),
+                  desc="Wait for extract job for table {}.{}.{}".format(
+                      copy_driver.source_project,
+                      copy_driver.source_dataset,
+                      table_name),
+                  call_back_on_complete=callbackobj)
 
     return
 
