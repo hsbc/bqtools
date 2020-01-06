@@ -17,13 +17,12 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string('src_project_datasets', None,
                     """A comma separated list of projects and datasets to copy to the destination 
-                    projects and datasets.
-Each item in list is project followed by a period '.' and then the dataset. The list in this
-argument MUST contain same number as in the dst_project_dataset argument""")
+projects and datasets. Each item in list is project followed by a period '.' and then the dataset. 
+The list in this argument MUST contain same number as in the dst_project_dataset argument""")
+
 flags.DEFINE_string('dst_project_datasets', None,
                     """A comma separated list of projects and datasets to copy into. These maybe 
-                    in a different region
-if they are then the src_bucket and dst_bucket MUST be specified.""")
+in a different region if they are then the src_bucket and dst_bucket MUST be specified.""")
 flags.DEFINE_string('src_bucket', None,
                     """If the source set of datasets and region are different to the destination 
                     datasets region data
@@ -32,24 +31,26 @@ the source datasets when
 copying across regions.""")
 flags.DEFINE_string('dst_bucket', None,
                     """If the destination set is different to the source the data extracted into 
-                    src_bucket will
-rewritten to this destination bucket and then loaded into the destination datasets.""")
+src_bucket will rewritten to this destination bucket and then loaded into the destination datasets.""")
+
 flags.DEFINE_bool('copy_data', True,
                   """Default is True bqsync will copy data if set to False will only copy 
-                  schemas""")
+schemas""")
+
 flags.DEFINE_bool('copy_views', True,
                   """Default is True bqsync will attempt to adjust views (i.e. change projects 
-                  and dataset names in
-the views) such they work in the new region. If views cannot be created it will skip the view and 
-move to the next
-logging an error. If set to False views are not recreated.""")
+and dataset names in the views) such they work in the new region. If views cannot be created it 
+will skip the view and move to the next logging an error. If set to False views are not recreated.""")
+
+flags.DEFINE_bool('copy_access', True,"""Copy access permissions note this has to interact with 
+copy views generally if you are not copying views then only set this if no authorised views. 
+Suggest if you do have these run with nocopy_data and set access and then run copying data wit
+nocopy_access.""")
 
 flags.DEFINE_bool('remove_deleted_tables', True,
                   """Default is True bqsync will attempt to adjust views (i.e. change projects 
-                  and dataset names in
-the views) such they work in the new region. If views cannot be created it will skip the view and 
-move to the next
-logging an error. If set to False views are not recreated.""")
+and dataset names in the views) such they work in the new region. If views cannot be created it 
+will skip the view and move to the next logging an error. If set to False views are not recreated.""")
 
 flags.DEFINE_integer('check_depth', -1,
                   """The amount of checking that data is identcal

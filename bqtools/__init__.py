@@ -47,7 +47,7 @@ _ROOT = os.path.abspath(os.path.dirname(__file__))
 
 # get a list of tables for a given dataset in table name
 # sorted by name so can be compared with anpther list
-DSTABLELISTQUERY="""SELECT
+DSTABLELISTQUERY = """SELECT
   table_name
 FROM
   {}.INFORMATION_SCHEMA.TABLES
@@ -61,7 +61,7 @@ ORDER BY
 # so in theory the date order is the right order.
 # however view updates could mess this up
 # but lets try this if it generally works grea
-DSVIEWLISTQUERY="""SELECT
+DSVIEWLISTQUERY = """SELECT
   v.table_name,
   v.use_standard_sql,
   t.creation_time,
@@ -77,7 +77,7 @@ WHERE
 ORDER BY
   v.table_name"""
 
-DSVIEWORDER="""SELECT
+DSVIEWORDER = """SELECT
   t.table_name
 FROM
   {0}.INFORMATION_SCHEMA.TABLES AS t
@@ -86,7 +86,7 @@ WHERE
 ORDER BY
   creation_time"""
 
-TCMPDAYPARTITION="""SELECT
+TCMPDAYPARTITION = """SELECT
   FORMAT_TIMESTAMP("%Y%m%d", _PARTITIONTIME) AS partitionName,
   COUNT(*) AS rowNum{extrafunctions}
 FROM
@@ -100,9 +100,10 @@ ORDER BY
 # if no mapping just lower cases the dataset region and it will match is assumption
 # when copying between regions the kms name is assumed the same bar the region
 # keys are not compared in idffs and patching is feasible after the fact
-MAPBQREGION2KMSREGION={
-    "EU":"europe"
+MAPBQREGION2KMSREGION = {
+    "EU": "europe"
 }
+
 
 class BQJsonEncoder(json.JSONEncoder):
     """ Class to implement encoding for date times, dates and timedelta
@@ -177,6 +178,7 @@ class SchemaMutationError(BQTError):
         super(SchemaMutationError, self).__init__(
             self.CUSTOM_ERROR_MESSAGE.format(objtomatch, keyi, path))
 
+
 class BQQueryError(BQTError):
     """Error for Query execution error."""
     CUSTOM_ERROR_MESSAGE = 'GCP API Error: unable to processquery {0} from GCP:\n{1}'
@@ -184,6 +186,7 @@ class BQQueryError(BQTError):
     def __init__(self, query, desc, e):
         super(ApiExecutionError, self).__init__(
             self.CUSTOM_ERROR_MESSAGE.format(query, e))
+
 
 def get_json_struct(jsonobj, template=None):
     """
@@ -1346,7 +1349,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
     return compute_region.lower() == bq_compute_region
 
 
-def run_query(client, query, logger, desctext="",location=None, max_results=10000):
+def run_query(client, query, logger, desctext="", location=None, max_results=10000):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1365,7 +1368,7 @@ def run_query(client, query, logger, desctext="",location=None, max_results=1000
     query_job = client.query(query, job_config=job_config, location=location)
 
     pretty_printer = pprint.PrettyPrinter(indent=4)
-    results=False
+    results = False
     while True:
         query_job.reload()  # Refreshes the state via a GET request.
 
@@ -1387,10 +1390,11 @@ def run_query(client, query, logger, desctext="",location=None, max_results=1000
         # a page at a time.
         # page_token = None
 
-        for irow in  query_job.result():
+        for irow in query_job.result():
             yield irow
 
     return
+
 
 class DefaultBQSyncDriver(object):
     """ This class provides mechanical input to qsync functions"""
@@ -1400,18 +1404,23 @@ class DefaultBQSyncDriver(object):
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
                  copy_views=True,
-                 check_depth=-1):
+                 check_depth=-1,
+                 copy_access=True):
         """
         Constructor for base copy driver all other drivers should inherit from this
-        :param srcproject: The project that is the source for the copy (note all actions are done inc ontext of source project)
+        :param srcproject: The project that is the source for the copy (note all actions are done
+        inc ontext of source project)
         :param srcdataset: The source dataset
         :param dstdataset: The destination dataset
         :param dstproject: The source project if None assumed to be source project
-        :param srcbucket:  The source bucket when copying cross region data is extracted to this bucket rewritten to destination bucket
+        :param srcbucket:  The source bucket when copying cross region data is extracted to this
+        bucket rewritten to destination bucket
         :param dstbucket: The destination bucket where data is loaded from
-        :param remove_deleted_tables: If table exists in destination but not in source should it be deleted
+        :param remove_deleted_tables: If table exists in destination but not in source should it
+        be deleted
         :param copy_data: Copy data or just do schema
-        :param copy_views: Copy views not just tables attempts to rewrite views into context of destination failures are logged but continues
+        :param copy_views: Copy views not just tables attempts to rewrite views into context of
+        destination failures are logged but continues
         """
         if dstproject is None:
             dstproject = srcproject
@@ -1435,6 +1444,7 @@ class DefaultBQSyncDriver(object):
         self.reset_stats()
         self.__logger = logging
         self.__check_depth = check_depth
+        self.__copy_access = copy_access
 
         # now check that from a service the copy makes sense
         assert dataset_exists(self.source_client, self.source_client.dataset(
@@ -1457,23 +1467,27 @@ class DefaultBQSyncDriver(object):
             assert srcbucket is not None, "Being asked to copy datasets across region but no " \
                                           "source bucket is defined these must be in same region " \
                                           "as source dataset"
-            assert isinstance(srcbucket, six.string_types), "Being asked to copy datasets across region but no " \
-                                               "" \
-                                               "" \
-                                               "source bucket is not a string"
+            assert isinstance(srcbucket,
+                              six.string_types), "Being asked to copy datasets across region but " \
+                                                 "no " \
+                                                 "" \
+                                                 "" \
+                                                 "source bucket is not a string"
             self._source_bucket = srcbucket
             assert dstbucket is not None, "Being asked to copy datasets across region but no " \
                                           "destination bucket is defined these must be in same " \
                                           "region " \
                                           "as destination dataset"
-            assert isinstance(dstbucket, six.string_types), "Being asked to copy datasets across region but " \
-                                               "destination bucket is not a string"
+            assert isinstance(dstbucket,
+                              six.string_types), "Being asked to copy datasets across region but " \
+                                                 "destination bucket is not a string"
             self._destination_bucket = dstbucket
             client = storage.Client(project=self.source_project)
             src_bucket = client.get_bucket(self.source_bucket)
             assert compute_region_equals_bqregion(src_bucket.location,
                                                   source_dataset_impl.location), "Source bucket " \
                                                                                  "location is not " \
+                                                                                 "" \
                                                                                  "same as source " \
                                                                                  "dataset location"
             dst_bucket = client.get_bucket(self.destination_bucket)
@@ -1500,6 +1514,14 @@ class DefaultBQSyncDriver(object):
     def copy_fails(self):
         return self.__copy_fails
 
+    @property
+    def copy_access(self):
+        return self.__copy_access
+
+    @copy_access.setter
+    def copy_access(self,value):
+        self.__copy_access = value
+
     def increment_copy_fails(self):
         self.__copy_fails += 1
 
@@ -1522,7 +1544,7 @@ class DefaultBQSyncDriver(object):
         return self.__check_depth
 
     @check_depth.setter
-    def check_depth(self,value):
+    def check_depth(self, value):
         self.__check_depth = value
 
     @property
@@ -1561,28 +1583,28 @@ class DefaultBQSyncDriver(object):
     def copy_views(self):
         return self.__copy_views
 
-    def add_bytes_synced(self,bytes):
-        self.__bytes_synced+=bytes
+    def add_bytes_synced(self, bytes):
+        self.__bytes_synced += bytes
 
     @property
     def rows_synced(self):
         return self.__rows_synced
 
-    def add_rows_synced(self,rows):
+    def add_rows_synced(self, rows):
         self.__rows_synced += rows
 
     @property
     def bytes_avoided(self):
         return self.__bytes_avoided
 
-    def add_bytes_avoided(self,bytes):
-        self.__bytes_avoided+=bytes
+    def add_bytes_avoided(self, bytes):
+        self.__bytes_avoided += bytes
 
     @property
     def rows_avoided(self):
         return self.__rows_avoided
 
-    def add_rows_avoided(self,rows):
+    def add_rows_avoided(self, rows):
         self.__rows_avoided += rows
 
     @property
@@ -1697,7 +1719,7 @@ class DefaultBQSyncDriver(object):
     def jobs(self):
         return self.__jobs
 
-    def add_job(self,job):
+    def add_job(self, job):
         self.__jobs.append(job)
 
     @property
@@ -1719,7 +1741,7 @@ class DefaultBQSyncDriver(object):
         """
         return True
 
-    def extra_dp_compare_functions(self,table):
+    def extra_dp_compare_functions(self, table):
         """
         Function to allow record comparison checks for a day partition
         These shoul dbe aggregates for the partition i..e max, min, avg
@@ -1738,10 +1760,10 @@ class DefaultBQSyncDriver(object):
         """
         expression_list = []
         for field in SCHEMA:
-            if self.check_depth >= 0  or \
+            if self.check_depth >= 0 or \
                     (self.check_depth >= -1 and (re.search("update.*time", field.name.lower()) or \
-                     re.search("modifi.*time",field.name.lower()) or \
-                     re.search("creat.*time", field.name.lower()))):
+                                                 re.search("modifi.*time", field.name.lower()) or \
+                                                 re.search("creat.*time", field.name.lower()))):
                 if field.field_type == "STRING":
                     expression_list.append("IFNULL(`{0}`,'')".format(field.name))
                 elif field.field_type == "TIMESTAMP":
@@ -1773,7 +1795,7 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
         """
         return self._copy_data
 
-    def table_data_change(self,srctable, dsttable):
+    def table_data_change(self, srctable, dsttable):
         """
         Method to allow customisation of detecting if table differs
         default method is check rows, numberofbytes and last modified time
@@ -1785,7 +1807,7 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
         """
         return False
 
-    def fault_barrier(self,function, *args):
+    def fault_barrier(self, function, *args):
         """
         A fault barrie here to ensure functions called in thread
         do n9t exit prematurely
@@ -1812,12 +1834,31 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
 
         return view_definition
 
+    def create_access_view(self,entity_id):
+        """
+        Convert an old view authorised view
+        to a new one i.e. change project id
+
+        :param entity_id:
+        :return: a view {
+        ...     'projectId': 'my-project',
+        ...     'datasetId': 'my_dataset',
+        ...     'tableId': 'my_table'
+        ... }
+        """
+        if enity_id["projectId"] == self.source_project and enity_id[
+            "datasetId"] == self.source_dataset:
+            enity_id["projectId"] = self.destination_project
+            entity_id["datasetId"] = self.destination_dataset
+
+        return bigquery.AccessEntry(None, 'view', enity_id)
+
     @property
     def logger(self):
         return self.__logger
 
     @logger.setter
-    def logger(self,alogger):
+    def logger(self, alogger):
         self.__logger = alogger
 
     def get_logger(self):
@@ -1827,17 +1868,23 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
         """
         return self.__logger
 
+
 class MultiBQSyncCoordinator(object):
     """
     Class to copy many datasets from one region to another and reset associated views
     """
+
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
                  copy_views=True,
-                 check_depth=-1):
-        assert len(srcproject_and_dataset_list) == len(dstproject_and_dataset_list),"Source and destination lists must be same length"
-        assert len(srcproject_and_dataset_list) > 0, "Fro multi copy we need at least 1 source and 1 destination"
+                 check_depth=-1,
+                 copy_access=True):
+        assert len(srcproject_and_dataset_list) == len(
+            dstproject_and_dataset_list), "Source and destination lists must be same length"
+        assert len(
+            srcproject_and_dataset_list) > 0, "Fro multi copy we need at least 1 source and 1 " \
+                                              "destination"
 
         # create the underlying copy drivers to copy each dataset
         # the sequence of these should be any cross dataset views are created correctly
@@ -1846,7 +1893,7 @@ class MultiBQSyncCoordinator(object):
 
         # create a copy driver for each pair of source destinations
         # note assumption is a set will always be from same source location to destination location
-        for itemnum,src_project_dataset in enumerate(srcproject_and_dataset_list):
+        for itemnum, src_project_dataset in enumerate(srcproject_and_dataset_list):
             dst_project_dataset = dstproject_and_dataset_list[itemnum]
             copy_driver = MultiBQSyncDriver(src_project_dataset.split(".")[0],
                                             src_project_dataset.split(".")[1],
@@ -1857,7 +1904,8 @@ class MultiBQSyncCoordinator(object):
                                             copy_data=copy_data,
                                             copy_views=copy_views,
                                             check_depth=self.__check_depth,
-                                            coordinator=self)
+                                            coordinator=self,
+                                            copy_access=copy_access)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -1869,13 +1917,13 @@ class MultiBQSyncCoordinator(object):
         self.__check_depth
 
     @check_depth.setter
-    def check_depth(self,value):
+    def check_depth(self, value):
         self.__check_depth = value
         for copy_driver in self.__copy_drivers:
             copy_driver.check_depth = self.__check_depth
 
     @logger.setter
-    def logger(self,value):
+    def logger(self, value):
         for copy_driver in self.__copy_drivers:
             copy_driver.logger = value
 
@@ -1964,23 +2012,37 @@ class MultiBQSyncCoordinator(object):
         for copy_driver in self.__copy_drivers:
             sync_bq_datset(copy_driver)
 
+    def create_access_view(self, entity_id):
+        access = None
+
+        for copy_driver in self.__copy_drivers:
+            if access is not None:
+                entity_id = access.entity_id
+            access = copy_driver.real_create_access_view(entity_id)
+
+        return access
+
     def update_source_view_definition(self, view_definition, use_standard_sql):
         for copy_driver in self.__copy_drivers:
-            view_definition = copy_driver.real_update_source_view_definition(view_definition, use_standard_sql)
+            view_definition = copy_driver.real_update_source_view_definition(view_definition,
+                                                                             use_standard_sql)
         return view_definition
 
+
 class MultiBQSyncDriver(DefaultBQSyncDriver):
-    def __init__(self,srcproject, srcdataset, dstdataset, dstproject=None,
+    def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
                  copy_views=True,
                  check_depth=-1,
+                 copy_access=True,
                  coordinator=None):
-        DefaultBQSyncDriver.__init__(self,srcproject, srcdataset, dstdataset, dstproject,
-                 srcbucket, dstbucket, remove_deleted_tables,
-                 copy_data,
-                 copy_views,
-                 check_depth)
+        DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
+                                     srcbucket, dstbucket, remove_deleted_tables,
+                                     copy_data,
+                                     copy_views,
+                                     check_depth,
+                                     copy_access = copy_access)
         self.__coordinater = coordinator
 
     @property
@@ -1988,7 +2050,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         return self.__coordinater
 
     @coordinater.setter
-    def coordinater(self,value):
+    def coordinater(self, value):
         self.__coordinater = value
 
     def real_update_source_view_definition(self, view_definition, use_standard_sql):
@@ -2004,8 +2066,31 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
         return view_definition
 
+    def real_create_access_view(self,entity_id):
+        """
+        Convert an old view authorised view
+        to a new one i.e. change project id
+
+        :param entity_id:
+        :return: a view {
+        ...     'projectId': 'my-project',
+        ...     'datasetId': 'my_dataset',
+        ...     'tableId': 'my_table'
+        ... }
+        """
+        if entity_id["projectId"] == self.source_project and entity_id[
+            "datasetId"] == self.source_dataset:
+            entity_id["projectId"] = self.destination_project
+            entity_id["datasetId"] = self.destination_dataset
+
+        return bigquery.AccessEntry(None, 'view', entity_id)
+
+    def create_access_view(self, entity_id):
+        return self.coordinater.create_access_view(entity_id)
+
     def update_source_view_definition(self, view_definition, use_standard_sql):
         return self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
+
 
 def create_and_copy_table(copy_driver, table_name):
     """
@@ -2068,7 +2153,7 @@ def create_and_copy_table(copy_driver, table_name):
 
     copy_driver.get_logger().info(
         "Created table {}.{}.{}".format(copy_driver.destination_project,
-                                     copy_driver.destination_dataset,
+                                        copy_driver.destination_dataset,
                                         table_name))
 
     # anything to copy we have just created table
@@ -2077,8 +2162,9 @@ def create_and_copy_table(copy_driver, table_name):
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
         copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
-                                    [copy_driver, table_name, srctable.partitioning_type, 0,
-                                     srctable.num_rows])))
+                                                         [copy_driver, table_name,
+                                                          srctable.partitioning_type, 0,
+                                                          srctable.num_rows])))
 
 
 def compare_schema_patch_ifneeded(copy_driver, table_name):
@@ -2121,20 +2207,20 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         working_schema = []
         changes = 0
 
-        field_names_found={}
+        field_names_found = {}
 
-        for schema_item  in input["oldchema"]:
+        for schema_item in input["oldchema"]:
             match = False
             for tgt_schema_item in input["newschema"]:
                 if tgt_schema_item.name == schema_item.name:
-                    field_names_found[schema_item.name]=True
+                    field_names_found[schema_item.name] = True
                     match = True
                     # cannot patch type changes so have to recreate
                     if tgt_schema_item.field_type != schema_item.field_type:
                         changes += 1
                         input["workingchema"] = working_schema
                         input["changes"] = changes
-                        input["deleteandrecreate"]=True
+                        input["deleteandrecreate"] = True
                         return input
                     if tgt_schema_item.description != schema_item.description:
                         changes += 1
@@ -2146,11 +2232,12 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             changes += 1
                             input["workingchema"] = working_schema
                             input["changes"] = changes
-                            input["deleteandrecreate"]=True
+                            input["deleteandrecreate"] = True
                             return input
 
                         output = compare_and_merge_schema_fields(
-                            {"oldchema": list(schema_item.fields), "newschema": list(tgt_schema_item.fields)})
+                            {"oldchema": list(schema_item.fields),
+                             "newschema": list(tgt_schema_item.fields)})
                         changes += output["changes"]
                         # if changes then need to create a new schema with new fields
                         # field is immutable so convert to api rep
@@ -2160,7 +2247,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             for schema_item in output["workingchema"]:
                                 newfields.append(schema_item.to_api_repr())
                             tmp_work = tgt_schema_item.to_api_repr()
-                            tmp_work["fields"] =  newfields
+                            tmp_work["fields"] = newfields
                             working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
                         else:
                             working_schema.append(tgt_schema_item)
@@ -2177,7 +2264,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
         # add any new structures
         for tgt_schema_item in input["newschema"]:
-            if tgt_schema_item.name  not in field_names_found:
+            if tgt_schema_item.name not in field_names_found:
                 working_schema.append(tgt_schema_item)
                 changes += 1
 
@@ -2188,7 +2275,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         input["changes"] = changes
         return input
 
-    output = compare_and_merge_schema_fields({"oldchema":OLD_SCHEMA, "newschema":NEW_SCHEMA})
+    output = compare_and_merge_schema_fields({"oldchema": OLD_SCHEMA, "newschema": NEW_SCHEMA})
     if "deleteandrecreate" in output:
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
@@ -2201,7 +2288,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         if len(fields) > 0:
             try:
                 copy_driver.destination_client.update_table(dsttable,
-                                                        fields)
+                                                            fields)
             except Exception:
                 copy_driver.increment_tables_failed_sync()
                 raise
@@ -2209,8 +2296,8 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
             dsttable = copy_driver.source_client.get_table(dsttable_ref)
             copy_driver.get_logger().info(
                 "Patched table {}.{}.{} {}".format(copy_driver.destination_project,
-                                             copy_driver.destination_dataset,
-                                                table_name,",".join(fields)))
+                                                   copy_driver.destination_dataset,
+                                                   table_name, ",".join(fields)))
         else:
             copy_driver.increment_tables_avoided()
 
@@ -2221,8 +2308,10 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
             copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
-                                        [copy_driver, table_name, srctable.partitioning_type,
-                                         dsttable.num_rows, srctable.num_rows])))
+                                                             [copy_driver, table_name,
+                                                              srctable.partitioning_type,
+                                                              dsttable.num_rows,
+                                                              srctable.num_rows])))
         else:
             copy_driver.add_bytes_avoided(srctable.num_bytes)
             copy_driver.add_rows_avoided(srctable.num_rows)
@@ -2241,14 +2330,17 @@ def remove_deleted_destination_table(copy_driver, table_name):
         copy_driver.destination_client.delete_table(table)
         copy_driver.get_logger().info(
             "Deleted table/view {}.{}.{}".format(copy_driver.destination_project,
-                                              copy_driver.destination_dataset,
-                                              table_name))
+                                                 copy_driver.destination_dataset,
+                                                 table_name))
+
 
 # need to be able to compare close numbers
-# https://stackoverflow.com/questions/5595425/what-is-the-best-way-to-compare-floats-for-almost-equality-in-python
+# https://stackoverflow.com/questions/5595425/what-is-the-best-way-to-compare-floats-for-almost
+# -equality-in-python
 #
 def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
-    return abs(a-b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
+    return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
+
 
 def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_rows):
     """
@@ -2267,15 +2359,15 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
         srctable_ref = bqclient.dataset(copy_driver.source_dataset).table(table_name)
         srctable = bqclient.get_table(srctable_ref)
         extrafields = copy_driver.extra_dp_compare_functions(
-                                                srctable)
+            srctable)
         src_query = TCMPDAYPARTITION.format(project=copy_driver.source_project,
                                             dataset=copy_driver.source_dataset,
                                             extrafunctions=extrafields,
-                                            table_name = table_name)
+                                            table_name=table_name)
         dst_query = TCMPDAYPARTITION.format(project=copy_driver.destination_project,
                                             dataset=copy_driver.destination_dataset,
                                             extrafunctions=extrafields,
-                                            table_name = table_name)
+                                            table_name=table_name)
 
     # if same region now just do a table copy
     if copy_driver.same_region:
@@ -2317,14 +2409,16 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         # type errors so only check within float
                         # accuracy tolerance
                         if source_row[key] != destination_row[key] and (
-                                not isinstance(source_row[key], float) or not isclose(source_row[key],
-                                                                                  destination_row[
-                                                                                      key])):
+                                not isinstance(source_row[key], float) or not isclose(
+                            source_row[key],
+                            destination_row[
+                                key])):
                             diff = True
                             break
                     if diff:
                         jobs.append(in_region_copy(copy_driver,
-                                       "{}${}".format(table_name, source_row["partitionName"])))
+                                                   "{}${}".format(table_name,
+                                                                  source_row["partitionName"])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -2333,15 +2427,19 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
-                elif (destination_ended and not source_ended) or (not source_ended and source_row["partitionName"] < destination_row[
+                elif (destination_ended and not source_ended) or (
+                        not source_ended and source_row["partitionName"] < destination_row[
                     "partitionName"]):
                     jobs.append(in_region_copy(copy_driver,
-                                   "{}${}".format(table_name, source_row["partitionName"])))
+                                               "{}${}".format(table_name,
+                                                              source_row["partitionName"])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
-                elif (source_ended and not destination_ended) or (not destination_ended and source_row["partitionName"] > destination_row["partitionName"]):
+                elif (source_ended and not destination_ended) or (
+                        not destination_ended and source_row["partitionName"] > destination_row[
+                    "partitionName"]):
                     remove_deleted_destination_table(
                         copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
                     try:
@@ -2401,16 +2499,19 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         # type errors so only check within float
                         # accuracy tolerance
                         if source_row[key] != destination_row[key] and (
-                                not isinstance(source_row[key], float) or not isclose(source_row[key],
-                                                                                  destination_row[
-                                                                                      key])):
+                                not isinstance(source_row[key], float) or not isclose(
+                            source_row[key],
+                            destination_row[
+                                key])):
                             diff = True
                             break
                     if diff:
                         copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
-                                                    [copy_driver, "{}${}".format(table_name,
-                                                                      source_row[
-                                                                          "partitionName"])])))
+                                                                            [copy_driver,
+                                                                             "{}${}".format(
+                                                                                 table_name,
+                                                                                 source_row[
+                                                                                     "partitionName"])])))
                     else:
                         copy_driver.add_rows_avoided(source_row["rowNum"])
                     try:
@@ -2421,24 +2522,27 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
-                elif (destination_ended and not source_ended) or (not source_ended and source_row["partitionName"] < destination_row[
+                elif (destination_ended and not source_ended) or (
+                        not source_ended and source_row["partitionName"] < destination_row[
                     "partitionName"]):
                     copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
-                                                [copy_driver, "{}${}".format(table_name,
-                                                                             source_row[
-                                                                                 "partitionName"])])))
+                                                                        [copy_driver,
+                                                                         "{}${}".format(table_name,
+                                                                                        source_row[
+                                                                                            "partitionName"])])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
-                elif (source_ended and not destination_ended) or (not destination_ended and source_row["partitionName"] > destination_row["partitionName"]):
+                elif (source_ended and not destination_ended) or (
+                        not destination_ended and source_row["partitionName"] > destination_row[
+                    "partitionName"]):
                     remove_deleted_destination_table(
                         copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
                     try:
                         destination_row = next(destination_generator)
                     except StopIteration:
                         destination_ended = True
-
 
 
 def cross_region_copy(copy_driver, table_name):
@@ -2454,9 +2558,9 @@ def cross_region_copy(copy_driver, table_name):
 
     bqclient = copy_driver.source_client
     blobname = "{}-{}-{}-{}-{}*.avro".format(table_name, copy_driver.source_project,
-                                            copy_driver.source_dataset,
-                                            copy_driver.destination_project,
-                                            copy_driver.destination_dataset)
+                                             copy_driver.source_dataset,
+                                             copy_driver.destination_project,
+                                             copy_driver.destination_dataset)
     src_uri = "gs://{}/{}".format(copy_driver.source_bucket, blobname)
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
     job_config = bigquery.ExtractJobConfig()
@@ -2570,7 +2674,6 @@ def in_region_copy(copy_driver, table_name):
     return job
 
 
-
 def sync_bq_processor(stop_event, copy_driver, q):
     """
     Main background thread driver loop for copying
@@ -2580,10 +2683,10 @@ def sync_bq_processor(stop_event, copy_driver, q):
     """
     assert isinstance(copy_driver,
                       DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
-                                          "Driver"
+                                            "Driver"
     assert isinstance(q,
                       queue.Queue), "Must be passed a queue for background thread " \
-                                          "Driver"
+                                    "Driver"
     while not stop_event.isSet():
         try:
             try:
@@ -2608,7 +2711,7 @@ def sync_bq_processor(stop_event, copy_driver, q):
             pass
 
 
-def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1,call_back_on_complete=None):
+def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=None):
     """
     Wait for a list of big query jobs to complete
     :param jobs: The array of jobs to wait for
@@ -2650,7 +2753,8 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1,call_back_on_complete=Non
             jobs = [x for x in jobs if x.job_id
                     is not None and not x.state == 'DONE']
 
-def wait_for_queue(q,desc=None,sleepTime=0.1,logger=None):
+
+def wait_for_queue(q, desc=None, sleepTime=0.1, logger=None):
     """
     Wit for background queue to finish
     :param q: The q to wiat for
@@ -2660,7 +2764,7 @@ def wait_for_queue(q,desc=None,sleepTime=0.1,logger=None):
         qsize = q.qsize()
         if qsize > 0:
             if logger is None and desc is None:
-                logger.info("Waiting for {} tasks {} to start".format(qsize,desc))
+                logger.info("Waiting for {} tasks {} to start".format(qsize, desc))
             sleep(sleepTime)
 
     if logger is None and desc is None:
@@ -2669,7 +2773,8 @@ def wait_for_queue(q,desc=None,sleepTime=0.1,logger=None):
     if logger is None and desc is None:
         logger.info("All tasks {} now complete".format(qsize, desc))
 
-def create_destination_view(copy_driver,table_name,view_input):
+
+def create_destination_view(copy_driver, table_name, view_input):
     """
     Create a view assuming it does not exist
     If error happens on creation logs but swallows error on
@@ -2701,20 +2806,24 @@ def create_destination_view(copy_driver,table_name,view_input):
     try:
         copy_driver.destination_client.create_table(destination_table)
         copy_driver.get_logger().info(
-            "Created view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
+            "Created view {}.{}.{}".format(copy_driver.destination_project,
+                                           copy_driver.destination_dataset, table_name))
     except exceptions.PreconditionFailed as e:
         copy_driver.increment_views_failed_sync()
-        copy_driver.get_logger().exception("Pre conditionfailed creating view {}:{}".format(table_name,view_input["view_definition"]))
+        copy_driver.get_logger().exception(
+            "Pre conditionfailed creating view {}:{}".format(table_name,
+                                                             view_input["view_definition"]))
     except exceptions.BadRequest as e:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Bad request creating view {}:{}".format(table_name,view_input["view_definition"]))
+            "Bad request creating view {}:{}".format(table_name, view_input["view_definition"]))
     except exceptions.NotFound as e:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Not Found creating view {}:{}".format(table_name,view_input["view_definition"]))
+            "Not Found creating view {}:{}".format(table_name, view_input["view_definition"]))
 
-def patch_destination_view(copy_driver,table_name,view_input):
+
+def patch_destination_view(copy_driver, table_name, view_input):
     """
     Patch a view assuming it does  exist
     If error happens on creation logs but swallows error on
@@ -2728,14 +2837,15 @@ def patch_destination_view(copy_driver,table_name,view_input):
     """
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
     srctable = copy_driver.source_client.get_table(srctable_ref)
-    dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(table_name)
+    dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
+        table_name)
     dsttable = copy_driver.source_client.get_table(dsttable_ref)
 
     use_legacy_sql = True
     if view_input["use_standard_sql"] == "YES":
         use_legacy_sql = False
 
-    fields=[]
+    fields = []
     if dsttable.description != srctable.description:
         dsttable.description = srctable.description
         fields.append("description")
@@ -2754,7 +2864,7 @@ def patch_destination_view(copy_driver,table_name,view_input):
     # and patch the view
     try:
         if len(fields) > 0:
-            copy_driver.destination_client.update_table(dsttable,fields)
+            copy_driver.destination_client.update_table(dsttable, fields)
             copy_driver.get_logger().info(
                 "Patched view {}".format(table_name))
         else:
@@ -2956,9 +3066,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 else:
                     patch_destination_view(copy_driver, view, views_to_apply[view])
 
-        wait_for_queue(schema_q, "View schemas sychronization", 0.1,copy_driver.get_logger())
+        wait_for_queue(schema_q, "View schemas sychronization", 0.1, copy_driver.get_logger())
 
-    wait_for_queue(copy_q,"Table copying",0.1,copy_driver.get_logger())
+    wait_for_queue(copy_q, "Table copying", 0.1, copy_driver.get_logger())
 
     # stop all the background threads
     stop_event.set()
@@ -2977,7 +3087,32 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     # compare data
     # copy views
     # copy dataset permissions
+    if copy_driver.copy_access:
+        src_dataset = copy_driver.source_client.get_dataset(
+            copy_driver.source_client.dataset(copy_driver.source_dataset))
+        dst_dataset = copy_driver.destination_client.get_dataset(
+            copy_driver.destination_client.dataset(copy_driver.destination_dataset))
+        access_entries = src_dataset.access_entries
+        dst_access_entries = []
+        for access in access_entries:
+            newaccess = access
+            if access.role is None:
+                # if not copying views these will fail
+                if not copy_driver.copy_views:
+                    continue
+                newaccess = copy_driver.create_access_view(access.entity_id)
+            dst_access_entries.append(newaccess)
+        dst_dataset.access_entries = dst_access_entries
+
+        try:
+            copy_driver.destination_client.update_dataset(dst_dataset,["access_entries"])
+        except exceptions.Forbidden as e:
+            copy_driver.logger.error("Unable to det permission on {}.{} dataset as Forbidden".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset))
+        except exceptions.BadRequest as e:
+            copy_driver.logger.error("Unable to det permission on {}.{} dataset as BadRequest".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset))
+
     return
-
-
-
