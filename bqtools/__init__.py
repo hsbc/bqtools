@@ -21,6 +21,9 @@ import re
 import threading
 
 # handle python 2 and 3 versions of this
+import six
+
+# handle python 2 and 3 versions of this
 try:
    import queue
 except ImportError:
@@ -1461,7 +1464,7 @@ class DefaultBQSyncDriver(object):
             assert srcbucket is not None, "Being asked to copy datasets across region but no " \
                                           "source bucket is defined these must be in same region " \
                                           "as source dataset"
-            assert isinstance(srcbucket, basestring), "Being asked to copy datasets across region but no " \
+            assert isinstance(srcbucket, six.string_types), "Being asked to copy datasets across region but no " \
                                                "" \
                                                "" \
                                                "source bucket is not a string"
@@ -1470,7 +1473,7 @@ class DefaultBQSyncDriver(object):
                                           "destination bucket is defined these must be in same " \
                                           "region " \
                                           "as destination dataset"
-            assert isinstance(dstbucket, basestring), "Being asked to copy datasets across region but " \
+            assert isinstance(dstbucket, six.string_types), "Being asked to copy datasets across region but " \
                                                "destination bucket is not a string"
             self._destination_bucket = dstbucket
             client = storage.Client(project=self.source_project)
@@ -2568,6 +2571,11 @@ def sync_bq_processor(stop_event, copy_driver, q):
 
             copy_driver.fault_barrier(function, *args)
             q.task_done()
+        except TypeError as e:
+            if e.find("not supported between instances of 'function' and 'function'") == -1:
+                raise
+            else:
+                copy.driver.logger.warning("Swallowing type exception cause by bug in Priority Queue")
         except queue.Empty:
             pass
 
