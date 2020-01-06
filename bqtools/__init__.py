@@ -2556,7 +2556,16 @@ def sync_bq_processor(stop_event, copy_driver, q):
                                           "Driver"
     while not stop_event.isSet():
         try:
-            _, task = q.get(timeout=1)
+            try:
+                _, task = q.get(timeout=1)
+            except TypeError as e:
+                if str(e).find(
+                        "not supported between instances of 'function' and 'function'") == -1:
+                    raise
+                else:
+                    copy_driver.logger.exception(
+                        "Swallowing type exception cause by bug in Priority Queue")
+
             if task is None:
                 continue
 
@@ -2564,11 +2573,7 @@ def sync_bq_processor(stop_event, copy_driver, q):
 
             copy_driver.fault_barrier(function, *args)
             q.task_done()
-        except TypeError as e:
-            if str(e).find("not supported between instances of 'function' and 'function'") == -1:
-                raise
-            else:
-                copy.driver.logger.warning("Swallowing type exception cause by bug in Priority Queue")
+
         except queue.Empty:
             pass
 
