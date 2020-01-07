@@ -1588,6 +1588,9 @@ class DefaultBQSyncDriver(object):
 
     @property
     def rows_synced(self):
+        # as time can be different between these assume avoided is always more accurae
+        if self.rows_avoided > self.__rows_synced:
+            return self.rows_avoided
         return self.__rows_synced
 
     def add_rows_synced(self, rows):
@@ -1834,6 +1837,42 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
 
         return view_definition
 
+    def copy_access_to_destination(self):
+        # for those not created compare data structures
+        # copy data
+        # compare data
+        # copy views
+        # copy dataset permissions
+        if self.copy_access:
+            src_dataset = self.source_client.get_dataset(
+                self.source_client.dataset(self.source_dataset))
+            dst_dataset = self.destination_client.get_dataset(
+                self.destination_client.dataset(self.destination_dataset))
+            access_entries = src_dataset.access_entries
+            dst_access_entries = []
+            for access in access_entries:
+                newaccess = access
+                if access.role is None:
+                    # if not copying views these will fail
+                    if not self.copy_views:
+                        continue
+                    newaccess = self.create_access_view(access.entity_id)
+                dst_access_entries.append(newaccess)
+            dst_dataset.access_entries = dst_access_entries
+
+            try:
+                self.destination_client.update_dataset(dst_dataset, ["access_entries"])
+            except exceptions.Forbidden as e:
+                self.logger.error(
+                    "Unable to det permission on {}.{} dataset as Forbidden".format(
+                        self.destination_project,
+                        self.destination_dataset))
+            except exceptions.BadRequest as e:
+                self.logger.error(
+                    "Unable to det permission on {}.{} dataset as BadRequest".format(
+                        self.destination_project,
+                        self.destination_dataset))
+
     def create_access_view(self,entity_id):
         """
         Convert an old view authorised view
@@ -2011,6 +2050,11 @@ class MultiBQSyncCoordinator(object):
         """
         for copy_driver in self.__copy_drivers:
             sync_bq_datset(copy_driver)
+
+        # once copied we can try doing access
+        # as all related views hopefully should be done
+        for copy_driver in self.__copy_drivers:
+            copy_driver.copy_access_to_destination()
 
     def create_access_view(self, entity_id):
         access = None
@@ -2866,21 +2910,21 @@ def patch_destination_view(copy_driver, table_name, view_input):
         if len(fields) > 0:
             copy_driver.destination_client.update_table(dsttable, fields)
             copy_driver.get_logger().info(
-                "Patched view {}".format(table_name))
+                "Patched view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
         else:
             copy_driver.increment_view_avoided()
     except exceptions.PreconditionFailed as e:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Pre conditionfailed patching view {}".format(table_name))
+            "Pre conditionfailed patching view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
     except exceptions.BadRequest as e:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Bad request patching view {}".format(table_name))
+            "Bad request patching view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
     except exceptions.NotFound as e:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Not Found patching view {}".format(table_name))
+            "Not Found patching view {}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,table_name))
 
 
 def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
@@ -3082,37 +3126,6 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                       desc="Table copying",
                       sleepTime=0.1)
 
-    # for those not created compare data structures
-    # copy data
-    # compare data
-    # copy views
-    # copy dataset permissions
-    if copy_driver.copy_access:
-        src_dataset = copy_driver.source_client.get_dataset(
-            copy_driver.source_client.dataset(copy_driver.source_dataset))
-        dst_dataset = copy_driver.destination_client.get_dataset(
-            copy_driver.destination_client.dataset(copy_driver.destination_dataset))
-        access_entries = src_dataset.access_entries
-        dst_access_entries = []
-        for access in access_entries:
-            newaccess = access
-            if access.role is None:
-                # if not copying views these will fail
-                if not copy_driver.copy_views:
-                    continue
-                newaccess = copy_driver.create_access_view(access.entity_id)
-            dst_access_entries.append(newaccess)
-        dst_dataset.access_entries = dst_access_entries
 
-        try:
-            copy_driver.destination_client.update_dataset(dst_dataset,["access_entries"])
-        except exceptions.Forbidden as e:
-            copy_driver.logger.error("Unable to det permission on {}.{} dataset as Forbidden".format(
-                copy_driver.destination_project,
-                copy_driver.destination_dataset))
-        except exceptions.BadRequest as e:
-            copy_driver.logger.error("Unable to det permission on {}.{} dataset as BadRequest".format(
-                copy_driver.destination_project,
-                copy_driver.destination_dataset))
 
     return
