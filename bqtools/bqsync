@@ -142,6 +142,7 @@ Speed up {:1,.5f}""".format(
                 multi_bq_copy.views_failed_sync,
                 multi_bq_copy.rows_synced,
                 multi_bq_copy.rows_avoided,
+                multi_bq_copy.rows_synced  - multi_bq_copy.rows_avoided,
                 multi_bq_copy.extract_fails,
                 multi_bq_copy.load_fails,
                 multi_bq_copy.copy_fails,
