@@ -2075,6 +2075,7 @@ class MultiBQSyncCoordinator(object):
         Synchronise all the datasets in the driver
         :return:
         """
+        self.__copy_drivers[0].logger.info("Calculating differences....")
         for copy_driver in self.__copy_drivers:
             sync_bq_datset(copy_driver)
 
@@ -2421,6 +2422,16 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
     :return:
     """
     if not copy_driver.copy_data:
+        copy_driver.logger.info(
+            "Would have copied table {}.{}.{} to {}.{}.{} source rows {} destination rows {}".
+                format(copy_driver.source_project,
+                       copy_driver.source_dataset,
+                       table_name,
+                       copy_driver.destination_project,
+                       copy_driver.destination_dataset,
+                       table_name,
+                       src_rows,
+                       dst_rows))
         return
 
     src_query = None

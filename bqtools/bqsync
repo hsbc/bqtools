@@ -127,8 +127,9 @@ Tables failed {:,d}
 Views synced {:,d}
 Views avoided {:,d}
 Views failed {:,d}
-Rows synced {:,d}
-Rows Avoided {:,d}
+Rows synced {:,d} Total rows as declared in meta data scan phase
+Rows Avoided {:,d} Rows avoided in calculation phase
+Rows Difference {:d}
 Extract Fails {:,d}
 Load Fails {:,d}
 Copy Fails {:,d}
