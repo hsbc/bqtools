@@ -188,6 +188,31 @@ class BQQueryError(BQTError):
             self.CUSTOM_ERROR_MESSAGE.format(query, e))
 
 
+class BQSyncTask(object):
+    def __init__(self,function,args):
+        assert callable(function),"Tasks must be constructed with a function"
+        assert isinstance(args,list),"Must have arguments"
+        self.__function = function
+        self.__args = args
+
+    @property
+    def function(self):
+        return self.__function
+
+    @property
+    def args(self):
+        return self.__args
+
+    def __eq__(self,other):
+        return self.args == other.args
+
+    def __lt__(self,other):
+        return self.args < other.args
+
+    def __gt__(self,other):
+        return self.args > other.args
+
+
 def get_json_struct(jsonobj, template=None):
     """
 
@@ -1821,7 +1846,9 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
         try:
             function(*args)
         except Exception as e:
-            self.get_logger().exception(str(e))
+            pretty_printer = pprint.PrettyPrinter()
+            self.get_logger().exception("Exception calling function{} args {}", function.__name__,
+                                        pretty_printer.pformat(args))
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
         view_definition = view_definition.replace(
@@ -2205,7 +2232,7 @@ def create_and_copy_table(copy_driver, table_name):
     if srctable.num_rows != 0:
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
-        copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
+        copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
                                                          [copy_driver, table_name,
                                                           srctable.partitioning_type, 0,
                                                           srctable.num_rows])))
@@ -2351,7 +2378,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
-            copy_driver.copy_q.put((-1 * srctable.num_rows, (copy_table_data,
+            copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
                                                              [copy_driver, table_name,
                                                               srctable.partitioning_type,
                                                               dsttable.num_rows,
@@ -2550,7 +2577,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             diff = True
                             break
                     if diff:
-                        copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
+                        copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
                                                                             [copy_driver,
                                                                              "{}${}".format(
                                                                                  table_name,
@@ -2569,7 +2596,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                 elif (destination_ended and not source_ended) or (
                         not source_ended and source_row["partitionName"] < destination_row[
                     "partitionName"]):
-                    copy_driver.copy_q.put((-1 * source_row["rowNum"], (cross_region_copy,
+                    copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
                                                                         [copy_driver,
                                                                          "{}${}".format(table_name,
                                                                                         source_row[
@@ -2731,10 +2758,14 @@ def sync_bq_processor(stop_event, copy_driver, q):
     assert isinstance(q,
                       queue.Queue), "Must be passed a queue for background thread " \
                                     "Driver"
+
+
+
     while not stop_event.isSet():
         try:
             try:
                 _, task = q.get(timeout=1)
+                assert isinstance(task,BQSyncTask)
             except TypeError as e:
                 if str(e).find(
                         "not supported between instances of 'function' and 'function'") == -1:
@@ -2746,8 +2777,8 @@ def sync_bq_processor(stop_event, copy_driver, q):
             if task is None:
                 continue
 
-            function, args = task
-
+            function = task.function
+            args = task.args
             copy_driver.fault_barrier(function, *args)
             q.task_done()
 
@@ -2990,7 +3021,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 source_row["table_name"]:
             copy_driver.increment_tables_synced()
             schema_q.put(
-                (0, (compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
+                (0, BQSyncTask(compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -3002,7 +3033,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         elif (destination_ended and not source_ended) or (
                 not source_ended and source_row["table_name"] < destination_row["table_name"]):
-            schema_q.put((0, (create_and_copy_table, [copy_driver, source_row["table_name"]])))
+            schema_q.put((0, BQSyncTask(create_and_copy_table, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -3012,8 +3043,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 not destination_ended and source_row["table_name"] > destination_row[
             "table_name"]):
             copy_driver.increment_tables_synced()
-            schema_q.put((0, (
-                remove_deleted_destination_table, [copy_driver, destination_row["table_name"]])))
+            remove_deleted_destination_table(copy_driver, destination_row["table_name"])
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -3095,9 +3125,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             elif (source_ended and not destination_ended) or (
                     not destination_ended and source_row["table_name"] > destination_row[
                 "table_name"]):
-                schema_q.put((0, (
-                    remove_deleted_destination_table,
-                    [copy_driver, destination_row["table_name"]])))
+                remove_deleted_destination_table(copy_driver, destination_row["table_name"])
                 try:
                     destination_row = next(destination_generator)
                 except StopIteration:
