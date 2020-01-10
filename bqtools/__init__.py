@@ -1374,7 +1374,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
     return compute_region.lower() == bq_compute_region
 
 
-def run_query(client, query, logger, desctext="", location=None, max_results=10000):
+def run_query(client, query, logger, desctext="", location=None, max_results=10000, callback_on_complete=None):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1417,6 +1417,9 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 
         for irow in query_job.result():
             yield irow
+
+        if callback_on_complete is not None and callable(callback_on_complete):
+            callback_on_complete(query_job)
 
     return
 
@@ -1534,6 +1537,30 @@ class DefaultBQSyncDriver(object):
         self.__extract_fails = 0
         self.__load_fails = 0
         self.__copy_fails = 0
+        self.__query_cache_hits = 0
+        self.__total_bytes_processed = 0
+        self.__total_bytes_billed = 0
+
+    @property
+    def query_cache_hits(self):
+        return self.__query_cache_hits
+
+    def increment_cache_hits(self):
+        self.__query_cache_hits += 1
+
+    @property
+    def total_bytes_processed(self):
+        return self.__total_bytes_processed
+
+    def increment_total_bytes_processed(self,total_bytes_processed):
+        self.__total_bytes_processed += total_bytes_processed
+
+    @property
+    def total_bytes_billed(self):
+        return self.__total_bytes_processed
+
+    def increment_total_bytes_billed(self,total_bytes_billed):
+        self.__total_bytes_billed += total_bytes_billed
 
     @property
     def copy_fails(self):
@@ -1610,6 +1637,18 @@ class DefaultBQSyncDriver(object):
 
     def add_bytes_synced(self, bytes):
         self.__bytes_synced += bytes
+
+    def update_job_stats(self,job):
+        """
+        Given a big query job figure out what stats to process
+        :param job:
+        :return: None
+        """
+        if isinstance(job,bigquery.QueryJob):
+            if job.cache_hit:
+                self.increment_cache_hits
+            self.increment_total_bytes_billed(job.total_bytes_billed)
+            self.increment_total_bytes_processed(job.total_bytes_processed)
 
     @property
     def rows_synced(self):
@@ -1980,7 +2019,28 @@ class MultiBQSyncCoordinator(object):
 
     @property
     def check_depth(self):
-        self.__check_depth
+        return self.__check_depth
+
+    @property
+    def query_cache_hits(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.query_cache_hits
+        return total
+
+    @property
+    def total_bytes_processed(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.total_bytes_processed
+        return total
+
+    @property
+    def total_bytes_billed(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.total_bytes_billed
+        return total
 
     @check_depth.setter
     def check_depth(self, value):
@@ -2463,7 +2523,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             source_generator = run_query(copy_driver.source_client, src_query,
                                          copy_driver.get_logger(),
                                          "List source data per partition",
-                                         location=copy_driver.source_location)
+                                         location=copy_driver.source_location,
+                                         callback_on_complete=copy_driver.update_job_stats)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -2472,7 +2533,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             destination_generator = run_query(copy_driver.destination_client, dst_query,
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
-                                              location=copy_driver.destination_location)
+                                              location=copy_driver.destination_location,
+                                              callback_on_complete=copy_driver.update_job_stats)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -2553,7 +2615,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             source_generator = run_query(copy_driver.source_client, src_query,
                                          copy_driver.get_logger(),
                                          "List source data per partition",
-                                         location=copy_driver.source_location)
+                                         location=copy_driver.source_location,
+                                         callback_on_complete=copy_driver.update_job_stats)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -2562,7 +2625,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             destination_generator = run_query(copy_driver.destination_client, dst_query,
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
-                                              location=copy_driver.destination_location)
+                                              location=copy_driver.destination_location,
+                                              callback_on_complete=copy_driver.update_job_stats)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -3012,7 +3076,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
     source_generator = run_query(copy_driver.source_client, source_query, "List source tables",
                                  copy_driver.get_logger(),
-                                 location=copy_driver.source_location)
+                                 location=copy_driver.source_location,
+                                 callback_on_complete=copy_driver.update_job_stats)
     try:
         source_row = next(source_generator)
     except StopIteration:
@@ -3021,7 +3086,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     destination_generator = run_query(copy_driver.destination_client, destination_query,
                                       copy_driver.get_logger(),
                                       "List destination tables",
-                                      location=copy_driver.destination_location)
+                                      location=copy_driver.destination_location,
+                                      callback_on_complete=copy_driver.update_job_stats)
     try:
         destination_row = next(destination_generator)
     except StopIteration:
@@ -3074,7 +3140,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         for viewrow in run_query(copy_driver.source_client, view_order_query,
                                  copy_driver.get_logger(),
                                  "List views in apply order",
-                                 location=copy_driver.source_location):
+                                 location=copy_driver.source_location,
+                                 callback_on_complete=copy_driver.update_job_stats):
             view_order.append(viewrow["table_name"])
 
         # now list and compare views
@@ -3085,7 +3152,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         source_generator = run_query(copy_driver.source_client, source_view_query,
                                      "List source views", copy_driver.get_logger(),
-                                     location=copy_driver.source_location)
+                                     location=copy_driver.source_location,
+                                     callback_on_complete=copy_driver.update_job_stats)
         try:
             source_row = next(source_generator)
         except StopIteration:
@@ -3094,7 +3162,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         destination_generator = run_query(copy_driver.destination_client, destination_view_query,
                                           copy_driver.get_logger(),
                                           "List destination views",
-                                          location=copy_driver.destination_location)
+                                          location=copy_driver.destination_location,
+                                          callback_on_complete=copy_driver.update_job_stats)
         try:
             destination_row = next(destination_generator)
         except StopIteration:

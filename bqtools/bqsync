@@ -68,7 +68,7 @@ def main(argv):
                                                    "--help for help"
     assert FLAGS.dst_project_datasets is not None, "Destination project.dataset(s) must be set " \
                                                    "use --help for help"
-    assert FLAGS.check_depth > -2, "Check depth for data comparison MUST be > -2 see --help " \
+    assert FLAGS.check_depth >= -2, "Check depth for data comparison MUST be > -2 see --help " \
                                    "for details"
 
     # deal with if we have proxies, intercept certificates etc
@@ -131,6 +131,10 @@ Rows synced {:,d} Total rows as declared in meta data scan phase
 Rows Avoided {:,d} Rows avoided in calculation phase
 Rows Difference {:,d}
 Extract Fails {:,d}
+Bytes Billed {:,d}
+Bytes Processed {:,d}
+Cost of comparison at $5.00 per TB $ {:1,.02f}
+Query Cache Hits {:,d}
 Load Fails {:,d}
 Copy Fails {:,d}
 Speed up {:1,.5f}""".format(
@@ -144,6 +148,10 @@ Speed up {:1,.5f}""".format(
                 multi_bq_copy.rows_avoided,
                 multi_bq_copy.rows_synced  - multi_bq_copy.rows_avoided,
                 multi_bq_copy.extract_fails,
+                multi_bq_copy.total_bytes_billed,
+                multi_bq_copy.total_bytes_processed,
+                (multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 * 1024.0 * 1024.0 * 1024.0),
+                multi_bq_copy.query_cache_hits,
                 multi_bq_copy.load_fails,
                 multi_bq_copy.copy_fails,
                 speed_up))
