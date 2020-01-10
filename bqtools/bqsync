@@ -150,7 +150,7 @@ Speed up {:1,.5f}""".format(
                 multi_bq_copy.extract_fails,
                 multi_bq_copy.total_bytes_billed,
                 multi_bq_copy.total_bytes_processed,
-                (multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 * 1024.0 * 1024.0 * 1024.0),
+                round((multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 * 1024.0 * 1024.0 * 1024.0),2),
                 multi_bq_copy.query_cache_hits,
                 multi_bq_copy.load_fails,
                 multi_bq_copy.copy_fails,
