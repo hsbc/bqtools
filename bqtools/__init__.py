@@ -105,6 +105,8 @@ MAPBQREGION2KMSREGION = {
 }
 
 
+
+
 class BQJsonEncoder(json.JSONEncoder):
     """ Class to implement encoding for date times, dates and timedelta
 
@@ -1542,6 +1544,30 @@ class DefaultBQSyncDriver(object):
         self.__total_bytes_billed = 0
         self.__start_time = None
         self.__end_time = None
+        self.__load_input_file_bytes = 0
+        self.__load_input_files = 0
+        self.__load_output_bytes = 0
+
+    @property
+    def bytes_copied_across_region(self):
+        return self.__load_input_file_bytes
+
+    @property
+    def files_copied_across_region(self):
+        return self.__load_input_files
+
+    @property
+    def bytes_synced(self):
+        return self.__load_output_bytes
+
+    def increment_load_input_file_bytes(self,value):
+        self.__load_input_file_bytes += value
+
+    def increment_load_input_files(self,value):
+        self.__load_input_files += value
+
+    def increment_load_output_bytes(self,value):
+        self.__load_output_bytes += value
 
     @property
     def start_time(self):
@@ -1549,10 +1575,14 @@ class DefaultBQSyncDriver(object):
 
     @property
     def end_time(self):
+        if self.__end_time is None and self.__start_time is not None:
+            return datetime.utcnow()
         return self.__end_time
 
     @property
     def sync_time_seconds(self):
+        if self.__start_time is None:
+            return None
         return (self.__end_time - self.__start_time).seconds
 
     def start_sync(self):
@@ -1677,7 +1707,11 @@ class DefaultBQSyncDriver(object):
 
         if isinstance(job, bigquery.LoadJob):
             if job.error_result:
-                copy_driver.increment_load_fails()
+                self.increment_load_fails()
+            else:
+                self.increment_load_input_files(job.input_files)
+                self.increment_load_input_file_bytes(job.input_file_bytes)
+                self.increment_load_output_bytes(job.output_bytes)
 
     @property
     def rows_synced(self):
@@ -1931,7 +1965,7 @@ AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFF0000) >> 32) as avgFingerprintHB,""".
             function(*args)
         except Exception as e:
             pretty_printer = pprint.PrettyPrinter()
-            self.get_logger().exception("Exception calling function{} args {}".format(function.__name__,
+            self.get_logger().exception("Exception calling function {} args {}".format(function.__name__,
                                         pretty_printer.pformat(args)))
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
@@ -2023,7 +2057,12 @@ class MultiBQSyncCoordinator(object):
     """
     Class to copy many datasets from one region to another and reset associated views
     """
-
+    """
+        States of sync job
+    """
+    NOTSTARTED = "NOTSTARTED"
+    RUNNING = "RUNNING"
+    FINSIHED = "FINSIHED"
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
@@ -2062,17 +2101,30 @@ class MultiBQSyncCoordinator(object):
     def start_time(self):
         start_time = datetime.max
         for copy_driver in self.__copy_drivers:
-            if copy_driver.start_time < start_time:
-                start_time = copy_driver.start_time
+            if copy_driver.start_time is not None:
+                if copy_driver.start_time < start_time:
+                    start_time = copy_driver.start_time
+        if start_time == datetime.max:
+            return None
         return start_time
 
     @property
     def end_time(self):
         end_time = datetime.min
         for copy_driver in self.__copy_drivers:
-            if copy_driver.end_time > end_time:
-                end_time = copy_driver.end_time
+            if copy_driver.end_time is not None:
+                if copy_driver.end_time > end_time:
+                    end_time = copy_driver.end_time
+        if end_time == datetime.min:
+            return None
         return end_time
+
+    def state(self):
+        if self.start_time is None:
+            return self.NOTSTARTED
+        if self.end_time is None:
+            return self.RUNNING
+        return self.FINSIHED
 
     @property
     def sync_time_seconds(self):
@@ -2195,11 +2247,65 @@ class MultiBQSyncCoordinator(object):
             total += copy_driver.copy_fails
         return total
 
+    @property
+    def bytes_copied_across_region(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.bytes_copied_across_region
+        return total
+
+    @property
+    def files_copied_across_region(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.files_copied_across_region
+        return total
+
+
+    @property
+    def bytes_synced(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.bytes_synced
+        return total
+
+    def sync_monitor_thread(self, stop_event):
+        """
+        Main background thread driver loop for copying
+        :param copy_driver: Basis of copy
+        :param q: The work queue tasks are put in
+        :return: None
+        """
+
+
+        last_run = datetime.utcnow()
+        while not stop_event.isSet():
+            try:
+                sleep(0.5)
+                if self.state != MultiBQSyncCoordinator.NOTSTARTED \
+                        and (datetime.utcnow() - last_run).seconds > 60:
+                    last_run = datetime.utcnow()
+                    self.log_stats()
+            except Exception as e:
+                self.logger.exception("Exception monitoring MultiBQSync ignoring and continuing")
+                pass
+
+        self.log_stats()
+
     def sync(self):
         """
         Synchronise all the datasets in the driver
         :return:
         """
+
+        # start monitoring thread
+        stop_event = threading.Event()
+        t = threading.Thread(target=self.sync_monitor_thread, name="monitorthread", args=[
+            stop_event])
+        t.daemon = True
+        t.start()
+
+
         self.__copy_drivers[0].logger.info("Calculating differences....")
         for copy_driver in self.__copy_drivers:
             sync_bq_datset(copy_driver)
@@ -2208,6 +2314,66 @@ class MultiBQSyncCoordinator(object):
         # as all related views hopefully should be done
         for copy_driver in self.__copy_drivers:
             copy_driver.copy_access_to_destination()
+
+        # stop the monitoring thread
+        stop_event.set()
+            
+    def log_stats(self):
+        
+        # provide some stats
+        if self.rows_synced - self.rows_avoided == 0:
+            speed_up = float('inf')
+        else:
+            speed_up = float(self.rows_synced) / float(
+                self.rows_synced - self.rows_avoided)
+
+        self.logger.info("Tables synced {:,d}".format(self.tables_synced))
+        self.logger.info("Tables avoided {:,d}".format(self.tables_avoided))
+        self.logger.info("Tables failed {:,d}".format(self.tables_failed_sync))
+        self.logger.info("Views synced {:,d}".format(self.views_synced))
+        self.logger.info("Views avoided {:,d}".format(self.view_avoided))
+        self.logger.info("Views failed {:,d}".format(self.views_failed_sync))
+        self.logger.info(
+            "Rows synced {:,d} Total rows as declared in meta data scan phase".format(
+                self.rows_synced))
+        self.logger.info(
+            "Rows Avoided {:,d} Rows avoided in calculation phase".format(
+                self.rows_avoided))
+        self.logger.info(
+            "Rows Difference {:,d}".format(
+                self.rows_synced - self.rows_avoided))
+        self.logger.info("Bytes Billed {:,d}".format(self.total_bytes_billed))
+        self.logger.info(
+            "Bytes Processed {:,d}".format(self.total_bytes_processed))
+        self.logger.info(
+            "Cost of comparison at $5.00 per TB $ {:1,.02f}".format(
+                round((self.total_bytes_processed * 5.0) / (1024.0 *
+                                                                     1024.0 *
+                                                                     1024.0 *
+                                                                     1024.0), 2)))
+        self.logger.info("Query Cache Hits {:,d}".format(self.query_cache_hits))
+        self.logger.info("Extract Fails {:,d}".format(self.extract_fails))
+        self.logger.info("Load Fails {:,d}".format(self.load_fails))
+        self.logger.info("Copy Fails {:,d}".format(self.copy_fails))
+        self.logger.info(
+            "Files Copied {:,d}".format(self.files_copied_across_region))
+        self.logger.info(
+            "Bytes Copied {:1,.02f} GB".format(
+                round(self.bytes_copied_across_region / (1024 * 1024 * 1024), 2)))
+        self.logger.info(
+            "BQ Bytes Copied {:1,.02f} GB".format(
+                round(self.bytes_synced / (1024 * 1024 * 1024), 2)))
+        self.logger.info("Sync Duration {}".format(
+            str(self.end_time - self.start_time)))
+        self.logger.info("Rows per Second {:1,.2f}".format(
+            round(self.rows_synced / self.sync_time_seconds, 2)))
+        self.logger.info("Cross Region (Network) {:1,.3f} Gbs".format(
+            round(((self.bytes_copied_across_region * 8.0) / (1024 * 1024 * 1024)) /
+                  self.sync_time_seconds, 3)))
+        self.logger.info("Cross Region (Big Query Raw Data) {:1,.3f} Gbs".format(
+            round(((self.bytes_synced * 8.0) / (1024 * 1024 * 1024)) /
+                  self.sync_time_seconds, 3)))
+        self.logger.info("Speed up {:1,.2f}".format(round(speed_up, 2)))
 
     def create_access_view(self, entity_id):
         access = None
@@ -3300,5 +3466,6 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                       sleepTime=0.1)
 
     copy_driver.end_sync()
+    
 
     return

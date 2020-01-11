@@ -113,57 +113,6 @@ def main(argv):
     # actually do the sync
     multi_bq_copy.sync()
 
-    # provide some stats
-    if multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided == 0:
-        speed_up = float('inf')
-    else:
-        speed_up = float(multi_bq_copy.rows_synced) / float(
-            multi_bq_copy.rows_synced - multi_bq_copy.rows_avoided)
-
-    multi_bq_copy.logger.info(
-            """Tables synced {}
-Tables avoided {:,d}
-Tables failed {:,d}
-Views synced {:,d}
-Views avoided {:,d}
-Views failed {:,d}
-Rows synced {:,d} Total rows as declared in meta data scan phase
-Rows Avoided {:,d} Rows avoided in calculation phase
-Rows Difference {:,d}
-Bytes Billed {:,d}
-Bytes Processed {:,d}
-Cost of comparison at $5.00 per TB $ {:1,.02f}
-Query Cache Hits {:,d}
-Extract Fails {:,d}
-Load Fails {:,d}
-Copy Fails {:,d}
-Sync Duration {}
-Rows per Second {:1,.2f}
-Speed up {:1,.2f}""".format(
-                multi_bq_copy.tables_synced,
-                multi_bq_copy.tables_avoided,
-                multi_bq_copy.tables_failed_sync,
-                multi_bq_copy.views_synced,
-                multi_bq_copy.view_avoided,
-                multi_bq_copy.views_failed_sync,
-                multi_bq_copy.rows_synced,
-                multi_bq_copy.rows_avoided,
-                multi_bq_copy.rows_synced  - multi_bq_copy.rows_avoided,
-                multi_bq_copy.total_bytes_billed,
-                multi_bq_copy.total_bytes_processed,
-                round((multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 *
-                                                                     1024.0 *
-                                                                     1024.0 *
-                                                                     1024.0), 2),
-                multi_bq_copy.query_cache_hits,
-                multi_bq_copy.extract_fails,
-                multi_bq_copy.load_fails,
-                multi_bq_copy.copy_fails,
-                str(multi_bq_copy.end_time - multi_bq_copy.start_time),
-                round(multi_bq_copy.rows_synced / multi_bq_copy.sync_time_seconds, 2),
-                round(speed_up,2)))
-
-
     exitcode = 0
 
     if multi_bq_copy.tables_failed_sync > 0 or \
