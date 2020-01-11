@@ -1540,6 +1540,27 @@ class DefaultBQSyncDriver(object):
         self.__query_cache_hits = 0
         self.__total_bytes_processed = 0
         self.__total_bytes_billed = 0
+        self.__start_time = None
+        self.__end_time = None
+
+    @property
+    def start_time(self):
+        return self.__start_time
+
+    @property
+    def end_time(self):
+        return self.__end_time
+
+    @property
+    def sync_time_seconds(self):
+        return (self.__end_time - self.__start_time).seconds
+
+    def start_sync(self):
+        self.__start_time = datetime.utcnow()
+
+    def end_sync(self):
+        self.__end_time = datetime.utcnow()
+
 
     @property
     def query_cache_hits(self):
@@ -1649,6 +1670,14 @@ class DefaultBQSyncDriver(object):
                 self.increment_cache_hits
             self.increment_total_bytes_billed(job.total_bytes_billed)
             self.increment_total_bytes_processed(job.total_bytes_processed)
+
+        if isinstance(job,bigquery.CopyJob):
+            if job.error_result is not None:
+                self.increment_copy_fails()
+
+        if isinstance(job, bigquery.LoadJob):
+            if job.error_result:
+                copy_driver.increment_load_fails()
 
     @property
     def rows_synced(self):
@@ -1825,33 +1854,49 @@ class DefaultBQSyncDriver(object):
         basically a merkel function
         
         """
-        expression_list = []
-        for field in SCHEMA:
-            if self.check_depth >= 0 or \
-                    (self.check_depth >= -1 and (re.search("update.*time", field.name.lower()) or \
-                                                 re.search("modifi.*time", field.name.lower()) or \
-                                                 re.search("creat.*time", field.name.lower()))):
-                if field.field_type == "STRING":
-                    expression_list.append("IFNULL(`{0}`,'')".format(field.name))
-                elif field.field_type == "TIMESTAMP":
-                    expression_list.append(
-                        "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(field.name))
-                elif field.field_type == "INTEGER" or field.field_type == "INT64":
-                    expression_list.append("CAST(IFNULL(`{0}`,0) AS STRING)".format(field.name))
-                elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
-                        field.field_type == "NUMERIC":
-                    expression_list.append("CAST(IFNULL(`{0}`,0.0) AS STRING)".format(field.name))
-                elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
-                    expression_list.append("CAST(IFNULL(`{0}`,false) AS STRING)".format(field.name))
-                elif field.field_type == "BYTES":
-                    expression_list.append("CAST(IFNULL(`{0}`,'') AS STRING)".format(field.name))
+
+        def add_data_check(SCHEMA,prefix=None):
+            if prefix is None:
+                prefix = []
+
+            expression_list = []
+            for field in SCHEMA:
+                if self.check_depth >= 0 or \
+                        (self.check_depth >= -1 and (re.search("update.*time", field.name.lower()) or \
+                                                     re.search("modifi.*time", field.name.lower()) or \
+                                                     re.search("creat.*time", field.name.lower()))):
+                    prefix.append(field.name)
+                    if field.field_type == "STRING":
+                        expression_list.append("IFNULL(`{0}`,'')".format("`.`".join(prefix)))
+                    elif field.field_type == "TIMESTAMP":
+                        expression_list.append(
+                            "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format("`.`".join(prefix)))
+                    elif field.field_type == "INTEGER" or field.field_type == "INT64":
+                        expression_list.append("CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
+                    elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
+                            field.field_type == "NUMERIC":
+                        expression_list.append("CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
+                    elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                        expression_list.append("CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
+                    elif field.field_type == "BYTES":
+                        expression_list.append("CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
+                    elif field.field_type == "RECORD" and field.mode != "REPEATED":
+                        SCHEMA = list(field.fields)
+                        expression_list.extend(add_data_check(SCHEMA,prefix=prefix))
+                    prefix.pop()
+            return expression_list
+
+        expression_list = add_data_check(SCHEMA)
+
         if len(expression_list) > 0:
             default = """,
-AVG(FARM_FINGERPRINT(CONCAT({0}))) as avgFingerprint,
-STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
+AVG(FARM_FINGERPRINT(CONCAT({0})) & 0x0000FFFF) as avgFingerprintLB,
+AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFF0000) >> 32) as avgFingerprintHB,""".format(
                 ",".join(expression_list))
 
         return default
+
+        return
 
     @property
     def copy_data(self):
@@ -1886,8 +1931,8 @@ STDDEV_POP(FARM_FINGERPRINT(CONCAT({0}))) as stdDvPopFingerprint,""".format(
             function(*args)
         except Exception as e:
             pretty_printer = pprint.PrettyPrinter()
-            self.get_logger().exception("Exception calling function{} args {}", function.__name__,
-                                        pretty_printer.pformat(args))
+            self.get_logger().exception("Exception calling function{} args {}".format(function.__name__,
+                                        pretty_printer.pformat(args)))
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
         view_definition = view_definition.replace(
@@ -2012,6 +2057,26 @@ class MultiBQSyncCoordinator(object):
                                             coordinator=self,
                                             copy_access=copy_access)
             self.__copy_drivers.append(copy_driver)
+
+    @property
+    def start_time(self):
+        start_time = datetime.max
+        for copy_driver in self.__copy_drivers:
+            if copy_driver.start_time < start_time:
+                start_time = copy_driver.start_time
+        return start_time
+
+    @property
+    def end_time(self):
+        end_time = datetime.min
+        for copy_driver in self.__copy_drivers:
+            if copy_driver.end_time > end_time:
+                end_time = copy_driver.end_time
+        return end_time
+
+    @property
+    def sync_time_seconds(self):
+        return (self.end_time - self.start_time).seconds
 
     @property
     def logger(self):
@@ -2592,8 +2657,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
 
         def copy_complete_callback(job):
-            if job.error_result is not None:
-                copy_driver.increment_copy_fails()
+            copy_driver.update_job_stats(job)
 
         callbacks = {}
         for job in jobs:
@@ -2773,9 +2837,9 @@ def cross_region_copy(copy_driver, table_name):
                                                location=copy_driver.destination_location)
 
         def delete_blob(job):
-            if job.error_result:
-                copy_driver.increment_load_fails()
-            else:
+            copy_driver.update_job_stats(job)
+
+            if not job.error_result:
                 client = storage.Client(project=copy_driver.source_project)
                 dst_bucket = client.get_bucket(copy_driver.destination_bucket)
                 for blob_num in range(blob_uris):
@@ -3042,6 +3106,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     assert isinstance(copy_driver,
                       DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
                                             "Driver"
+    copy_driver.start_sync()
 
     # start by copying tables
     # start by copying structure and once aligned copy data
@@ -3234,6 +3299,6 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                       desc="Table copying",
                       sleepTime=0.1)
 
-
+    copy_driver.end_sync()
 
     return

@@ -137,7 +137,9 @@ Query Cache Hits {:,d}
 Extract Fails {:,d}
 Load Fails {:,d}
 Copy Fails {:,d}
-Speed up {:1,.5f}""".format(
+Sync Duration {}
+Rows per Second {:1,.2f}
+Speed up {:1,.2f}""".format(
                 multi_bq_copy.tables_synced,
                 multi_bq_copy.tables_avoided,
                 multi_bq_copy.tables_failed_sync,
@@ -149,12 +151,17 @@ Speed up {:1,.5f}""".format(
                 multi_bq_copy.rows_synced  - multi_bq_copy.rows_avoided,
                 multi_bq_copy.total_bytes_billed,
                 multi_bq_copy.total_bytes_processed,
-                round((multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 * 1024.0 * 1024.0 * 1024.0),2),
+                round((multi_bq_copy.total_bytes_processed * 5.0) / (1024.0 *
+                                                                     1024.0 *
+                                                                     1024.0 *
+                                                                     1024.0), 2),
                 multi_bq_copy.query_cache_hits,
                 multi_bq_copy.extract_fails,
                 multi_bq_copy.load_fails,
                 multi_bq_copy.copy_fails,
-                speed_up))
+                str(multi_bq_copy.end_time - multi_bq_copy.start_time),
+                round(multi_bq_copy.rows_synced / multi_bq_copy.sync_time_seconds, 2),
+                round(speed_up,2)))
 
 
     exitcode = 0
