@@ -74,7 +74,7 @@ flags.DEFINE_string('latest_date', None,
                     """The day to end day partition comparison default is None i.e. end at todays date
 latest date MUST be in YYYY-MM-DD format i.e. 2020-12-30""")
 
-flags.DEFINE_bool('dont_day_partition_deep_check', False,
+flags.DEFINE_bool('do_day_partition_deep_check', False,
                   """If set to True day partition data checks are run (this can be expensive).
 default is False this will not do a check unless number of bytes differ and mod time of source > 
 destination tables modification time.""")
@@ -145,7 +145,7 @@ def main(argv):
                                                    table_view_filter=FLAGS.table_or_views_to_copy,
                                                    latest_date=latest_date,
                                                    days_before_latest_day=FLAGS.days_before_latest_day,
-                                                   day_partition_deep_check=FLAGS.dont_day_partition_deep_check)
+                                                   day_partition_deep_check=FLAGS.do_day_partition_deep_check)
 
     # tweak logging
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)

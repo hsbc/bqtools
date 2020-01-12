@@ -11,7 +11,11 @@ basic usage is as follows
     --copy_data=True \
     --copy_views=True \
     --remove_deleted_tables=True \
-    --check_depth=-1
+    --check_depth=-1 \
+    --table_or_views_to_copy=.* \
+    --days_before_latest_day=10 \
+    --latest_date=2019-12-30 \
+    --dont_day_partition_deep_check=True
  
 Arguments
  
@@ -43,6 +47,20 @@ in source dataset
 Day partioned -2 can do rows per pratition -1 or rows per partition plus avg and stdev of farmfingerprint hash of fields
 such as created time, update time, modified time, 0 does all level 0 fields hashs and std dev, 1 will do depth 1 adding 
 depth effectively trades accuracy for timeliness  
+
+*table_or_views_to_copy* - defaults to .*. This is comma seperated list of regular expressions table and view names are 
+compared against only if there is 1 match is the table or view copied.
+
+*days_before_latest_day* - defaults to None which is examine all day partitions. If set takes this number of days from
+lates_date. This lets you reduce the rows checked. Combining check_depth and this setting let you trade off performance
+against cost
+
+*latest_date* - defaults to False which means todays date. Expects a parsable date in YYYY-MM-DD format. Sets upper limit
+ of days to compare for day partitoin tables
+ 
+*do_day_partition_deep_check* - Default False by default. Table bytes and last modification are checked only if bytes differ or the
+source table modification is after the destinations is a deeper check done. This forces if True to do deep checks on all day 
+partitioned tables.
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
