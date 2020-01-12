@@ -90,7 +90,7 @@ TCMPDAYPARTITION = """SELECT
   FORMAT_TIMESTAMP("%Y%m%d", _PARTITIONTIME) AS partitionName,
   COUNT(*) AS rowNum{extrafunctions}
 FROM
-  `{project}.{dataset}.{table_name}`
+  `{project}.{dataset}.{table_name}` as zzz{extrajoinandpredicates}
 GROUP BY
   1
 ORDER BY
@@ -1882,6 +1882,9 @@ class DefaultBQSyncDriver(object):
         default = ""
         SCHEMA = list(table.schema)
 
+        # emulate nonlocal variables this works in python 2.7 and python 3.6
+        aliasdict = {"alias":"","extrajoinpredicates":""}
+
         """
         
         Use FRAM_FINGERPRINT as hash of each value and then summed
@@ -1889,48 +1892,92 @@ class DefaultBQSyncDriver(object):
         
         """
 
-        def add_data_check(SCHEMA,prefix=None):
+        def add_data_check(SCHEMA, prefix=None, depth=0):
+
+
             if prefix is None:
                 prefix = []
+                # add base table alia
+                prefix.append('zzz')
 
             expression_list = []
+
+            # if we are beyond check depth exit
+            if self.check_depth >=0 and depth > self.check_depth:
+                return expression_list
+
             for field in SCHEMA:
+                prefix.append(field.name)
                 if self.check_depth >= 0 or \
-                        (self.check_depth >= -1 and (re.search("update.*time", field.name.lower()) or \
-                                                     re.search("modifi.*time", field.name.lower()) or \
-                                                     re.search("creat.*time", field.name.lower()))):
-                    prefix.append(field.name)
+                        (self.check_depth >= -1 and (
+                                re.search("update.*time", field.name.lower()) or \
+                                re.search("modifi.*time", field.name.lower()) or \
+                                re.search("version", field.name.lower()) or \
+                                re.search("creat.*time", field.name.lower()))):
+
                     if field.field_type == "STRING":
                         expression_list.append("IFNULL(`{0}`,'')".format("`.`".join(prefix)))
                     elif field.field_type == "TIMESTAMP":
                         expression_list.append(
-                            "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format("`.`".join(prefix)))
+                            "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
+                                "`.`".join(prefix)))
                     elif field.field_type == "INTEGER" or field.field_type == "INT64":
-                        expression_list.append("CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
+                        expression_list.append(
+                            "CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
                     elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
                             field.field_type == "NUMERIC":
-                        expression_list.append("CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
+                        expression_list.append(
+                            "CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
                     elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
-                        expression_list.append("CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
+                        expression_list.append(
+                            "CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
                     elif field.field_type == "BYTES":
-                        expression_list.append("CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
-                    elif field.field_type == "RECORD" and field.mode != "REPEATED":
-                        SCHEMA = list(field.fields)
-                        expression_list.extend(add_data_check(SCHEMA,prefix=prefix))
-                    prefix.pop()
+                        expression_list.append(
+                            "CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
+                if field.field_type == "RECORD":
+                    SSCHEMA = list(field.fields)
+                    if field.mode != "REPEATED":
+                        expression_list.extend(add_data_check(SSCHEMA, prefix=prefix, depth=depth))
+                    else:
+                        # if we want to go deeper in checking
+                        if depth < self.check_depth:
+
+                            # need to unnest as repeated
+                            if aliasdict["alias"] == "":
+                                # uses this to name space from real columns
+                                # bit hopeful
+                                aliasdict["alias"] = "zzz"
+
+                            aliasdict["alias"] = aliasdict["alias"] + "z"
+
+                            # so need to rest prefix for this record
+                            newprefix = []
+                            newprefix.append(aliasdict["alias"])
+
+                            # add the unnest
+                            aliasdict["extrajoinpredicates"] = """{}
+LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".join(prefix), aliasdict["alias"])
+
+                            # add the fields
+                            expression_list.extend(add_data_check(SSCHEMA, prefix=newprefix, depth=depth+1))
+                prefix.pop()
             return expression_list
 
         expression_list = add_data_check(SCHEMA)
 
         if len(expression_list) > 0:
+            # algorithm to compare sets
+            # java uses overflowing sum but big query does not allow in sum
+            # using average as scales sum and available as aggregate
+            # split top end and bottom end of hash
+            # that way we maximise bits and fidelity
+            # and
             default = """,
-AVG(FARM_FINGERPRINT(CONCAT({0})) & 0x0000FFFF) as avgFingerprintLB,
-AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFF0000) >> 32) as avgFingerprintHB,""".format(
+    AVG(FARM_FINGERPRINT(CONCAT({0})) &  0x0000000FFFFFFFF) as avgFingerprintLB,
+    AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
                 ",".join(expression_list))
 
-        return default
-
-        return
+        return default,aliasdict["extrajoinpredicates"]
 
     @property
     def copy_data(self):
@@ -2731,15 +2778,17 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
         bqclient = copy_driver.source_client
         srctable_ref = bqclient.dataset(copy_driver.source_dataset).table(table_name)
         srctable = bqclient.get_table(srctable_ref)
-        extrafields = copy_driver.extra_dp_compare_functions(
+        extrafields,extrajoinandpredicates = copy_driver.extra_dp_compare_functions(
             srctable)
         src_query = TCMPDAYPARTITION.format(project=copy_driver.source_project,
                                             dataset=copy_driver.source_dataset,
                                             extrafunctions=extrafields,
+                                            extrajoinandpredicates=extrajoinandpredicates,
                                             table_name=table_name)
         dst_query = TCMPDAYPARTITION.format(project=copy_driver.destination_project,
                                             dataset=copy_driver.destination_dataset,
                                             extrafunctions=extrafields,
+                                            extrajoinandpredicates=extrajoinandpredicates,
                                             table_name=table_name)
 
     # if same region now just do a table copy
@@ -2789,6 +2838,23 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             destination_row[
                                 key])):
                             diff = True
+                            copy_driver.logger.info(
+                                "Copying {}.{}.{}${} to {}.{}.{}${} difference in {} source value "
+                                "{} "
+                                "destination value {}".format(
+                                    copy_driver.source_project,
+                                    copy_driver.source_dataset,
+                                    table_name,
+                                    source_row[
+                                        "partitionName"],
+                                    copy_driver.destination_project,
+                                    copy_driver.destination_dataset,
+                                    table_name,
+                                    source_row[
+                                        "partitionName"],
+                                    key,
+                                    source_row[key],
+                                    destination_row[key]))
                             break
                     if diff:
                         jobs.append(in_region_copy(copy_driver,
@@ -2805,6 +2871,18 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                 elif (destination_ended and not source_ended) or (
                         not source_ended and source_row["partitionName"] < destination_row[
                     "partitionName"]):
+                    copy_driver.logger.info(
+                        "Copying {}.{}.{}${} to {}.{}.{}${} as not on destination".format(
+                            copy_driver.source_project,
+                            copy_driver.source_dataset,
+                            table_name,
+                            source_row[
+                                "partitionName"],
+                            copy_driver.destination_project,
+                            copy_driver.destination_dataset,
+                            table_name,
+                            source_row[
+                                "partitionName"]))
                     jobs.append(in_region_copy(copy_driver,
                                                "{}${}".format(table_name,
                                                               source_row["partitionName"])))
@@ -2868,7 +2946,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         source_row["partitionName"]:
                     diff = False
                     rowdict = dict(list(source_row.items()))
-                    for key in rowdict:
+                    for key in sorted(rowdict.keys()):
                         # if different
                         # if not a float thats ok
                         # but if a float assume math so has rounding truncation
@@ -2880,6 +2958,22 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                             destination_row[
                                 key])):
                             diff = True
+                            copy_driver.logger.info(
+                                "Copying {}.{}.{}${} to {}.{}.{}${} difference in {} source value {} "
+                                "destination value {}".format(
+                                    copy_driver.source_project,
+                                    copy_driver.source_dataset,
+                                    table_name,
+                                    source_row[
+                                        "partitionName"],
+                                    copy_driver.destination_project,
+                                    copy_driver.destination_dataset,
+                                    table_name,
+                                    source_row[
+                                        "partitionName"],
+                                    key,
+                                    source_row[key],
+                                    destination_row[key]))
                             break
                     if diff:
                         copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
@@ -2901,6 +2995,18 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                 elif (destination_ended and not source_ended) or (
                         not source_ended and source_row["partitionName"] < destination_row[
                     "partitionName"]):
+                    copy_driver.logger.info(
+                        "Copying {}.{}.{}${} to {}.{}.{}${} as not on destination".format(
+                            copy_driver.source_project,
+                            copy_driver.source_dataset,
+                            table_name,
+                            source_row[
+                                "partitionName"],
+                            copy_driver.destination_project,
+                            copy_driver.destination_dataset,
+                            table_name,
+                            source_row[
+                                "partitionName"]))
                     copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
                                                                         [copy_driver,
                                                                          "{}${}".format(table_name,
