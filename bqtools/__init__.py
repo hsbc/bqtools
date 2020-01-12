@@ -3574,6 +3574,10 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     # stop all the background threads
     stop_event.set()
 
+    # wait for threads to stop
+    for t in thread_list:
+        t.join()
+
     copy_driver.schema_q = None
     copy_driver.copy_q = None
 
@@ -3584,6 +3588,5 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                       sleepTime=0.1)
 
     copy_driver.end_sync()
-    
 
     return
