@@ -55,7 +55,7 @@ compared against only if there is 1 match is the table or view copied.
 lates_date. This lets you reduce the rows checked. Combining check_depth and this setting let you trade off performance
 against cost
 
-*latest_date* - defaults to False which means todays date. Expects a parsable date in YYYY-MM-DD format. Sets upper limit
+*latest_date* - defaults to None which means todays date. Expects a parsable date in YYYY-MM-DD format. Sets upper limit
  of days to compare for day partitoin tables
  
 *do_day_partition_deep_check* - Default False by default. Table bytes and last modification are checked only if bytes differ or the
