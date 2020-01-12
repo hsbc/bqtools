@@ -15,7 +15,7 @@ basic usage is as follows
     --table_or_views_to_copy=.* \
     --days_before_latest_day=10 \
     --latest_date=2019-12-30 \
-    --dont_day_partition_deep_check=True
+    --do_day_partition_deep_check=True
  
 Arguments
  
