@@ -1435,7 +1435,11 @@ class DefaultBQSyncDriver(object):
                  copy_data=True,
                  copy_views=True,
                  check_depth=-1,
-                 copy_access=True):
+                 copy_access=True,
+                 table_view_filter=[".*"],
+                 latest_date=None,
+                 days_before_latest_day=None,
+                 day_partition_deep_check=False):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done
@@ -1460,6 +1464,7 @@ class DefaultBQSyncDriver(object):
         # check copy makes some basic sense
         assert srcproject != dstproject or srcdataset != dstdataset, "Source and destination " \
                                                                      "datasets cannot be the same"
+        assert latest_date is None or isinstance(latest_date,datetime)
 
         self._source_project = srcproject
         self._source_dataset = srcdataset
@@ -1475,6 +1480,21 @@ class DefaultBQSyncDriver(object):
         self.__logger = logging
         self.__check_depth = check_depth
         self.__copy_access = copy_access
+        self.__table_view_filter = table_view_filter
+        self.__re_table_view_filter = []
+        self.__base_predicates = []
+        self.__day_partition_deep_check = day_partition_deep_check
+
+        if days_before_latest_day is not None:
+            if latest_date is None:
+                end_date = "TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(),DAY)"
+            else:
+                end_date = "TIMESTAMP('{}')".format(latest_date.strftime("%Y-%m-%d"))
+            self.__base_predicates.append(
+                "_PARTITIONTIME BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
+                "days_before_latest_day} * 24 HOUR) AND {end_date}".format(
+                    end_date=end_date,
+                    days_before_latest_day=days_before_latest_day))
 
         # now check that from a service the copy makes sense
         assert dataset_exists(self.source_client, self.source_client.dataset(
@@ -1524,6 +1544,25 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(dst_bucket.location,
                                                   destination_dataset_impl.location), \
                 "Destination bucket location is not same as destination dataset location"
+
+    def comparison_predicates(self,table_name):
+        return self.__base_predicates
+
+    def istableincluded(self,table_name):
+        """
+        This method when passed a table_name returns true if it should be processed in a copy action
+        :param table_name:
+        :return: boolean True then it should be include False then no
+        """
+        if len(self.__re_table_view_filter) == 0:
+            for filter in self.__table_view_filter:
+                self.__re_table_view_filter.append(re.compile(filter))
+
+        for regexp2check in  self.__re_table_view_filter:
+            if regexp2check.search(table_name):
+                return True
+
+        return False
 
     def reset_stats(self):
         self.__bytes_synced = 0
@@ -1869,7 +1908,7 @@ class DefaultBQSyncDriver(object):
 
         :return: True if should check rows and bytes counts False if notrequired
         """
-        return True
+        return self.__day_partition_deep_check
 
     def extra_dp_compare_functions(self, table):
         """
@@ -1977,6 +2016,11 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".j
     AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
                 ",".join(expression_list))
 
+        predicates = self.comparison_predicates(table.table_id)
+        if len(predicates) > 0:
+            aliasdict["extrajoinpredicates"] = """{}
+WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates))
+
         return default,aliasdict["extrajoinpredicates"]
 
     @property
@@ -1998,6 +2042,9 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".j
         :param dsttable:
         :return:
         """
+        if srctable.partitioning_type == "DAY" and self.day_partition_deep_check:
+            return True
+
         return False
 
     def fault_barrier(self, function, *args):
@@ -2115,7 +2162,11 @@ class MultiBQSyncCoordinator(object):
                  copy_data=True,
                  copy_views=True,
                  check_depth=-1,
-                 copy_access=True):
+                 copy_access=True,
+                 table_view_filter=[".*"],
+                 latest_date=None,
+                 days_before_latest_day=None,
+                 day_partition_deep_check=False):
         assert len(srcproject_and_dataset_list) == len(
             dstproject_and_dataset_list), "Source and destination lists must be same length"
         assert len(
@@ -2141,7 +2192,11 @@ class MultiBQSyncCoordinator(object):
                                             copy_views=copy_views,
                                             check_depth=self.__check_depth,
                                             coordinator=self,
-                                            copy_access=copy_access)
+                                            copy_access=copy_access,
+                                            table_view_filter=table_view_filter,
+                                            latest_date=latest_date,
+                                            days_before_latest_day=days_before_latest_day,
+                                            day_partition_deep_check=day_partition_deep_check)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -2458,13 +2513,21 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                  copy_views=True,
                  check_depth=-1,
                  copy_access=True,
-                 coordinator=None):
+                 coordinator=None,
+                 table_view_filter=[".*"],
+                 latest_date=None,
+                 days_before_latest_day=None,
+                 day_partition_deep_check=False):
         DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
                                      srcbucket, dstbucket, remove_deleted_tables,
                                      copy_data,
                                      copy_views,
                                      check_depth,
-                                     copy_access = copy_access)
+                                     copy_access = copy_access,
+                                     table_view_filter=table_view_filter,
+                                     latest_date=latest_date,
+                                     days_before_latest_day=days_before_latest_day,
+                                     day_partition_deep_check=day_partition_deep_check)
         self.__coordinater = coordinator
 
     @property
@@ -3445,9 +3508,10 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     while not (source_ended and destination_ended):
         if not destination_ended and not source_ended and destination_row["table_name"] == \
                 source_row["table_name"]:
-            copy_driver.increment_tables_synced()
-            schema_q.put(
-                (0, BQSyncTask(compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
+            if copy_driver.istableincluded(source_row["table_name"]):
+                copy_driver.increment_tables_synced()
+                schema_q.put(
+                    (0, BQSyncTask(compare_schema_patch_ifneeded, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -3459,7 +3523,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         elif (destination_ended and not source_ended) or (
                 not source_ended and source_row["table_name"] < destination_row["table_name"]):
-            schema_q.put((0, BQSyncTask(create_and_copy_table, [copy_driver, source_row["table_name"]])))
+            if copy_driver.istableincluded(source_row["table_name"]):
+                schema_q.put((0, BQSyncTask(create_and_copy_table, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -3521,15 +3586,16 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         while not source_ended or not destination_ended:
             if not destination_ended and not source_ended and destination_row["table_name"] == \
                     source_row["table_name"]:
-                copy_driver.increment_views_synced()
-                expected_definition = copy_driver.update_source_view_definition(
-                    source_row["view_definition"], source_row["use_standard_sql"])
-                if expected_definition != destination_row["view_definition"]:
-                    views_to_apply[source_row["table_name"]] = {
-                        "use_standard_sql": source_row["use_standard_sql"],
-                        "view_definition": expected_definition, "action": "patch_view"}
-                else:
-                    copy_driver.increment_view_avoided()
+                if copy_driver.istableincluded(source_row["table_name"]):
+                    copy_driver.increment_views_synced()
+                    expected_definition = copy_driver.update_source_view_definition(
+                        source_row["view_definition"], source_row["use_standard_sql"])
+                    if expected_definition != destination_row["view_definition"]:
+                        views_to_apply[source_row["table_name"]] = {
+                            "use_standard_sql": source_row["use_standard_sql"],
+                            "view_definition": expected_definition, "action": "patch_view"}
+                    else:
+                        copy_driver.increment_view_avoided()
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
@@ -3541,12 +3607,13 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             elif (destination_ended and not source_ended) or (
                     not source_ended and source_row["table_name"] < destination_row[
                 "table_name"]):
-                copy_driver.increment_views_synced()
-                expected_definition = copy_driver.update_source_view_definition(
-                    source_row["view_definition"], source_row["use_standard_sql"])
-                views_to_apply[source_row["table_name"]] = {
-                    "use_standard_sql": source_row["use_standard_sql"],
-                    "view_definition": expected_definition, "action": "create_view"}
+                if copy_driver.istableincluded(source_row["table_name"]):
+                    copy_driver.increment_views_synced()
+                    expected_definition = copy_driver.update_source_view_definition(
+                        source_row["view_definition"], source_row["use_standard_sql"])
+                    views_to_apply[source_row["table_name"]] = {
+                        "use_standard_sql": source_row["use_standard_sql"],
+                        "view_definition": expected_definition, "action": "create_view"}
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
