@@ -5,13 +5,15 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import logging
 import os
+import sys
 
 import boto
-import bqtools
 from absl import app
 from absl import flags
-from absl import logging
+
+import bqtools
 
 FLAGS = flags.FLAGS
 
@@ -108,6 +110,7 @@ def main(argv):
                                                    check_depth=FLAGS.check_depth)
 
     # tweak logging
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     multi_bq_copy.logger = logging
 
     # actually do the sync
