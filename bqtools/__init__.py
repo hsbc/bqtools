@@ -1557,7 +1557,7 @@ class DefaultBQSyncDriver(object):
         return self.__load_input_files
 
     @property
-    def bytes_synced(self):
+    def bytes_copied(self):
         return self.__load_output_bytes
 
     def increment_load_input_file_bytes(self,value):
@@ -2302,6 +2302,13 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
+    def bytes_copied(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.bytes_copied
+        return total
+
+    @property
     def files_copied_across_region(self):
         total = 0
         for copy_driver in self.__copy_drivers:
@@ -2315,6 +2322,7 @@ class MultiBQSyncCoordinator(object):
         for copy_driver in self.__copy_drivers:
             total += copy_driver.bytes_synced
         return total
+
 
     def sync_monitor_thread(self, stop_event):
         """
@@ -2336,7 +2344,7 @@ class MultiBQSyncCoordinator(object):
             except Exception as e:
                 self.logger.exception("Exception monitoring MultiBQSync ignoring and continuing")
                 pass
-
+        self.logger.info("=============== Sync Completed ================")
         self.log_stats()
 
     def sync(self):
@@ -2344,7 +2352,7 @@ class MultiBQSyncCoordinator(object):
         Synchronise all the datasets in the driver
         :return:
         """
-
+        self.logger.info("=============== Sync Starting ================")
         # start monitoring thread
         stop_event = threading.Event()
         t = threading.Thread(target=self.sync_monitor_thread, name="monitorthread", args=[
@@ -2364,6 +2372,7 @@ class MultiBQSyncCoordinator(object):
 
         # stop the monitoring thread
         stop_event.set()
+        t.join()
             
     def log_stats(self):
         
@@ -2408,17 +2417,20 @@ class MultiBQSyncCoordinator(object):
             "Bytes Copied {:1,.02f} GB".format(
                 round(self.bytes_copied_across_region / (1024 * 1024 * 1024), 2)))
         self.logger.info(
-            "BQ Bytes Copied {:1,.02f} GB".format(
+            "BQ Bytes Synced {:1,.02f} GB".format(
                 round(self.bytes_synced / (1024 * 1024 * 1024), 2)))
+        self.logger.info(
+            "BQ Bytes Uncompressed Copied {:1,.02f} GB".format(
+                round(self.bytes_copied / (1024 * 1024 * 1024), 2)))
         self.logger.info("Sync Duration {}".format(
             str(self.end_time - self.start_time)))
         self.logger.info("Rows per Second {:1,.2f}".format(
             round(self.rows_synced / self.sync_time_seconds, 2)))
-        self.logger.info("Cross Region (Network) {:1,.3f} Gbs".format(
-            round(((self.bytes_copied_across_region * 8.0) / (1024 * 1024 * 1024)) /
+        self.logger.info("Cross Region (Network) {:1,.3f} Mbs".format(
+            round(((self.bytes_copied_across_region * 8.0) / (1024 * 1024)) /
                   self.sync_time_seconds, 3)))
-        self.logger.info("Cross Region (Big Query Raw Data) {:1,.3f} Gbs".format(
-            round(((self.bytes_synced * 8.0) / (1024 * 1024 * 1024)) /
+        self.logger.info("Cross Region (Big Query Uncompressed Data) {:1,.3f} Mbs".format(
+            round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
                   self.sync_time_seconds, 3)))
         self.logger.info("Speed up {:1,.2f}".format(round(speed_up, 2)))
 
