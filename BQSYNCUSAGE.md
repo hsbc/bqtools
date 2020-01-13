@@ -13,6 +13,7 @@ basic usage is as follows
     --remove_deleted_tables=True \
     --check_depth=-1 \
     --table_or_views_to_copy=.* \
+    --table_or_views_to_exclude= \
     --days_before_latest_day=10 \
     --latest_date=2019-12-30 \
     --do_day_partition_deep_check=True
