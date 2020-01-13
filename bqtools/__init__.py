@@ -105,7 +105,7 @@ MAPBQREGION2KMSREGION = {
 }
 
 BQSYNCQUERYLABELS = {
-    "bqsyncversion":"BQSync v0.4"
+    "bqsyncversion":"bqyncv0_4"
 }
 
 
