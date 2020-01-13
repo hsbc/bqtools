@@ -1577,7 +1577,7 @@ class DefaultBQSyncDriver(object):
                 break
 
         if result:
-            for regexp2check in self.__table_or_views_to_exclude:
+            for regexp2check in self.__re_table_or_views_to_exclude:
                 if regexp2check.search(table_name):
                     result = False
                     break
