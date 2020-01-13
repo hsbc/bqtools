@@ -104,6 +104,10 @@ MAPBQREGION2KMSREGION = {
     "EU": "europe"
 }
 
+BQSYNCQUERYLABELS = {
+    "BQSyncVersion":"BQSync v0.4"
+}
+
 
 
 
@@ -1376,7 +1380,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
     return compute_region.lower() == bq_compute_region
 
 
-def run_query(client, query, logger, desctext="", location=None, max_results=10000, callback_on_complete=None):
+def run_query(client, query, logger, desctext="", location=None, max_results=10000, callback_on_complete=None, labels = None):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1391,6 +1395,8 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     job_config = bigquery.QueryJobConfig()
     job_config.maximum_billing_tier = 10
     job_config.use_legacy_sql = use_legacy_sql
+    if labels is not None:
+        job_config.labels = labels
 
     query_job = client.query(query, job_config=job_config, location=location)
 
@@ -2897,7 +2903,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                          copy_driver.get_logger(),
                                          "List source data per partition",
                                          location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats)
+                                         callback_on_complete=copy_driver.update_job_stats,
+                                         labels=BQSYNCQUERYLABELS)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -2907,7 +2914,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats)
+                                              callback_on_complete=copy_driver.update_job_stats,
+                                              labels=BQSYNCQUERYLABELS)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -3017,7 +3025,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                          copy_driver.get_logger(),
                                          "List source data per partition",
                                          location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats)
+                                         callback_on_complete=copy_driver.update_job_stats,
+                                         labels=BQSYNCQUERYLABELS)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -3027,7 +3036,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats)
+                                              callback_on_complete=copy_driver.update_job_stats,
+                                              labels=BQSYNCQUERYLABELS)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -3507,7 +3517,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     source_generator = run_query(copy_driver.source_client, source_query, "List source tables",
                                  copy_driver.get_logger(),
                                  location=copy_driver.source_location,
-                                 callback_on_complete=copy_driver.update_job_stats)
+                                 callback_on_complete=copy_driver.update_job_stats,
+                                 labels=BQSYNCQUERYLABELS)
     try:
         source_row = next(source_generator)
     except StopIteration:
@@ -3517,7 +3528,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                       copy_driver.get_logger(),
                                       "List destination tables",
                                       location=copy_driver.destination_location,
-                                      callback_on_complete=copy_driver.update_job_stats)
+                                      callback_on_complete=copy_driver.update_job_stats,
+                                      labels=BQSYNCQUERYLABELS)
     try:
         destination_row = next(destination_generator)
     except StopIteration:
@@ -3573,7 +3585,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                  copy_driver.get_logger(),
                                  "List views in apply order",
                                  location=copy_driver.source_location,
-                                 callback_on_complete=copy_driver.update_job_stats):
+                                 callback_on_complete=copy_driver.update_job_stats,
+                                 labels=BQSYNCQUERYLABELS):
             view_order.append(viewrow["table_name"])
 
         # now list and compare views
@@ -3585,7 +3598,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         source_generator = run_query(copy_driver.source_client, source_view_query,
                                      "List source views", copy_driver.get_logger(),
                                      location=copy_driver.source_location,
-                                     callback_on_complete=copy_driver.update_job_stats)
+                                     callback_on_complete=copy_driver.update_job_stats,
+                                     labels=BQSYNCQUERYLABELS)
         try:
             source_row = next(source_generator)
         except StopIteration:
@@ -3595,7 +3609,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                           copy_driver.get_logger(),
                                           "List destination views",
                                           location=copy_driver.destination_location,
-                                          callback_on_complete=copy_driver.update_job_stats)
+                                          callback_on_complete=copy_driver.update_job_stats,
+                                          labels=BQSYNCQUERYLABELS)
         try:
             destination_row = next(destination_generator)
         except StopIteration:
