@@ -1437,6 +1437,7 @@ class DefaultBQSyncDriver(object):
                  check_depth=-1,
                  copy_access=True,
                  table_view_filter=[".*"],
+                 table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False):
@@ -1481,7 +1482,9 @@ class DefaultBQSyncDriver(object):
         self.__check_depth = check_depth
         self.__copy_access = copy_access
         self.__table_view_filter = table_view_filter
+        self.__table_or_views_to_exclude = table_or_views_to_exclude
         self.__re_table_view_filter = []
+        self.__re_table_or_views_to_exclude = []
         self.__base_predicates = []
         self.__day_partition_deep_check = day_partition_deep_check
 
@@ -1557,12 +1560,23 @@ class DefaultBQSyncDriver(object):
         if len(self.__re_table_view_filter) == 0:
             for filter in self.__table_view_filter:
                 self.__re_table_view_filter.append(re.compile(filter))
+            for filter in self.__table_or_views_to_exclude:
+                self.__re_table_or_views_to_exclude.append(re.compile(filter))
+
+        result = False
 
         for regexp2check in  self.__re_table_view_filter:
             if regexp2check.search(table_name):
-                return True
+                result = True
+                break
 
-        return False
+        if result:
+            for regexp2check in self.__table_or_views_to_exclude:
+                if regexp2check.search(table_name):
+                    result = False
+                    break
+
+        return result
 
     def reset_stats(self):
         self.__bytes_synced = 0
@@ -2164,6 +2178,7 @@ class MultiBQSyncCoordinator(object):
                  check_depth=-1,
                  copy_access=True,
                  table_view_filter=[".*"],
+                 table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False):
@@ -2194,6 +2209,7 @@ class MultiBQSyncCoordinator(object):
                                             coordinator=self,
                                             copy_access=copy_access,
                                             table_view_filter=table_view_filter,
+                                            table_or_views_to_exclude=table_or_views_to_exclude,
                                             latest_date=latest_date,
                                             days_before_latest_day=days_before_latest_day,
                                             day_partition_deep_check=day_partition_deep_check)
@@ -2515,6 +2531,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                  copy_access=True,
                  coordinator=None,
                  table_view_filter=[".*"],
+                 table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False):
@@ -2525,6 +2542,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      check_depth,
                                      copy_access = copy_access,
                                      table_view_filter=table_view_filter,
+                                     table_or_views_to_exclude=table_or_views_to_exclude,
                                      latest_date=latest_date,
                                      days_before_latest_day=days_before_latest_day,
                                      day_partition_deep_check=day_partition_deep_check)

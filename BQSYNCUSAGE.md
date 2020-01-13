@@ -48,8 +48,11 @@ Day partioned -2 can do rows per pratition -1 or rows per partition plus avg and
 such as created time, update time, modified time, 0 does all level 0 fields hashs and std dev, 1 will do depth 1 adding 
 depth effectively trades accuracy for timeliness  
 
-*table_or_views_to_copy* - defaults to .*. This is comma seperated list of regular expressions table and view names are 
+*table_or_views_to_copy* - defaults to [".*"]. This is comma seperated list of regular expressions table and view names are 
 compared against only if there is 1 match is the table or view copied.
+
+*table_or_views_to_exclude* - default to [] empty list. This is comma seperated list of names to match tables or views 
+against if any n the list  match the table/view name are excluded from the copy.
 
 *days_before_latest_day* - defaults to None which is examine all day partitions. If set takes this number of days from
 lates_date. This lets you reduce the rows checked. Combining check_depth and this setting let you trade off performance
