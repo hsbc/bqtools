@@ -15,6 +15,7 @@ from __future__ import unicode_literals
 import copy
 import json
 import logging
+import warnings
 import os
 import pprint
 import re
@@ -1858,6 +1859,7 @@ class DefaultBQSyncDriver(object):
 
     @property
     def source_client(self):
+        warnings.filterwarnings("ignore", "Your application has authenticated using end user credentials")
         """
         Obtains a source client in the current thread only constructs a client once per thread
         :return:
