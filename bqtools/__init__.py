@@ -2147,8 +2147,29 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates)
                 dst_access_entries.append(newaccess)
             dst_dataset.access_entries = dst_access_entries
 
+            fields = ["access_entries"]
+            if dst_dataset.description != src_dataset.description:
+                dst_dataset.description = src_dataset.description
+                fields.append("description")
+
+            if dst_dataset.friendly_name != src_dataset.friendly_name:
+                dst_dataset.friendly_name = src_dataset.friendly_name
+                fields.append("friendly_name")
+
+            if dst_dataset.default_table_expiration_ms != src_dataset.default_table_expiration_ms:
+                dst_dataset.default_table_expiration_ms = src_dataset.default_table_expiration_ms
+                fields.append("default_table_expiration_ms")
+
+            if dst_dataset.default_partition_expiration_ms != src_dataset.default_partition_expiration_ms:
+                dst_dataset.default_partition_expiration_ms = src_dataset.default_partition_expiration_ms
+                fields.append("default_partition_expiration_ms")
+
+            if len(dst_dataset.labels) != len(src_dataset.labels):
+                dst_dataset.labels = src_dataset.labels
+                fields.append("labels")
+
             try:
-                self.destination_client.update_dataset(dst_dataset, ["access_entries"])
+                self.destination_client.update_dataset(dst_dataset, fields)
             except exceptions.Forbidden as e:
                 self.logger.error(
                     "Unable to det permission on {}.{} dataset as Forbidden".format(
