@@ -51,7 +51,7 @@ _ROOT = os.path.abspath(os.path.dirname(__file__))
 DSTABLELISTQUERY = """SELECT
   table_name
 FROM
-  {}.INFORMATION_SCHEMA.TABLES
+  `{}.{}.INFORMATION_SCHEMA.TABLES`
 WHERE
   table_type = "BASE TABLE"
 ORDER BY
@@ -68,9 +68,9 @@ DSVIEWLISTQUERY = """SELECT
   t.creation_time,
   v.view_definition
 FROM
-  {0}.INFORMATION_SCHEMA.TABLES AS t
+  `{0}.{1}.INFORMATION_SCHEMA.TABLES` AS t
 JOIN
-  {0}.INFORMATION_SCHEMA.VIEWS AS v
+  `{0}.{1}.INFORMATION_SCHEMA.VIEWS` AS v
 ON
   v.table_name = t.table_name
 WHERE
@@ -81,7 +81,7 @@ ORDER BY
 DSVIEWORDER = """SELECT
   t.table_name
 FROM
-  {0}.INFORMATION_SCHEMA.TABLES AS t
+  `{0}.{1}.INFORMATION_SCHEMA.TABLES` AS t
 WHERE
   t.table_type = "VIEW"
 ORDER BY
@@ -1447,7 +1447,8 @@ class DefaultBQSyncDriver(object):
                  table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
-                 day_partition_deep_check=False):
+                 day_partition_deep_check=False,
+                 analysis_project=None):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done
@@ -1494,6 +1495,9 @@ class DefaultBQSyncDriver(object):
         self.__re_table_or_views_to_exclude = []
         self.__base_predicates = []
         self.__day_partition_deep_check = day_partition_deep_check
+        self.__analysisproject = self._destination_project
+        if analysis_project is not None:
+            self.__analysisproject = analysis_project
 
         if days_before_latest_day is not None:
             if latest_date is None:
@@ -1858,6 +1862,28 @@ class DefaultBQSyncDriver(object):
         return self.destination_client.get_dataset(destination_datasetref)
 
     @property
+    def query_client(self):
+        """
+        Returns the client to be charged for analysis of comparison could be
+        source could be destination could be another.
+        By default it is the destination but can be overriden by passing a target project
+        :return: A big query client for the project to be charged
+        """
+        warnings.filterwarnings("ignore",
+                                "Your application has authenticated using end user credentials")
+        """
+        Obtains a source client in the current thread only constructs a client once per thread
+        :return:
+        """
+        source_client = getattr(
+            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
+        if source_client is None:
+            setattr(DefaultBQSyncDriver.threadLocal, self.__analysisproject,
+                    bigquery.Client(project=self.__analysisproject, _http=self.http))
+        return getattr(
+            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
+
+    @property
     def source_client(self):
         warnings.filterwarnings("ignore", "Your application has authenticated using end user credentials")
         """
@@ -2189,7 +2215,8 @@ class MultiBQSyncCoordinator(object):
                  table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
-                 day_partition_deep_check=False):
+                 day_partition_deep_check=False,
+                 analysis_project=None):
         assert len(srcproject_and_dataset_list) == len(
             dstproject_and_dataset_list), "Source and destination lists must be same length"
         assert len(
@@ -2220,7 +2247,8 @@ class MultiBQSyncCoordinator(object):
                                             table_or_views_to_exclude=table_or_views_to_exclude,
                                             latest_date=latest_date,
                                             days_before_latest_day=days_before_latest_day,
-                                            day_partition_deep_check=day_partition_deep_check)
+                                            day_partition_deep_check=day_partition_deep_check,
+                                            analysis_project=analysis_project)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -2542,7 +2570,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                  table_or_views_to_exclude=[],
                  latest_date=None,
                  days_before_latest_day=None,
-                 day_partition_deep_check=False):
+                 day_partition_deep_check=False,
+                 analysis_project=None):
         DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
                                      srcbucket, dstbucket, remove_deleted_tables,
                                      copy_data,
@@ -2553,7 +2582,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      table_or_views_to_exclude=table_or_views_to_exclude,
                                      latest_date=latest_date,
                                      days_before_latest_day=days_before_latest_day,
-                                     day_partition_deep_check=day_partition_deep_check)
+                                     day_partition_deep_check=day_partition_deep_check,
+                                     analysis_project=analysis_project)
         self.__coordinater = coordinator
 
     @property
@@ -2901,7 +2931,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.source_client, src_query,
+            source_generator = run_query(copy_driver.query_client, src_query,
                                          copy_driver.get_logger(),
                                          "List source data per partition",
                                          location=copy_driver.source_location,
@@ -2912,7 +2942,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.destination_client, dst_query,
+            destination_generator = run_query(copy_driver.query_client, dst_query,
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
@@ -3023,7 +3053,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.source_client, src_query,
+            source_generator = run_query(copy_driver.query_client, src_query,
                                          copy_driver.get_logger(),
                                          "List source data per partition",
                                          location=copy_driver.source_location,
@@ -3034,7 +3064,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.destination_client, dst_query,
+            destination_generator = run_query(copy_driver.query_client, dst_query,
                                               copy_driver.get_logger(),
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
@@ -3511,12 +3541,12 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         t.start()
         thread_list.append(t)
 
-    source_query = DSTABLELISTQUERY.format(copy_driver.source_dataset)
-    destination_query = DSTABLELISTQUERY.format(copy_driver.destination_dataset)
+    source_query = DSTABLELISTQUERY.format(copy_driver.source_project,copy_driver.source_dataset)
+    destination_query = DSTABLELISTQUERY.format(copy_driver.destination_project,copy_driver.destination_dataset)
     source_ended = False
     destination_ended = False
 
-    source_generator = run_query(copy_driver.source_client, source_query, "List source tables",
+    source_generator = run_query(copy_driver.query_client, source_query, "List source tables",
                                  copy_driver.get_logger(),
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
@@ -3526,7 +3556,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     except StopIteration:
         source_ended = True
 
-    destination_generator = run_query(copy_driver.destination_client, destination_query,
+    destination_generator = run_query(copy_driver.query_client, destination_query,
                                       copy_driver.get_logger(),
                                       "List destination tables",
                                       location=copy_driver.destination_location,
@@ -3581,9 +3611,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         # we assume order created is the order
         view_order = []
         views_to_apply = {}
-        view_order_query = DSVIEWORDER.format(copy_driver.source_dataset)
+        view_order_query = DSVIEWORDER.format(copy_driver.source_project,copy_driver.source_dataset)
 
-        for viewrow in run_query(copy_driver.source_client, view_order_query,
+        for viewrow in run_query(copy_driver.query_client, view_order_query,
                                  copy_driver.get_logger(),
                                  "List views in apply order",
                                  location=copy_driver.source_location,
@@ -3592,8 +3622,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             view_order.append(viewrow["table_name"])
 
         # now list and compare views
-        source_view_query = DSVIEWLISTQUERY.format(copy_driver.source_dataset)
-        destination_view_query = DSVIEWLISTQUERY.format(copy_driver.destination_dataset)
+        source_view_query = DSVIEWLISTQUERY.format(copy_driver.source_project,copy_driver.source_dataset)
+        destination_view_query = DSVIEWLISTQUERY.format(copy_driver.destination_project,copy_driver.destination_dataset)
         source_ended = False
         destination_ended = False
 
@@ -3607,7 +3637,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         except StopIteration:
             source_ended = True
 
-        destination_generator = run_query(copy_driver.destination_client, destination_view_query,
+        destination_generator = run_query(copy_driver.query_client, destination_view_query,
                                           copy_driver.get_logger(),
                                           "List destination views",
                                           location=copy_driver.destination_location,
