@@ -16,7 +16,8 @@ basic usage is as follows
     --table_or_views_to_exclude= \
     --days_before_latest_day=10 \
     --latest_date=2019-12-30 \
-    --do_day_partition_deep_check=True
+    --do_day_partition_deep_check=True \
+    --analysis_project=project3
  
 Arguments
  
@@ -65,6 +66,9 @@ against cost
 *do_day_partition_deep_check* - Default False by default. Table bytes and last modification are checked only if bytes differ or the
 source table modification is after the destinations is a deeper check done. This forces if True to do deep checks on all day 
 partitioned tables.
+
+*analysis_project* - Default is None meaning the destination project is used for all query costs. If you need query 
+charges to be the source or another project set this argument to the project to be charged.
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
