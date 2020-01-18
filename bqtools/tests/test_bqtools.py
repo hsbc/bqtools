@@ -16,7 +16,7 @@ import pprint
 import unittest
 
 from deepdiff import DeepDiff
-from google.cloud import bigquery
+from google.cloud import bigquery, storage, exceptions
 
 import bqtools
 
@@ -1943,43 +1943,242 @@ class TestScannerMethods(unittest.TestCase):
     #        print("new {}".format(self.pp.pformat(pschema)))
 
     def test_sync(self):
+
         logging.basicConfig(level=logging.DEBUG)
-        multi_drivers = []
-        multi_drivers.append(bqtools.MultiBQSyncCoordinator(["methodical-bee-162815.billing_demo"],
-                                                            ["methodical-bee-162815.billing_demo3"],
-                                                            srcbucket="copy_dataset_src",
-                                                            dstbucket="copy_dataset_dst"))
 
+        # get target datasets ready uses app default credentials
+        bqclient = bigquery.Client()
+        stclient = storage.Client()
 
-        multi_drivers.append(bqtools.MultiBQSyncCoordinator(
-            ["methodical-bee-162815.billing_demo", "methodical-bee-162815.eimforseti2"],
-            ["methodical-bee-162815.billing_demo3", "methodical-bee-162815.eimforseti3"],
-            srcbucket="copy_dataset_src",
-            dstbucket="copy_dataset_dst"))
+        # will use default project and public datsets for testing
+        destination_project = bqclient.project
 
+        # going to copy data from various datasets in bigquery-public-data project
+        # each destination will be of the form bqsynctest_<region>_<orignaldatasetname>
+        # in region - will be replaced with _ to make valid dataset nae
+        # as all public data is in us we will need for cross region a us bucket
+        # and a target region bucket
+        # tests are in region i.e. us to us
+        # us to eu
+        # us to europe-west2
+        # bucket names will be created if they do not exist of
+        # bqsynctest_<projectid>_<region>
+        # eac  bucket will have a 1 day lifecycle added
+        # source will be picked with various source attribute types, partitioning and clustering strategy
+        # success is tables are copied no errors in extract, load or copy
+        # not tale numbers may vary
+        # at end the test datasets will be deleted the buckets will remain
+        # this as bucket names remain reserved for sometime after deletion
+        test_buckets = []
 
-        multi_drivers.append(bqtools.MultiBQSyncCoordinator(
-            ["methodical-bee-162815.billing_demo", "methodical-bee-162815.eimforseti2",
-             "methodical-bee-162815.forseti2"],
-            ["methodical-bee-162815.billing_demo3", "methodical-bee-162815.eimforseti3",
-             "methodical-bee-162815.forseti3"],
-            srcbucket="copy_dataset_src",
-            dstbucket="copy_dataset_dst"))
+        usbucket = "bqsynctest_{}_us".format(destination_project)
+        test_buckets.append({"name":usbucket,"region":"us"})
+        eubucket = "bqsynctest_{}_eu".format(destination_project)
+        test_buckets.append({"name":eubucket,"region":"eu"})
+        eu2bucket = "bqsynctest_{}_europe-west-2".format(destination_project)
+        test_buckets.append({"name":eu2bucket,"region":"europe-west2"})
 
-        for multi_driver in multi_drivers:
-            multi_driver.sync()
+        logging.info("Checking buckets for bqsync tests exist in right regions and with lifecycle rules...")
 
-            if multi_driver.rows_synced - multi_driver.rows_avoided == 0:
-                speed_up = "Infinity"
-            else:
-                speed_up = float(multi_driver.rows_synced)/float(multi_driver.rows_synced - multi_driver.rows_avoided)
+        # loop through test bucket if they do not exist create in the right region and add
+        # #lifecycle rule
+        # if they do exist check they are in right region and have the expected lifecycle rule
+        for bucket_dict in test_buckets:
+            bucket = None
+            try:
+                bucket = stclient.get_bucket(bucket_dict["name"])
+            except exceptions.NotFound:
+                bucket_ref = storage.Bucket(stclient,name=bucket_dict["name"])
+                bucket_ref.location = bucket_dict["region"]
+                storage.Bucket.create(bucket_ref,stclient)
+                bucket = stclient.get_bucket(bucket_dict["name"])
+            rules = bucket.lifecycle_rules
+            nrules = []
+            found1daydeletrule = False
+            for rule in rules:
+                if isinstance(rule, dict):
+                    if "condition" in rule and "age" in rule["condition"] and rule["condition"][
+                        "age"] == 1 and "isLive" in rule["condition"] and rule["condition"][
+                        "isLive"]:
+                        found1daydeletrule = True
+                nrules.append(rule)
+            if not found1daydeletrule:
+                nrules.append(
+                    {"action": {"type": "Delete"}, "condition": {"age": 1, "isLive": True}})
+            bucket.lifecycle_rules = nrules
+            bucket.update(stclient)
 
-            multi_driver.logger.info(
-                "Tables synced {}, Views synced {}, Rows synced {}, Rows Avooided {}, speed up {}".format(
-                    multi_driver.tables_synced, multi_driver.views_synced, multi_driver.rows_synced,
-                    multi_driver.rows_avoided,speed_up))
+        # starting datsets to test with form project bigquery-public-data
+        # along with each entry is list of tables and length of maximum days for day partition
+        test_source_configs = []
 
-        self.assertEqual(True, True, "Copy completed")
+        # small dataset good to start tests basic types
+        test_source_configs.append({
+            "description":"small dataset good to start tests basic types",
+            "dataset_name":"fcc_political_ads",
+            "table_filter_regexp":['broadcast_tv_radio_station',
+                                   'content_info',
+                                   'file_history',
+                                   'file_record'],
+            "max_last_days":25
+        })
+        # a table with geography data type
+        test_source_configs.append({
+            "description":"a table with geography data type",
+            "dataset_name": "faa",
+            "table_filter_regexp": ['us_airports'],
+            "max_last_days": 25
+        })
+        # a dataset with a day partitioned table with  clustering
+        # not using a specific partition column name so  just ingest time
+        test_source_configs.append({
+            "description":"a dataset with a day partitioned table with  clustering not using a specific partition column name so  just ingest time",
+            "dataset_name": "new_york_subway",
+            "table_filter_regexp": ['geo_nyc_borough_boundaries'],
+            "max_last_days": 25
+        })
+        # a dataset with view referencing it self to demo simple view copying
+        test_source_configs.append({
+            "description":"a dataset with view referencing it self to demo simple view copying",
+            "dataset_name": "noaa_goes16",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 25
+        })
+        # a dataset with functions only
+        test_source_configs.append({
+            "description":"a dataset with functions only",
+            "dataset_name": "persistent_udfs",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 25
+        })
+        # a dataset with nested table example and a model
+        test_source_configs.append({
+            "description":"a dataset with nested table example and a model",
+            "dataset_name": "samples",
+            "table_filter_regexp": ['github.*','model'],
+            "max_last_days": 25
+        })
+        # a dataset with day partioned no clustering using natural load time
+        test_source_configs.append({
+            "description":"a dataset with day partioned no clustering using natural load time",
+            "dataset_name": "sec_quarterly_financials",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 25
+        })
+        # a dataset with a day partitioned table with clustering
+        # using a specific partition column name so not just ingest time
+        test_source_configs.append({
+            "description":"a dataset with a day partitioned table with clustering using a specific partition column name so not just ingest time",
+            "dataset_name": "human_genome_variants",
+            "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
+            "max_last_days": 25
+        })
+
+        test_destination_datasets_list = []
+        for src_destination in test_source_configs:
+            tests = []
+            # set up local us test
+            destdatset = "bqsynctest_{}_{}".format("US",src_destination["dataset_name"]).replace("-","_")
+            tests.append({
+                "subtest":"us intra region",
+                "destdataset": destdatset,
+                "destregion":"US"
+            })
+            test_destination_datasets_list.append(destdatset)
+            # set up us to eu test
+            destdatset = "bqsynctest_{}_{}".format("EU", src_destination["dataset_name"]).replace(
+                "-", "_")
+            tests.append({
+                "subtest": "us to eu cross region",
+                "destdataset": destdatset,
+                "destregion": "EU",
+                "dstbucket":eubucket
+            })
+            test_destination_datasets_list.append(destdatset)
+            # set up us to europe-west2 test
+            # set up us to eu test
+            destdatset = "bqsynctest_{}_{}".format("europe-west2", src_destination["dataset_name"]).replace(
+                "-", "_")
+            tests.append({
+                "subtest": "us to eu cross region",
+                "destdataset": destdatset,
+                "destregion": "europe-west2",
+                "dstbucket":eu2bucket
+            })
+            test_destination_datasets_list.append(destdatset)
+            src_destination["tests"] = tests
+
+        logging.info(
+            "Checking daatsets for bqsync tests exist in right regions and if exist empty them i.e. delete and recreate them...")
+        for datasetname in test_destination_datasets_list:
+            dataset_ref = bqclient.dataset(datasetname)
+            if bqtools.dataset_exists(bqclient,dataset_ref):
+                bqclient.delete_dataset(bqclient.get_dataset(dataset_ref),delete_contents=True)
+
+        # for each source run sub tests
+        logging.info("Staring tests...")
+        for test_config in test_source_configs:
+
+            # run sub test basically an initial copy followed by
+            # 2nd copy if no data latter should do nothing
+            for dstconfig in test_config["tests"]:
+
+                # create an empty dataset
+                dataset_ref = bqclient.dataset(dstconfig["destdataset"])
+                dataset = bigquery.Dataset(dataset_ref)
+                dataset.location = dstconfig["destregion"]
+                dataset = bqclient.create_dataset(dataset)
+
+                # create initial sync
+                # as source is all in US if not us must need buckets
+                synctest = None
+                if dstconfig["destregion"] == "US":
+                    synctest = bqtools.MultiBQSyncCoordinator(["bigquery-public-data.{}".format(test_config["dataset_name"])],
+                                                   ["{}.{}".format(destination_project,dstconfig["destdataset"])],
+                                                   remove_deleted_tables=True,
+                                                   copy_data=True,
+                                                   copy_views=True,
+                                                   check_depth=0,
+                                                   table_view_filter=test_config["table_filter_regexp"],
+                                                   table_or_views_to_exclude=[],
+                                                   latest_date=None,
+                                                   days_before_latest_day=test_config["max_last_days"],
+                                                   day_partition_deep_check=False,
+                                                   analysis_project=destination_project)
+                else:
+                    synctest = bqtools.MultiBQSyncCoordinator(
+                            ["bigquery-public-data.{}".format(test_config["dataset_name"])],
+                            ["{}.{}".format(destination_project, dstconfig["destdataset"])],
+                            srcbucket=usbucket,
+                            dstbucket=dstconfig["dstbucket"],
+                            remove_deleted_tables=True,
+                            copy_data=True,
+                            copy_views=True,
+                            check_depth=0,
+                            table_view_filter=test_config["table_filter_regexp"],
+                            table_or_views_to_exclude=[],
+                            latest_date=None,
+                            days_before_latest_day=test_config["max_last_days"],
+                            day_partition_deep_check=False,
+                            analysis_project=destination_project)
+                synctest.sync()
+                self.assertEqual(True, True, "Initial Sync {} {} from bigquery-public-data..{} with {}.{}  completed".format(
+                    test_config["description"],
+                    dstconfig["subtest"],
+                    test_config["dataset_name"],
+                    destination_project,
+                    dstconfig["destdataset"]
+                ))
+                synctest.reset_stats()
+                self.assertEqual(True, True,
+                                 "Second Sync {} {} from bigquery-public-data..{} with {}.{}  "
+                                 "completed".format(
+                                     test_config["description"],
+                                     dstconfig["subtest"],
+                                     test_config["dataset_name"],
+                                     destination_project,
+                                     dstconfig["destdataset"]
+                                 ))
 
     def test_gendiff(self):
         bqSchema2 = bqtools.create_schema(self.schemaTest2)

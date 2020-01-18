@@ -2165,6 +2165,7 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates)
                     dst_dataset.default_partition_expiration_ms = src_dataset.default_partition_expiration_ms
                     fields.append("default_partition_expiration_ms")
 
+            # compare 2 dictionaries that are simple key, value
             x = dst_dataset.labels
             y = src_dataset.labels
 
@@ -2322,6 +2323,10 @@ class MultiBQSyncCoordinator(object):
         if end_time == datetime.min:
             return None
         return end_time
+
+    def reset_stats(self):
+        for copy_driver in self.__copy_drivers:
+            copy_driver.reset_stats()
 
     def state(self):
         if self.start_time is None:
@@ -3238,7 +3243,7 @@ def cross_region_copy(copy_driver, table_name):
     # compress trade compute for network bandwidth
     job_config.compression = bigquery.job.Compression.DEFLATE
     # start the extract
-    job = bqclient.extract_table(srctable, [src_uri], job_config=job_config,
+    job = copy_driver.query_client.extract_table(srctable, [src_uri], job_config=job_config,
                                  location=copy_driver.source_location)
 
     def cross_region_rewrite(job):
@@ -3292,7 +3297,7 @@ def cross_region_copy(copy_driver, table_name):
             # compress trade compute for network bandwidth
             job_config.compression = bigquery.job.Compression.DEFLATE
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
-            job = bqclient.load_table_from_uri([dst_uri], dsttable, job_config=job_config,
+            job = copy_driver.query_client.load_table_from_uri([dst_uri], dsttable, job_config=job_config,
                                                location=copy_driver.destination_location)
 
         def delete_blob(job):
@@ -3326,9 +3331,8 @@ def cross_region_copy(copy_driver, table_name):
 
 
 def in_region_copy(copy_driver, table_name):
-    bqclient = copy_driver.source_client
-    srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
-    dsttable = bqclient.dataset(copy_driver.destination_dataset).table(table_name)
+    srctable = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    dsttable = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(table_name)
     # Move to use write disposition so can haved ifferent write modes
     # this allows day partition snapshot and append tables
     # if self.table_exists(client, dsttable):
@@ -3337,7 +3341,7 @@ def in_region_copy(copy_driver, table_name):
     job_config.write_disposition = 'WRITE_TRUNCATE'
     job_config.create_disposition = 'CREATE_IF_NEEDED'
 
-    job = bqclient.copy_table(
+    job = copy_driver.query_client.copy_table(
         srctable, dsttable, job_config=job_config)
 
     return job
@@ -3679,7 +3683,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         source_ended = False
         destination_ended = False
 
-        source_generator = run_query(copy_driver.source_client, source_view_query,
+        source_generator = run_query(copy_driver.query_client, source_view_query,
                                      "List source views", copy_driver.get_logger(),
                                      location=copy_driver.source_location,
                                      callback_on_complete=copy_driver.update_job_stats,
