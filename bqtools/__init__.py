@@ -2160,13 +2160,42 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates)
                 dst_dataset.default_table_expiration_ms = src_dataset.default_table_expiration_ms
                 fields.append("default_table_expiration_ms")
 
-            if dst_dataset.default_partition_expiration_ms != src_dataset.default_partition_expiration_ms:
-                dst_dataset.default_partition_expiration_ms = src_dataset.default_partition_expiration_ms
-                fields.append("default_partition_expiration_ms")
+            if getattr(dst_dataset, "default_partition_expiration_ms", None):
+                if dst_dataset.default_partition_expiration_ms != src_dataset.default_partition_expiration_ms:
+                    dst_dataset.default_partition_expiration_ms = src_dataset.default_partition_expiration_ms
+                    fields.append("default_partition_expiration_ms")
 
-            if len(dst_dataset.labels) != len(src_dataset.labels):
+            x = dst_dataset.labels
+            y = src_dataset.labels
+
+            # get shared key values
+            shared_items = {k: x[k] for k in x if k in y and x[k] == y[k]}
+
+            # must be same size and values if not set labels
+            if len(dst_dataset.labels) != len(src_dataset.labels) or len(shared_items) != len(src_dataset.labels):
                 dst_dataset.labels = src_dataset.labels
                 fields.append("labels")
+
+            if getattr(dst_dataset, "default_encryption_configuration", None):
+                if not (
+                        src_dataset.default_encryption_configuration is None and
+                        dst_dataset.default_encryption_configuration is None):
+                    if src_dataset.default_encryption_configuration is None:
+                        dst_dataset.default_encryption_configuration = None
+                    else:
+                        if self.same_region or \
+                            src_dataset.default_encryption_configuration.kms_key_name.find(
+                                "/locations/global/") != -1:
+                            dst_dataset.default_encryption_configuration = encryption_config
+                        else:
+                            # if global key can still be used
+                            parts = src_dataset.default_encryption_configuration.kms_key_name.split("/")
+                            parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset.location,
+                                                                 dst_dataset.location.lower())
+                            dst_dataset.default_encryption_configuration = \
+                                bigquery.encryption_configuration.EncryptionConfiguration(
+                                kms_key_name="/".join(parts))
+                    fields.append("default_encryption_configuration")
 
             try:
                 self.destination_client.update_dataset(dst_dataset, fields)
@@ -2704,7 +2733,9 @@ def create_and_copy_table(copy_driver, table_name):
             parts = encryption_config.kms_key_name.split("/")
             parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset_impl.location,
                                                  dst_dataset_impl.location.lower())
-            destination_table.encryption_config = "/".join(parts)
+            destination_table.encryption_config = \
+                bigquery.encryption_configuration.EncryptionConfiguration(
+                kms_key_name="/".join(parts))
 
     # and create the table
     try:
