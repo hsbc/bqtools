@@ -2706,63 +2706,67 @@ def create_and_copy_table(copy_driver, table_name):
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
     srctable = copy_driver.source_client.get_table(srctable_ref)
 
-    NEW_SCHEMA = list(srctable.schema)
-    destination_table_ref = copy_driver.destination_client.dataset(
-        copy_driver.destination_dataset).table(table_name)
-    destination_table = bigquery.Table(destination_table_ref, schema=NEW_SCHEMA)
-    destination_table.description = srctable.description
-    destination_table.friendly_name = srctable.friendly_name
-    destination_table.labels = srctable.labels
-    destination_table.partitioning_type = srctable.partitioning_type
-    if srctable.partition_expiration is not None:
-        destination_table.partition_expiration = srctable.partition_expiration
-    destination_table.expires = srctable.expires
-    # handle older library backward cmpatability
-    if getattr(srctable, "require_partition_filter", None):
-        destination_table.require_partition_filter = srctable.require_partition_filter
-    if getattr(srctable, "range_partitioning", None):
-        destination_table.range_partitioning = srctable.range_partitioning
-    if getattr(srctable, "time_partitioning", None):
-        destination_table.time_partitioning = srctable.time_partitioning
-    if getattr(srctable, "clustering_fields", None):
-        destination_table.clustering_fields = srctable.clustering_fields
-    encryption_config = srctable.encryption_configuration
-
-    # encryption configs can be location specific
-    if encryption_config is not None:
-        if copy_driver.same_region or encryption_config.kms_key_name.find(
-                "/locations/global/") != -1:
-            destination_table.encryption_config = encryption_config
-        else:
-            # if global key can still be used
-            parts = encryption_config.kms_key_name.split("/")
-            parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset_impl.location,
-                                                 dst_dataset_impl.location.lower())
-            destination_table.encryption_config = \
-                bigquery.encryption_configuration.EncryptionConfiguration(
-                kms_key_name="/".join(parts))
-
-    # and create the table
-    try:
-        copy_driver.destination_client.create_table(destination_table)
-    except Exception:
+    if srctable.type != 'TABLE':
+        copy_driver.warning("Unable to copy a non table of type {} name {}.{}.{}".format(srctable.type,copy_driver.source_project,copy_driver.source_dataset,table_name))
         copy_driver.increment_tables_failed_sync()
-        raise
+    else:
+        NEW_SCHEMA = list(srctable.schema)
+        destination_table_ref = copy_driver.destination_client.dataset(
+            copy_driver.destination_dataset).table(table_name)
+        destination_table = bigquery.Table(destination_table_ref, schema=NEW_SCHEMA)
+        destination_table.description = srctable.description
+        destination_table.friendly_name = srctable.friendly_name
+        destination_table.labels = srctable.labels
+        destination_table.partitioning_type = srctable.partitioning_type
+        if srctable.partition_expiration is not None:
+            destination_table.partition_expiration = srctable.partition_expiration
+        destination_table.expires = srctable.expires
+        # handle older library backward cmpatability
+        if getattr(srctable, "require_partition_filter", None):
+            destination_table.require_partition_filter = srctable.require_partition_filter
+        if getattr(srctable, "range_partitioning", None):
+            destination_table.range_partitioning = srctable.range_partitioning
+        if getattr(srctable, "time_partitioning", None):
+            destination_table.time_partitioning = srctable.time_partitioning
+        if getattr(srctable, "clustering_fields", None):
+            destination_table.clustering_fields = srctable.clustering_fields
+        encryption_config = srctable.encryption_configuration
 
-    copy_driver.get_logger().info(
-        "Created table {}.{}.{}".format(copy_driver.destination_project,
-                                        copy_driver.destination_dataset,
-                                        table_name))
+        # encryption configs can be location specific
+        if encryption_config is not None:
+            if copy_driver.same_region or encryption_config.kms_key_name.find(
+                    "/locations/global/") != -1:
+                destination_table.encryption_config = encryption_config
+            else:
+                # if global key can still be used
+                parts = encryption_config.kms_key_name.split("/")
+                parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset_impl.location,
+                                                     dst_dataset_impl.location.lower())
+                destination_table.encryption_config = \
+                    bigquery.encryption_configuration.EncryptionConfiguration(
+                    kms_key_name="/".join(parts))
 
-    # anything to copy we have just created table
-    # so destination we know is 0
-    if srctable.num_rows != 0:
-        copy_driver.add_bytes_synced(srctable.num_bytes)
-        copy_driver.add_rows_synced(srctable.num_rows)
-        copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
-                                                         [copy_driver, table_name,
-                                                          srctable.partitioning_type, 0,
-                                                          srctable.num_rows])))
+        # and create the table
+        try:
+            copy_driver.destination_client.create_table(destination_table)
+        except Exception:
+            copy_driver.increment_tables_failed_sync()
+            raise
+
+        copy_driver.get_logger().info(
+            "Created table {}.{}.{}".format(copy_driver.destination_project,
+                                            copy_driver.destination_dataset,
+                                            table_name))
+
+        # anything to copy we have just created table
+        # so destination we know is 0
+        if srctable.num_rows != 0:
+            copy_driver.add_bytes_synced(srctable.num_bytes)
+            copy_driver.add_rows_synced(srctable.num_rows)
+            copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
+                                                             [copy_driver, table_name,
+                                                              srctable.partitioning_type, 0,
+                                                              srctable.num_rows])))
 
 
 def compare_schema_patch_ifneeded(copy_driver, table_name):
