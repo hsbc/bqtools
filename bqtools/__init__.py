@@ -2665,6 +2665,9 @@ class MultiBQSyncCoordinator(object):
         self.logger.info("Routines synced {:,d}".format(self.routines_synced))
         self.logger.info("Routines avoided {:,d}".format(self.routines_avoided))
         self.logger.info("Routines failed {:,d}".format(self.routines_failed_sync))
+        self.logger.info("Models synced {:,d}".format(self.models_synced))
+        self.logger.info("Models avoided {:,d}".format(self.models_avoided))
+        self.logger.info("Models failed {:,d}".format(self.models_failed_sync))
         self.logger.info(
             "Rows synced {:,d} Total rows as declared in meta data scan phase".format(
                 self.rows_synced))
@@ -2904,7 +2907,7 @@ def compare_model_patch_ifneeded(copy_driver, model_name):
     remove_deleted_destination_table(copy_driver, model_name)
     create_and_copy_model(copy_driver, model_name)
 
-def compare_schema_patch_ifneeded(copy_driver, model_name):
+def compare_schema_patch_ifneeded(copy_driver, table_name):
     """
     Compares schemas and patches if needed and copies data
     :param copy_driver:

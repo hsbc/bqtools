@@ -2052,12 +2052,12 @@ class TestScannerMethods(unittest.TestCase):
             "max_last_days": 25
         })
         # a dataset with nested table example and a model
-        # test_source_configs.append({
-        #     "description":"a dataset with nested table example and a model",
-        #     "dataset_name": "samples",
-        #     "table_filter_regexp": ['github.*','model'],
-        #     "max_last_days": 25
-        # })
+        test_source_configs.append({
+            "description":"a dataset with nested table example and a model",
+            "dataset_name": "samples",
+            "table_filter_regexp": ['github.*','model'],
+            "max_last_days": 25
+        })
         # # a dataset with day partioned no clustering using natural load time
         # test_source_configs.append({
         #     "description":"a dataset with day partioned no clustering using natural load time",
