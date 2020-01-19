@@ -1668,6 +1668,9 @@ class DefaultBQSyncDriver(object):
     def increment_routines_synced(self):
         self.__routines_synced += 1
 
+    def increment_routines_avoided(self):
+        self.__routines_avoided += 1
+
     @property
     def routines_failed_sync(self):
         return self.__routines_failed_sync

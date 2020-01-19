@@ -2197,7 +2197,7 @@ class TestScannerMethods(unittest.TestCase):
                 day_partition_deep_check=False,
                 analysis_project=destination_project)
             eutest.sync()
-            self.assertEqual(eutest.tables_avoided + eutest.views_avoided + eutest.routines_avoided,
+            self.assertEqual(eutest.tables_avoided + eutest.view_avoided + eutest.routines_avoided,
                              eutest.tables_synced + eutest.views_synced + eutest.routines_synced,
                              "Inter europe Sync {} {} from {}.{} with {}.{}"
                              "completed".format(
