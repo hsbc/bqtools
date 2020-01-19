@@ -40,7 +40,7 @@ flags.DEFINE_bool('copy_data', True,
                   """Default is True bqsync will copy data if set to False will only copy 
 schemas""")
 
-flags.DEFINE_list('copy_types', ["TABLE","VIEW","ROUTINE","MODEL"],
+flags.DEFINE_list('copy_types', ["TABLE","VIEW","ROUTINE"],
                   """Default is TABLE,VIEW,ROUTINE,MODEL bqsync will attempt to sync the types specified. For example for
 views/routines/model will attempt to rewrite logic. If views/routines/model cannot be created it 
 will skip the view/routine/model and move to the next logging an error. If set to False views are not recreated.""")
@@ -109,7 +109,7 @@ def main(argv):
                                    "for details"
 
     for type in FLAGS.copy_types:
-        assert type in ["TABLE","VIEW","ROUTINE","MODEL"], "copy_types list items must be one of TABLE,VIEW,MODEL or ROUTINE"
+        assert type in ["TABLE","VIEW","ROUTINE"], "copy_types list items must be one of TABLE, VIEW or ROUTINE"
 
     latest_date = None
     if FLAGS.latest_date is not None:

@@ -1944,7 +1944,7 @@ class TestScannerMethods(unittest.TestCase):
 
     def test_sync(self):
 
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=logging.INFO)
 
         # get target datasets ready uses app default credentials
         bqclient = bigquery.Client()
@@ -2064,7 +2064,7 @@ class TestScannerMethods(unittest.TestCase):
             "description":"a dataset with day partioned no clustering using natural load time",
             "dataset_name": "sec_quarterly_financials",
             "table_filter_regexp": ['.*'],
-            "max_last_days": 365 * 5
+            "max_last_days": 365 * 3
         })
         # # a dataset with a day partitioned table with clustering
         # # using a specific partition column name so not just ingest time
@@ -2171,7 +2171,8 @@ class TestScannerMethods(unittest.TestCase):
                     dstconfig["destdataset"]
                 ))
                 synctest.reset_stats()
-                self.assertEqual(True, True,
+                synctest.sync()
+                self.assertEqual(synctest.tables_avoided, synctest.tables_synced,
                                  "Second Sync {} {} from bigquery-public-data..{} with {}.{}  "
                                  "completed".format(
                                      test_config["description"],
@@ -2180,6 +2181,32 @@ class TestScannerMethods(unittest.TestCase):
                                      destination_project,
                                      dstconfig["destdataset"]
                                  ))
+            eutest = bqtools.MultiBQSyncCoordinator(
+                ["{}.{}".format(destination_project,test_config["tests"][0]["destdataset"])],
+                ["{}.{}".format(destination_project,test_config["tests"][1]["destdataset"])],
+                srcbucket=eubucket,
+                dstbucket=eu2bucket,
+                remove_deleted_tables=True,
+                copy_data=True,
+                copy_types=["TABLE", "VIEW", "ROUTINE", "MODEL"],
+                check_depth=0,
+                table_view_filter=[".*"],
+                table_or_views_to_exclude=[],
+                latest_date=None,
+                days_before_latest_day=None,
+                day_partition_deep_check=False,
+                analysis_project=destination_project)
+            eutest.sync()
+            self.assertEqual(eutest.tables_avoided, eutest.tables_synced,
+                             "Inter europe Sync {} {} from {}}.{} with {}.{}  "
+                             "completed".format(
+                                 test_config["description"],
+                                 "EU to europe-west2",
+                                 destination_project,
+                                 test_config["tests"][0]["destdataset"],
+                                 destination_project,
+                                 test_config["tests"][1]["destdataset"]
+                             ))
 
     def test_gendiff(self):
         bqSchema2 = bqtools.create_schema(self.schemaTest2)
