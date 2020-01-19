@@ -1521,7 +1521,7 @@ class DefaultBQSyncDriver(object):
             else:
                 end_date = "TIMESTAMP('{}')".format(latest_date.strftime("%Y-%m-%d"))
             self.__base_predicates.append(
-                "_PARTITIONTIME BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
+                "{{retpartition}} BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
                 "days_before_latest_day} * 24 HOUR) AND {end_date}".format(
                     end_date=end_date,
                     days_before_latest_day=days_before_latest_day))
@@ -1575,8 +1575,14 @@ class DefaultBQSyncDriver(object):
                                                   destination_dataset_impl.location), \
                 "Destination bucket location is not same as destination dataset location"
 
-    def comparison_predicates(self,table_name):
-        return self.__base_predicates
+    def base_predicates(self,retpartition):
+        actual_basepredicates = []
+        for predicate in self.__base_predicates:
+            actual_basepredicates.append(predicate.format(retpartition=retpartition))
+        return actual_basepredicates
+
+    def comparison_predicates(self,table_name,retpartition="_PARTITIONTIME"):
+        return self.base_predicates(retpartition)
 
     def istableincluded(self,table_name):
         """
@@ -2033,8 +2039,8 @@ class DefaultBQSyncDriver(object):
         default = ""
         retpartition_time = "_PARTITIONTIME"
 
-        if getattr(table, "time_partitioning", None):
-            retpartition_time = "TIMESTAMP({})".format(srctable.time_partitioning.field)
+        if getattr(table, "time_partitioning", None) and table.time_partitioning.field is not None:
+            retpartition_time = "TIMESTAMP({})".format(table.time_partitioning.field)
 
         SCHEMA = list(table.schema)
 
@@ -2133,7 +2139,7 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".j
     AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
                 ",".join(expression_list))
 
-        predicates = self.comparison_predicates(table.table_id)
+        predicates = self.comparison_predicates(table.table_id,retpartition_time)
         if len(predicates) > 0:
             aliasdict["extrajoinpredicates"] = """{}
 WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates))
@@ -3145,7 +3151,11 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
     # if same region now just do a table copy
     if copy_driver.same_region:
         jobs = []
-        if partitioning_type != "DAY" or dst_rows == 0 or src_rows <= 5000:
+        if partitioning_type != "DAY" or (
+                partitioning_type == "DAY" and dst_rows == 0 and
+                len(copy_driver.comparison_predicates(table_name)) == 0 ) or (
+                partitioning_type == "DAY" and src_rows <= 5000 and
+                len(copy_driver.comparison_predicates(table_name)) == 0 ):
             jobs.append(in_region_copy(copy_driver, table_name))
         else:
             source_ended = False

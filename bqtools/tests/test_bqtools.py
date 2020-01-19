@@ -2045,26 +2045,27 @@ class TestScannerMethods(unittest.TestCase):
         #     "max_last_days": 25
         # })
         # a dataset with functions only
-        test_source_configs.append({
-            "description":"a dataset with functions only",
-            "dataset_name": "persistent_udfs",
-            "table_filter_regexp": ['.*'],
-            "max_last_days": 25
-        })
-        # a dataset with nested table example and a model
-        test_source_configs.append({
-            "description":"a dataset with nested table example and a model",
-            "dataset_name": "samples",
-            "table_filter_regexp": ['github.*','model'],
-            "max_last_days": 25
-        })
-        # # a dataset with day partioned no clustering using natural load time
         # test_source_configs.append({
-        #     "description":"a dataset with day partioned no clustering using natural load time",
-        #     "dataset_name": "sec_quarterly_financials",
+        #     "description":"a dataset with functions only",
+        #     "dataset_name": "persistent_udfs",
         #     "table_filter_regexp": ['.*'],
         #     "max_last_days": 25
         # })
+        # a dataset with nested table example and a model
+        # models will fail
+        # test_source_configs.append({
+        #     "description":"a dataset with nested table example and a model",
+        #     "dataset_name": "samples",
+        #     "table_filter_regexp": ['github_nested','model'],
+        #     "max_last_days": 25
+        # })
+        # a dataset with day partioned no clustering using natural load time
+        test_source_configs.append({
+            "description":"a dataset with day partioned no clustering using natural load time",
+            "dataset_name": "sec_quarterly_financials",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 365 * 5
+        })
         # # a dataset with a day partitioned table with clustering
         # # using a specific partition column name so not just ingest time
         # test_source_configs.append({
