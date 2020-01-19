@@ -175,7 +175,8 @@ def main(argv):
             multi_bq_copy.views_failed_sync > 0 or \
             multi_bq_copy.extract_fails > 0 or \
             multi_bq_copy.load_fails > 0 or \
-            multi_bq_copy.copy_fails > 0:
+            multi_bq_copy.copy_fails > 0 or \
+            multi_bq_copy.routines_failed_sync > 0:
         exitcode = -1
 
     exit(exitcode)

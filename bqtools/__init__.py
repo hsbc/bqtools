@@ -1614,6 +1614,7 @@ class DefaultBQSyncDriver(object):
         self.__views_synced = 0
         self.__routines_synced = 0
         self.__routines_failed_sync = 0
+        self.__routines_avoided = 0
         self.__views_failed_sync = 0
         self.__tables_failed_sync = 0
         self.__tables_avoided = 0
@@ -1640,6 +1641,13 @@ class DefaultBQSyncDriver(object):
     @property
     def routines_failed_sync(self):
         return self.__routines_failed_sync
+
+    @property
+    def routines_avoided(self):
+        return self.__routines_avoided
+
+    def increment_rows_avoided(self):
+        self.__routines_avoided += 1
 
     def increment_routines_failed_sync(self):
         self.__routines_failed_sync += 1
@@ -2450,6 +2458,27 @@ class MultiBQSyncCoordinator(object):
         for copy_driver in self.__copy_drivers:
             total += copy_driver.views_failed_sync
         return total
+    @property
+    def routines_synced(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.routines_synced
+        return total
+
+    @property
+    def routines_avoided(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.routines_avoided
+        return total
+
+    @property
+    def routines_failed_sync(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.routines_failed_sync
+
+        return total
 
     @property
     def tables_failed_sync(self):
@@ -2588,6 +2617,9 @@ class MultiBQSyncCoordinator(object):
         self.logger.info("Views synced {:,d}".format(self.views_synced))
         self.logger.info("Views avoided {:,d}".format(self.view_avoided))
         self.logger.info("Views failed {:,d}".format(self.views_failed_sync))
+        self.logger.info("Routines synced {:,d}".format(self.routines_synced))
+        self.logger.info("Routines avoided {:,d}".format(self.routines_avoided))
+        self.logger.info("Routines failed {:,d}".format(self.routines_failed_sync))
         self.logger.info(
             "Rows synced {:,d} Total rows as declared in meta data scan phase".format(
                 self.rows_synced))
@@ -3493,6 +3525,46 @@ def wait_for_queue(q, desc=None, sleepTime=0.1, logger=None):
     if logger is None and desc is None:
         logger.info("All tasks {} now complete".format(qsize, desc))
 
+def remove_deleted_destination_routine(copy_driver, routine_name):
+    # handle old libraries with no routine support
+    if getattr(bigquery,"Routine", None):
+        dstroutine_ref = bigquery.Routine(
+            "{}.{}.{}".format(copy_driver.destination_project, copy_driver.destination_dataset,
+                              routine_name))
+        copy_driver.destination_client.delete_routine(dstroutine_ref)
+    else:
+        copy_driver.increment_routines_failed_sync()
+
+def patch_destination_routine(copy_driver,routine_name, routine_input):
+    remove_deleted_destination_routine(copy_driver, routine_name)
+    create_destination_routine(copy_driver, routine_name, routine_input)
+
+def create_destination_routine(copy_driver,routine_name, routine_input):
+    """
+    Create a routine based on source routine
+    :param copy_driver:
+    :param routine:
+    :param routine_input:
+    :return:
+    """
+    # handle old libraries with no routine support
+    if getattr(bigquery,"Routine", None):
+        srcroutine_ref = bigquery.Routine("{}.{}.{}".format(copy_driver.source_project,copy_driver.source_dataset,routine_name))
+        srcroutine = copy_driver.source_client.get_routine(srcroutine_ref)
+        dstroutine_ref = bigquery.Routine("{}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,routine_name))
+        # dstroutine = bigquery.Routine(dstroutine_ref)
+        dstroutine_ref.description = srcroutine.description
+        dstroutine_ref.body = routine_input["routine_definition"]
+        dstroutine_ref.return_type = srcroutine.return_type
+        dstroutine_ref.arguments = srcroutine.arguments
+        dstroutine_ref.imported_libraries = srcroutine.imported_libraries
+        dstroutine_ref.language = srcroutine.language
+        dstroutine_ref.type_ = srcroutine.type_
+        dstroutine = copy_driver.destination_client.create_routine(dstroutine_ref)
+        return dstroutine
+    else:
+        copy_driver.increment_routines_failed_sync()
+
 
 def create_destination_view(copy_driver, table_name, view_input):
     """
@@ -3831,10 +3903,10 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     if copy_driver.istableincluded(source_row["routine_name"]):
                         copy_driver.increment_routines_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["routine_body"], source_row["routine_type"])
+                            source_row["routine_definition"], source_row["routine_type"])
                         if expected_definition != destination_row["routine_body"]:
                             routines_to_apply[source_row["routine_name"]] = {
-                            "routine_body": expected_definition,
+                            "routine_definition": expected_definition,
                             "routine_type": source_row["routine_type"], "action": "patch_routine"}
                         else:
                             copy_driver.increment_routines_avoided()
@@ -3852,9 +3924,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     if copy_driver.istableincluded(source_row["routine_name"]):
                         copy_driver.increment_routines_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["routine_body"], source_row["routine_type"])
+                            source_row["routine_definition"], source_row["routine_type"])
                         routines_to_apply[source_row["routine_name"]] = {
-                            "routine_body": expected_definition,
+                            "routine_definition": expected_definition,
                             "routine_type": source_row["routine_type"], "action": "create_routine"}
                     try:
                         source_row = next(source_generator)
@@ -3871,7 +3943,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         for view in view_or_routine_order:
             if view in routines_to_apply:
-                if views_to_apply[view]["action"] == "create_routine":
+                if routines_to_apply[view]["action"] == "create_routine":
                     create_destination_routine(copy_driver,view, routines_to_apply[view])
                 else:
                     patch_destination_routine(copy_driver, view, routines_to_apply[view])
