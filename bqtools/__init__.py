@@ -79,16 +79,33 @@ ORDER BY
   v.table_name"""
 
 DSVIEWORDER = """SELECT
-  t.table_name
+  t.table_name,"VIEW" as type,creation_time
 FROM
   `{0}.{1}.INFORMATION_SCHEMA.TABLES` AS t
 WHERE
   t.table_type = "VIEW"
+UNION ALL 
+SELECT
+  routine_name as table_name,"ROUTINE" as type,last_altered as creation_time
+FROM
+   `{0}.{1}.INFORMATION_SCHEMA.ROUTINES`
 ORDER BY
-  creation_time"""
+  creation_time
+"""
+
+RTNCOMPARE="""SELECT
+  routine_name,
+  routine_body,
+  routine_type,
+  data_type,
+  routine_definition
+FROM
+  `{0}.{1}.INFORMATION_SCHEMA.ROUTINES`
+ORDER BY
+  1"""
 
 TCMPDAYPARTITION = """SELECT
-  FORMAT_TIMESTAMP("%Y%m%d", _PARTITIONTIME) AS partitionName,
+  FORMAT_TIMESTAMP("%Y%m%d", {partitiontime}) AS partitionName,
   COUNT(*) AS rowNum{extrafunctions}
 FROM
   `{project}.{dataset}.{table_name}` as zzz{extrajoinandpredicates}
@@ -1440,7 +1457,7 @@ class DefaultBQSyncDriver(object):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True,
+                 copy_types=["TABLE","VIEW","ROUTINE","MODEL"],
                  check_depth=-1,
                  copy_access=True,
                  table_view_filter=[".*"],
@@ -1462,8 +1479,7 @@ class DefaultBQSyncDriver(object):
         :param remove_deleted_tables: If table exists in destination but not in source should it
         be deleted
         :param copy_data: Copy data or just do schema
-        :param copy_views: Copy views not just tables attempts to rewrite views into context of
-        destination failures are logged but continues
+        :param copy_types: Copy object types i.e. TABLE,VIEW,ROUTINE,MODEL
         """
         if dstproject is None:
             dstproject = srcproject
@@ -1484,7 +1500,7 @@ class DefaultBQSyncDriver(object):
         self.__copy_q = None
         self.__schema_q = None
         self.__jobs = []
-        self.__copy_views = copy_views
+        self.__copy_types = copy_types
         self.reset_stats()
         self.__logger = logging
         self.__check_depth = check_depth
@@ -1596,6 +1612,8 @@ class DefaultBQSyncDriver(object):
         self.__rows_avoided = 0
         self.__tables_synced = 0
         self.__views_synced = 0
+        self.__routines_synced = 0
+        self.__routines_failed_sync = 0
         self.__views_failed_sync = 0
         self.__tables_failed_sync = 0
         self.__tables_avoided = 0
@@ -1611,6 +1629,20 @@ class DefaultBQSyncDriver(object):
         self.__load_input_file_bytes = 0
         self.__load_input_files = 0
         self.__load_output_bytes = 0
+
+    @property
+    def routines_synced(self):
+        return self.__routines_synced
+
+    def increment_routines_synced(self):
+        self.__routines_synced += 1
+
+    @property
+    def routines_failed_sync(self):
+        return self.__routines_failed_sync
+
+    def increment_routines_failed_sync(self):
+        self.__routines_failed_sync += 1
 
     @property
     def bytes_copied_across_region(self):
@@ -1747,8 +1779,8 @@ class DefaultBQSyncDriver(object):
         return self.__bytes_synced
 
     @property
-    def copy_views(self):
-        return self.__copy_views
+    def copy_types(self):
+        return self.__copy_types
 
     def add_bytes_synced(self, bytes):
         self.__bytes_synced += bytes
@@ -1967,6 +1999,11 @@ class DefaultBQSyncDriver(object):
         :return: a comma seperated extension of functions
         """
         default = ""
+        retpartition_time = "_PARTITIONTIME"
+
+        if getattr(table, "time_partitioning", None):
+            retpartition_time = "TIMESTAMP({})".format(srctable.time_partitioning.field)
+
         SCHEMA = list(table.schema)
 
         # emulate nonlocal variables this works in python 2.7 and python 3.6
@@ -2069,7 +2106,7 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".j
             aliasdict["extrajoinpredicates"] = """{}
 WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates))
 
-        return default,aliasdict["extrajoinpredicates"]
+        return retpartition_time,default,aliasdict["extrajoinpredicates"]
 
     @property
     def copy_data(self):
@@ -2141,7 +2178,7 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates)
                 newaccess = access
                 if access.role is None:
                     # if not copying views these will fail
-                    if not self.copy_views:
+                    if "VIEW" not in  self.copy_types:
                         continue
                     newaccess = self.create_access_view(access.entity_id)
                 dst_access_entries.append(newaccess)
@@ -2259,7 +2296,7 @@ class MultiBQSyncCoordinator(object):
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True,
+                 copy_types=["TABLE","VIEW","ROUTINE","MODEL"],
                  check_depth=-1,
                  copy_access=True,
                  table_view_filter=[".*"],
@@ -2290,7 +2327,7 @@ class MultiBQSyncCoordinator(object):
                                             srcbucket=srcbucket, dstbucket=dstbucket,
                                             remove_deleted_tables=remove_deleted_tables,
                                             copy_data=copy_data,
-                                            copy_views=copy_views,
+                                            copy_types=copy_types,
                                             check_depth=self.__check_depth,
                                             coordinator=self,
                                             copy_access=copy_access,
@@ -2617,7 +2654,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_views=True,
+                 copy_types=["TABLE","VIEW","ROUTINE","MODEL"],
                  check_depth=-1,
                  copy_access=True,
                  coordinator=None,
@@ -2630,8 +2667,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
                                      srcbucket, dstbucket, remove_deleted_tables,
                                      copy_data,
-                                     copy_views,
-                                     check_depth,
+                                     copy_types=copy_types,
+                                     check_depth=check_depth,
                                      copy_access = copy_access,
                                      table_view_filter=table_view_filter,
                                      table_or_views_to_exclude=table_or_views_to_exclude,
@@ -2970,14 +3007,16 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
         bqclient = copy_driver.source_client
         srctable_ref = bqclient.dataset(copy_driver.source_dataset).table(table_name)
         srctable = bqclient.get_table(srctable_ref)
-        extrafields,extrajoinandpredicates = copy_driver.extra_dp_compare_functions(
+        partitiontime,extrafields,extrajoinandpredicates = copy_driver.extra_dp_compare_functions(
             srctable)
-        src_query = TCMPDAYPARTITION.format(project=copy_driver.source_project,
+        src_query = TCMPDAYPARTITION.format(partitiontime=partitiontime,
+                                            project=copy_driver.source_project,
                                             dataset=copy_driver.source_dataset,
                                             extrafunctions=extrafields,
                                             extrajoinandpredicates=extrajoinandpredicates,
                                             table_name=table_name)
-        dst_query = TCMPDAYPARTITION.format(project=copy_driver.destination_project,
+        dst_query = TCMPDAYPARTITION.format(partitiontime=partitiontime,
+                                            project=copy_driver.destination_project,
                                             dataset=copy_driver.destination_dataset,
                                             extrafunctions=extrafields,
                                             extrajoinandpredicates=extrajoinandpredicates,
@@ -3664,13 +3703,16 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
     wait_for_queue(schema_q, "Table schemas sychronization", 0.1, copy_driver.get_logger())
 
-    if copy_driver.copy_views:
+    if "VIEW" in copy_driver.copy_types or "ROUTINE" in copy_driver.copy_types:
 
         # Now do views
         # views need applying in order
         # we assume order created is the order
-        view_order = []
+        view_or_routine_order = []
+
         views_to_apply = {}
+        routines_to_apply = {}
+
         view_order_query = DSVIEWORDER.format(copy_driver.source_project,copy_driver.source_dataset)
 
         for viewrow in run_query(copy_driver.query_client, view_order_query,
@@ -3679,87 +3721,167 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
                                  labels=BQSYNCQUERYLABELS):
-            view_order.append(viewrow["table_name"])
+            view_or_routine_order.append(viewrow["table_name"])
 
-        # now list and compare views
-        source_view_query = DSVIEWLISTQUERY.format(copy_driver.source_project,copy_driver.source_dataset)
-        destination_view_query = DSVIEWLISTQUERY.format(copy_driver.destination_project,copy_driver.destination_dataset)
-        source_ended = False
-        destination_ended = False
+        if "VIEW" in copy_driver.copy_types:
+            # now list and compare views
+            source_view_query = DSVIEWLISTQUERY.format(copy_driver.source_project,copy_driver.source_dataset)
+            destination_view_query = DSVIEWLISTQUERY.format(copy_driver.destination_project,copy_driver.destination_dataset)
+            source_ended = False
+            destination_ended = False
 
-        source_generator = run_query(copy_driver.query_client, source_view_query,
-                                     "List source views", copy_driver.get_logger(),
-                                     location=copy_driver.source_location,
-                                     callback_on_complete=copy_driver.update_job_stats,
-                                     labels=BQSYNCQUERYLABELS)
-        try:
-            source_row = next(source_generator)
-        except StopIteration:
-            source_ended = True
+            source_generator = run_query(copy_driver.query_client, source_view_query,
+                                         "List source views", copy_driver.get_logger(),
+                                         location=copy_driver.source_location,
+                                         callback_on_complete=copy_driver.update_job_stats,
+                                         labels=BQSYNCQUERYLABELS)
+            try:
+                source_row = next(source_generator)
+            except StopIteration:
+                source_ended = True
 
-        destination_generator = run_query(copy_driver.query_client, destination_view_query,
-                                          copy_driver.get_logger(),
-                                          "List destination views",
-                                          location=copy_driver.destination_location,
-                                          callback_on_complete=copy_driver.update_job_stats,
-                                          labels=BQSYNCQUERYLABELS)
-        try:
-            destination_row = next(destination_generator)
-        except StopIteration:
-            destination_ended = True
+            destination_generator = run_query(copy_driver.query_client, destination_view_query,
+                                              copy_driver.get_logger(),
+                                              "List destination views",
+                                              location=copy_driver.destination_location,
+                                              callback_on_complete=copy_driver.update_job_stats,
+                                              labels=BQSYNCQUERYLABELS)
+            try:
+                destination_row = next(destination_generator)
+            except StopIteration:
+                destination_ended = True
 
-        while not source_ended or not destination_ended:
-            if not destination_ended and not source_ended and destination_row["table_name"] == \
-                    source_row["table_name"]:
-                if copy_driver.istableincluded(source_row["table_name"]):
-                    copy_driver.increment_views_synced()
-                    expected_definition = copy_driver.update_source_view_definition(
-                        source_row["view_definition"], source_row["use_standard_sql"])
-                    if expected_definition != destination_row["view_definition"]:
+            while not source_ended or not destination_ended:
+                if not destination_ended and not source_ended and destination_row["table_name"] == \
+                        source_row["table_name"]:
+                    if copy_driver.istableincluded(source_row["table_name"]):
+                        copy_driver.increment_views_synced()
+                        expected_definition = copy_driver.update_source_view_definition(
+                            source_row["view_definition"], source_row["use_standard_sql"])
+                        if expected_definition != destination_row["view_definition"]:
+                            views_to_apply[source_row["table_name"]] = {
+                                "use_standard_sql": source_row["use_standard_sql"],
+                                "view_definition": expected_definition, "action": "patch_view"}
+                        else:
+                            copy_driver.increment_view_avoided()
+                    try:
+                        source_row = next(source_generator)
+                    except StopIteration:
+                        source_ended = True
+                    try:
+                        destination_row = next(destination_generator)
+                    except StopIteration:
+                        destination_ended = True
+                elif (destination_ended and not source_ended) or (
+                        not source_ended and source_row["table_name"] < destination_row[
+                    "table_name"]):
+                    if copy_driver.istableincluded(source_row["table_name"]):
+                        copy_driver.increment_views_synced()
+                        expected_definition = copy_driver.update_source_view_definition(
+                            source_row["view_definition"], source_row["use_standard_sql"])
                         views_to_apply[source_row["table_name"]] = {
                             "use_standard_sql": source_row["use_standard_sql"],
-                            "view_definition": expected_definition, "action": "patch_view"}
-                    else:
-                        copy_driver.increment_view_avoided()
-                try:
-                    source_row = next(source_generator)
-                except StopIteration:
-                    source_ended = True
-                try:
-                    destination_row = next(destination_generator)
-                except StopIteration:
-                    destination_ended = True
-            elif (destination_ended and not source_ended) or (
-                    not source_ended and source_row["table_name"] < destination_row[
-                "table_name"]):
-                if copy_driver.istableincluded(source_row["table_name"]):
-                    copy_driver.increment_views_synced()
-                    expected_definition = copy_driver.update_source_view_definition(
-                        source_row["view_definition"], source_row["use_standard_sql"])
-                    views_to_apply[source_row["table_name"]] = {
-                        "use_standard_sql": source_row["use_standard_sql"],
-                        "view_definition": expected_definition, "action": "create_view"}
-                try:
-                    source_row = next(source_generator)
-                except StopIteration:
-                    source_ended = True
-            elif (source_ended and not destination_ended) or (
-                    not destination_ended and source_row["table_name"] > destination_row[
-                "table_name"]):
-                remove_deleted_destination_table(copy_driver, destination_row["table_name"])
-                try:
-                    destination_row = next(destination_generator)
-                except StopIteration:
-                    destination_ended = True
+                            "view_definition": expected_definition, "action": "create_view"}
+                    try:
+                        source_row = next(source_generator)
+                    except StopIteration:
+                        source_ended = True
+                elif (source_ended and not destination_ended) or (
+                        not destination_ended and source_row["table_name"] > destination_row[
+                    "table_name"]):
+                    remove_deleted_destination_table(copy_driver, destination_row["table_name"])
+                    try:
+                        destination_row = next(destination_generator)
+                    except StopIteration:
+                        destination_ended = True
 
-        for view in view_order:
+        if "ROUTINE" in copy_driver.copy_types:
+                # now list and compare views
+            source_routine_query = RTNCOMPARE.format(copy_driver.source_project,
+                                                       copy_driver.source_dataset)
+            destination_routine_query = RTNCOMPARE.format(copy_driver.destination_project,
+                                                            copy_driver.destination_dataset)
+            source_ended = False
+            destination_ended = False
+
+            source_generator = run_query(copy_driver.query_client, source_routine_query,
+                                         "List source views", copy_driver.get_logger(),
+                                         location=copy_driver.source_location,
+                                         callback_on_complete=copy_driver.update_job_stats,
+                                         labels=BQSYNCQUERYLABELS)
+            try:
+                source_row = next(source_generator)
+            except StopIteration:
+                source_ended = True
+
+            destination_generator = run_query(copy_driver.query_client, destination_routine_query,
+                                              copy_driver.get_logger(),
+                                              "List destination views",
+                                              location=copy_driver.destination_location,
+                                              callback_on_complete=copy_driver.update_job_stats,
+                                              labels=BQSYNCQUERYLABELS)
+            try:
+                destination_row = next(destination_generator)
+            except StopIteration:
+                destination_ended = True
+
+            while not source_ended or not destination_ended:
+                if not destination_ended and not source_ended and destination_row["routine_name"] == \
+                        source_row["routine_name"]:
+                    if copy_driver.istableincluded(source_row["routine_name"]):
+                        copy_driver.increment_routines_synced()
+                        expected_definition = copy_driver.update_source_view_definition(
+                            source_row["routine_body"], source_row["routine_type"])
+                        if expected_definition != destination_row["routine_body"]:
+                            routines_to_apply[source_row["routine_name"]] = {
+                            "routine_body": expected_definition,
+                            "routine_type": source_row["routine_type"], "action": "patch_routine"}
+                        else:
+                            copy_driver.increment_routines_avoided()
+                    try:
+                        source_row = next(source_generator)
+                    except StopIteration:
+                        source_ended = True
+                    try:
+                        destination_row = next(destination_generator)
+                    except StopIteration:
+                        destination_ended = True
+                elif (destination_ended and not source_ended) or (
+                        not source_ended and source_row["routine_name"] < destination_row[
+                    "routine_name"]):
+                    if copy_driver.istableincluded(source_row["routine_name"]):
+                        copy_driver.increment_routines_synced()
+                        expected_definition = copy_driver.update_source_view_definition(
+                            source_row["routine_body"], source_row["routine_type"])
+                        routines_to_apply[source_row["routine_name"]] = {
+                            "routine_body": expected_definition,
+                            "routine_type": source_row["routine_type"], "action": "create_routine"}
+                    try:
+                        source_row = next(source_generator)
+                    except StopIteration:
+                        source_ended = True
+                elif (source_ended and not destination_ended) or (
+                        not destination_ended and source_row["routine_name"] > destination_row[
+                    "routine_name"]):
+                    remove_deleted_destination_routine(copy_driver, destination_row["routine_name"])
+                    try:
+                        destination_row = next(destination_generator)
+                    except StopIteration:
+                        destination_ended = True
+
+        for view in view_or_routine_order:
+            if view in routines_to_apply:
+                if views_to_apply[view]["action"] == "create_routine":
+                    create_destination_routine(copy_driver,view, routines_to_apply[view])
+                else:
+                    patch_destination_routine(copy_driver, view, routines_to_apply[view])
             if view in views_to_apply:
                 if views_to_apply[view]["action"] == "create_view":
                     create_destination_view(copy_driver, view, views_to_apply[view])
                 else:
                     patch_destination_view(copy_driver, view, views_to_apply[view])
 
-        wait_for_queue(schema_q, "View schemas sychronization", 0.1, copy_driver.get_logger())
+        wait_for_queue(schema_q, "View/Routine schema synchronization", 0.1, copy_driver.get_logger())
 
     wait_for_queue(copy_q, "Table copying", 0.1, copy_driver.get_logger())
 

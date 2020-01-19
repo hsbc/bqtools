@@ -40,10 +40,10 @@ flags.DEFINE_bool('copy_data', True,
                   """Default is True bqsync will copy data if set to False will only copy 
 schemas""")
 
-flags.DEFINE_bool('copy_views', True,
-                  """Default is True bqsync will attempt to adjust views (i.e. change projects 
-and dataset names in the views) such they work in the new region. If views cannot be created it 
-will skip the view and move to the next logging an error. If set to False views are not recreated.""")
+flags.DEFINE_list('copy_types', ["TABLE","VIEW","ROUTINE","MODEL"],
+                  """Default is TABLE,VIEW,ROUTINE,MODEL bqsync will attempt to sync the types specified. For example for
+views/routines/model will attempt to rewrite logic. If views/routines/model cannot be created it 
+will skip the view/routine/model and move to the next logging an error. If set to False views are not recreated.""")
 
 flags.DEFINE_bool('copy_access', True,"""Copy access permissions note this has to interact with 
 copy views generally if you are not copying views then only set this if no authorised views. 
@@ -108,6 +108,9 @@ def main(argv):
     assert FLAGS.check_depth >= -2, "Check depth for data comparison MUST be > -2 see --help " \
                                    "for details"
 
+    for type in FLAGS.copy_types:
+        assert type in ["TABLE","VIEW","ROUTINE","MODEL"], "copy_types list items must be one of TABLE,VIEW,MODEL or ROUTINE"
+
     latest_date = None
     if FLAGS.latest_date is not None:
         date_format = '%Y-%m-%d'
@@ -150,7 +153,7 @@ def main(argv):
                                                    FLAGS.dst_bucket,
                                                    FLAGS.remove_deleted_tables,
                                                    FLAGS.copy_data,
-                                                   FLAGS.copy_views,
+                                                   FLAGS.copy_types,
                                                    check_depth=FLAGS.check_depth,
                                                    table_view_filter=FLAGS.table_or_views_to_copy,
                                                    table_or_views_to_exclude=FLAGS.table_or_views_to_exclude,
