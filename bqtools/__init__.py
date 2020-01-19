@@ -4015,7 +4015,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                         copy_driver.increment_routines_synced()
                         expected_definition = copy_driver.update_source_view_definition(
                             source_row["routine_definition"], source_row["routine_type"])
-                        if expected_definition != destination_row["routine_body"]:
+                        if expected_definition != destination_row["routine_definition"]:
                             routines_to_apply[source_row["routine_name"]] = {
                             "routine_definition": expected_definition,
                             "routine_type": source_row["routine_type"], "action": "patch_routine"}

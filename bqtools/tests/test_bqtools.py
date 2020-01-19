@@ -2045,20 +2045,20 @@ class TestScannerMethods(unittest.TestCase):
         #     "max_last_days": 25
         # })
         # a dataset with functions only
-        # test_source_configs.append({
-        #     "description":"a dataset with functions only",
-        #     "dataset_name": "persistent_udfs",
-        #     "table_filter_regexp": ['.*'],
-        #     "max_last_days": 25
-        # })
+        test_source_configs.append({
+            "description":"a dataset with functions only",
+            "dataset_name": "persistent_udfs",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 25
+        })
         # a dataset with nested table example and a model
         # models will fail
-        # test_source_configs.append({
-        #     "description":"a dataset with nested table example and a model",
-        #     "dataset_name": "samples",
-        #     "table_filter_regexp": ['github_nested','model'],
-        #     "max_last_days": 25
-        # })
+        test_source_configs.append({
+            "description":"a dataset with nested table example and a model",
+            "dataset_name": "samples",
+            "table_filter_regexp": ['github_nested','model'],
+            "max_last_days": 25
+        })
         # a dataset with day partioned no clustering using natural load time
         test_source_configs.append({
             "description":"a dataset with day partioned no clustering using natural load time",
@@ -2068,12 +2068,12 @@ class TestScannerMethods(unittest.TestCase):
         })
         # # a dataset with a day partitioned table with clustering
         # # using a specific partition column name so not just ingest time
-        # test_source_configs.append({
-        #     "description":"a dataset with a day partitioned table with clustering using a specific partition column name so not just ingest time",
-        #     "dataset_name": "human_genome_variants",
-        #     "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
-        #     "max_last_days": 25
-        # })
+        test_source_configs.append({
+            "description":"a dataset with a day partitioned table with clustering using a specific partition column name so not just ingest time",
+            "dataset_name": "human_genome_variants",
+            "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
+            "max_last_days": 25
+        })
 
         test_destination_datasets_list = []
         for src_destination in test_source_configs:
