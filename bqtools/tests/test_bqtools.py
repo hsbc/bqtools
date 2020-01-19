@@ -2182,8 +2182,8 @@ class TestScannerMethods(unittest.TestCase):
                                      dstconfig["destdataset"]
                                  ))
             eutest = bqtools.MultiBQSyncCoordinator(
-                ["{}.{}".format(destination_project,test_config["tests"][0]["destdataset"])],
                 ["{}.{}".format(destination_project,test_config["tests"][1]["destdataset"])],
+                ["{}.{}".format(destination_project,test_config["tests"][2]["destdataset"])],
                 srcbucket=eubucket,
                 dstbucket=eu2bucket,
                 remove_deleted_tables=True,
@@ -2197,15 +2197,16 @@ class TestScannerMethods(unittest.TestCase):
                 day_partition_deep_check=False,
                 analysis_project=destination_project)
             eutest.sync()
-            self.assertEqual(eutest.tables_avoided, eutest.tables_synced,
-                             "Inter europe Sync {} {} from {}}.{} with {}.{}  "
+            self.assertEqual(eutest.tables_avoided + eutest.views_avoided + eutest.routines_avoided,
+                             eutest.tables_synced + eutest.views_synced + eutest.routines_synced,
+                             "Inter europe Sync {} {} from {}.{} with {}.{}"
                              "completed".format(
                                  test_config["description"],
                                  "EU to europe-west2",
                                  destination_project,
-                                 test_config["tests"][0]["destdataset"],
+                                 test_config["tests"][1]["destdataset"],
                                  destination_project,
-                                 test_config["tests"][1]["destdataset"]
+                                 test_config["tests"][2]["destdataset"]
                              ))
 
     def test_gendiff(self):
