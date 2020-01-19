@@ -1615,6 +1615,9 @@ class DefaultBQSyncDriver(object):
         self.__routines_synced = 0
         self.__routines_failed_sync = 0
         self.__routines_avoided = 0
+        self.__models_synced = 0
+        self.__models_failed_sync = 0
+        self.__models_avoided = 0
         self.__views_failed_sync = 0
         self.__tables_failed_sync = 0
         self.__tables_avoided = 0
@@ -1630,6 +1633,27 @@ class DefaultBQSyncDriver(object):
         self.__load_input_file_bytes = 0
         self.__load_input_files = 0
         self.__load_output_bytes = 0
+
+    @property
+    def models_synced(self):
+        return self.__models_synced
+
+    def increament_models_synced(self):
+        self.__models_synced += 1
+
+    @property
+    def models_failed_sync(self):
+        return self.__models_failed_sync
+
+    def increment_models_failed_sync(self):
+        self.__models_failed_sync+=1
+
+    @property
+    def models_avoided(self):
+        return self.__models_avoided
+
+    def increment_models_avoided(self):
+        self.__models_avoided += 1
 
     @property
     def routines_synced(self):
@@ -2481,6 +2505,27 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
+    def models_synced(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.models_synced
+        return total
+
+    @property
+    def models_avoided(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.models_avoided
+        return total
+
+    @property
+    def models_failed_sync(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.models_failed_sync
+
+        return total
+    @property
     def tables_failed_sync(self):
         total = 0
         for copy_driver in self.__copy_drivers:
@@ -2775,9 +2820,13 @@ def create_and_copy_table(copy_driver, table_name):
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
     srctable = copy_driver.source_client.get_table(srctable_ref)
 
-    if srctable.type != 'TABLE':
-        copy_driver.warning("Unable to copy a non table of type {} name {}.{}.{}".format(srctable.type,copy_driver.source_project,copy_driver.source_dataset,table_name))
-        copy_driver.increment_tables_failed_sync()
+    if srctable.table_type != 'TABLE':
+        if srctable.table_type in copy_driver.copy_types:
+            if srctable.table_type == "MODEL":
+                create_and_copy_model(copy_driver, table_name)
+            else:
+                copy_driver.get_logger().warning("Unable to copy a non table of type {} name {}.{}.{}".format(srctable.table_type,copy_driver.source_project,copy_driver.source_dataset,table_name))
+                copy_driver.increment_tables_failed_sync()
     else:
         NEW_SCHEMA = list(srctable.schema)
         destination_table_ref = copy_driver.destination_client.dataset(
@@ -2836,9 +2885,26 @@ def create_and_copy_table(copy_driver, table_name):
                                                              [copy_driver, table_name,
                                                               srctable.partitioning_type, 0,
                                                               srctable.num_rows])))
+def create_and_copy_model(copy_driver, model_name):
+    if getattr(bigquery, "Model", None):
+        copy_driver.get_logger().error(
+            "Unable to copy Model {}.{}.{} as meta data of input to model for training is not "
+            "provided by the model meta data calls form big query skipping".format(
+                copy_driver.source_project, copy_driver.source_dataset,
+                model_name))
+        copy_driver.increment_models_failed_sync()
+    else:
+        copy_driver.get_logger().error(
+            "Unable to copy Model {}.{}.{} as current python environment big query library does "
+            "not support Models".format(copy_driver.source_project, copy_driver.source_dataset,
+                                        model_name))
+        copy_driver.increment_models_failed_sync()
 
+def compare_model_patch_ifneeded(copy_driver, model_name):
+    remove_deleted_destination_table(copy_driver, model_name)
+    create_and_copy_model(copy_driver, model_name)
 
-def compare_schema_patch_ifneeded(copy_driver, table_name):
+def compare_schema_patch_ifneeded(copy_driver, model_name):
     """
     Compares schemas and patches if needed and copies data
     :param copy_driver:
@@ -2850,6 +2916,25 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
         table_name)
     dsttable = copy_driver.source_client.get_table(dsttable_ref)
+
+    # if different table types thats not good need to sort
+    # drop and recreate this handles TABLE->MODEL and MODEL->TABLE
+    if dsttable.table_type != srctable.table_type:
+        copy_driver.get_logger().warning("Change in table_type source {0}.{1}.{tablename} is type {2} and destination {3}.{4}.{tablename} is type {5}".format(
+            copy_driver.source_project,
+            copy_driver.source_dataset,
+            srctable.table_type,
+            copy_driver.destination_project,
+            copy_driver.destination_dataset,
+            dsttable.table_type,
+            table_name=table_name))
+        remove_deleted_destination_table(copy_driver, table_name)
+        create_and_copy_table(copy_driver, table_name)
+        return
+
+    if srctable.table_type == "MODEL":
+        compare_model_patch_ifneeded(copy_driver, table_name)
+        return
 
     NEW_SCHEMA = list(srctable.schema)
     OLD_SCHEMA = list(dsttable.schema)
@@ -3527,12 +3612,18 @@ def wait_for_queue(q, desc=None, sleepTime=0.1, logger=None):
 
 def remove_deleted_destination_routine(copy_driver, routine_name):
     # handle old libraries with no routine support
-    if getattr(bigquery,"Routine", None):
+    if getattr(bigquery, "Routine", None):
         dstroutine_ref = bigquery.Routine(
             "{}.{}.{}".format(copy_driver.destination_project, copy_driver.destination_dataset,
                               routine_name))
         copy_driver.destination_client.delete_routine(dstroutine_ref)
     else:
+        copy_driver.get_logger().warning(
+            "Unable to remove routine from source {}.{}.{} as Routine class not defined in "
+            "bigquery library in the current python environment".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+            routine_name))
         copy_driver.increment_routines_failed_sync()
 
 def patch_destination_routine(copy_driver,routine_name, routine_input):
@@ -3548,10 +3639,13 @@ def create_destination_routine(copy_driver,routine_name, routine_input):
     :return:
     """
     # handle old libraries with no routine support
-    if getattr(bigquery,"Routine", None):
-        srcroutine_ref = bigquery.Routine("{}.{}.{}".format(copy_driver.source_project,copy_driver.source_dataset,routine_name))
+    if getattr(bigquery, "Routine", None):
+        srcroutine_ref = bigquery.Routine(
+            "{}.{}.{}".format(copy_driver.source_project, copy_driver.source_dataset, routine_name))
         srcroutine = copy_driver.source_client.get_routine(srcroutine_ref)
-        dstroutine_ref = bigquery.Routine("{}.{}.{}".format(copy_driver.destination_project,copy_driver.destination_dataset,routine_name))
+        dstroutine_ref = bigquery.Routine(
+            "{}.{}.{}".format(copy_driver.destination_project, copy_driver.destination_dataset,
+                              routine_name))
         # dstroutine = bigquery.Routine(dstroutine_ref)
         dstroutine_ref.description = srcroutine.description
         dstroutine_ref.body = routine_input["routine_definition"]
@@ -3563,6 +3657,10 @@ def create_destination_routine(copy_driver,routine_name, routine_input):
         dstroutine = copy_driver.destination_client.create_routine(dstroutine_ref)
         return dstroutine
     else:
+        copy_driver.get_logger().warning(
+            "Unable to copy Routine {}.{}.{} as current python environment big query library does "
+            "not support Routines".format(copy_driver.source_project, copy_driver.source_dataset,
+                                          routine_name))
         copy_driver.increment_routines_failed_sync()
 
 
