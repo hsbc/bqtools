@@ -38,9 +38,9 @@ match the region of the target datasets.
  
 *copy_data* - Default is True bqsync will copy data if set to False will only copy schemas
  
-*copy_views* - Default is True bqsync will attempt to adjust views (i.e. change projects and dataset
-names in the views) such they work in the new region. If views cannot be created it will skip the view
-and move to the next logging an error. If set to False views are not recreated.
+*copy_types* - Default is TABLE,VIEW,ROUTINE,MODEL bqsync will attempt to adjust views/routines/models (i.e. change projects and dataset
+names in the views/models,routines) such they work in the new region. If views cannot be created it will skip the view/model/routine
+and move to the next logging an error. If item is not in list those objects are skipped
  
 *remove_deleted_tables* - defaults to True removes tables/views in destination datset that do not exist
 in source dataset
