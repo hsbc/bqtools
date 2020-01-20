@@ -2012,44 +2012,44 @@ class TestScannerMethods(unittest.TestCase):
         # along with each entry is list of tables and length of maximum days for day partition
         test_source_configs = []
 
-        # # small dataset good to start tests basic types
-        # test_source_configs.append({
-        #     "description":"small dataset good to start tests basic types",
-        #     "dataset_name":"fcc_political_ads",
-        #     "table_filter_regexp":['broadcast_tv_radio_station',
-        #                            'content_info',
-        #                            'file_history',
-        #                            'file_record'],
-        #     "max_last_days":25
-        # })
-        # # a table with geography data type
-        # test_source_configs.append({
-        #     "description":"a table with geography data type",
-        #     "dataset_name": "faa",
-        #     "table_filter_regexp": ['us_airports'],
-        #     "max_last_days": 25
-        # })
-        # # a dataset with a day partitioned table with  clustering
-        # # not using a specific partition column name so  just ingest time
-        # test_source_configs.append({
-        #     "description":"a dataset with a day partitioned table with  clustering not using a specific partition column name so  just ingest time",
-        #     "dataset_name": "new_york_subway",
-        #     "table_filter_regexp": ['geo_nyc_borough_boundaries'],
-        #     "max_last_days": 25
-        # })
-        # # a dataset with view referencing it self to demo simple view copying
-        # test_source_configs.append({
-        #     "description":"a dataset with view referencing it self to demo simple view copying",
-        #     "dataset_name": "noaa_goes16",
-        #     "table_filter_regexp": ['.*'],
-        #     "max_last_days": 25
-        # })
+        # small dataset good to start tests basic types
+        test_source_configs.append({
+            "description":"small dataset good to start tests basic types",
+            "dataset_name":"fcc_political_ads",
+            "table_filter_regexp":['broadcast_tv_radio_station',
+                                   'content_info',
+                                   'file_history',
+                                   'file_record'],
+            "max_last_days":365
+        })
+        # a table with geography data type
+        test_source_configs.append({
+            "description":"a table with geography data type",
+            "dataset_name": "faa",
+            "table_filter_regexp": ['us_airports'],
+            "max_last_days": 365
+        })
+        # a dataset with a day partitioned table with  clustering
+        # not using a specific partition column name so  just ingest time
+        test_source_configs.append({
+            "description":"a dataset with a day partitioned table with  clustering not using a specific partition column name so  just ingest time",
+            "dataset_name": "new_york_subway",
+            "table_filter_regexp": ['geo_nyc_borough_boundaries'],
+            "max_last_days": 365
+        })
+        # a dataset with view referencing it self to demo simple view copying
+        test_source_configs.append({
+            "description":"a dataset with view referencing it self to demo simple view copying",
+            "dataset_name": "noaa_goes16",
+            "table_filter_regexp": ['.*'],
+            "max_last_days": 365
+        })
         # a dataset with functions only
         test_source_configs.append({
             "description":"a dataset with functions only",
             "dataset_name": "persistent_udfs",
             "table_filter_regexp": ['.*'],
-            "max_last_days": 25
+            "max_last_days": 365
         })
         # a dataset with nested table example and a model
         # models will fail
@@ -2057,7 +2057,7 @@ class TestScannerMethods(unittest.TestCase):
             "description":"a dataset with nested table example and a model",
             "dataset_name": "samples",
             "table_filter_regexp": ['github_nested','model'],
-            "max_last_days": 25
+            "max_last_days": 365
         })
         # a dataset with day partioned no clustering using natural load time
         test_source_configs.append({
@@ -2066,13 +2066,16 @@ class TestScannerMethods(unittest.TestCase):
             "table_filter_regexp": ['.*'],
             "max_last_days": 365 * 3
         })
-        # # a dataset with a day partitioned table with clustering
-        # # using a specific partition column name so not just ingest time
+        # a dataset with a day partitioned table with clustering
+        # using a specific partition column name so not just ingest time
+        # has repetade basic types
+        # note this shows the issue of bq nit correctly supporting avro logical types
+        # https://issuetracker.google.com/issues/35905894 will fail until resolved
         test_source_configs.append({
             "description":"a dataset with a day partitioned table with clustering using a specific partition column name so not just ingest time",
             "dataset_name": "human_genome_variants",
             "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
-            "max_last_days": 25
+            "max_last_days": None
         })
 
         test_destination_datasets_list = []

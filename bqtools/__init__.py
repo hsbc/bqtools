@@ -2073,37 +2073,69 @@ class DefaultBQSyncDriver(object):
 
             for field in SCHEMA:
                 prefix.append(field.name)
-                if self.check_depth >= 0 or \
-                        (self.check_depth >= -1 and (
-                                re.search("update.*time", field.name.lower()) or \
-                                re.search("modifi.*time", field.name.lower()) or \
-                                re.search("version", field.name.lower()) or \
-                                re.search("creat.*time", field.name.lower()))):
+                if field.mode != "REPEATED":
+                    if self.check_depth >= 0 or \
+                            (self.check_depth >= -1 and (
+                                    re.search("update.*time", field.name.lower()) or \
+                                    re.search("modifi.*time", field.name.lower()) or \
+                                    re.search("version", field.name.lower()) or \
+                                    re.search("creat.*time", field.name.lower()))):
 
-                    if field.field_type == "STRING":
-                        expression_list.append("IFNULL(`{0}`,'')".format("`.`".join(prefix)))
-                    elif field.field_type == "TIMESTAMP":
-                        expression_list.append(
-                            "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
-                                "`.`".join(prefix)))
-                    elif field.field_type == "INTEGER" or field.field_type == "INT64":
-                        expression_list.append(
-                            "CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
-                    elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
-                            field.field_type == "NUMERIC":
-                        expression_list.append(
-                            "CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
-                    elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
-                        expression_list.append(
-                            "CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
-                    elif field.field_type == "BYTES":
-                        expression_list.append(
-                            "CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
-                if field.field_type == "RECORD":
-                    SSCHEMA = list(field.fields)
-                    if field.mode != "REPEATED":
+                        if field.field_type == "STRING":
+                            expression_list.append("IFNULL(`{0}`,'')".format("`.`".join(prefix)))
+                        elif field.field_type == "TIMESTAMP":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
+                                    "`.`".join(prefix)))
+                        elif field.field_type == "INTEGER" or field.field_type == "INT64":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
+                        elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
+                                field.field_type == "NUMERIC":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
+                        elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
+                        elif field.field_type == "BYTES":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
+                    if field.field_type == "RECORD":
+                        SSCHEMA = list(field.fields)
                         expression_list.extend(add_data_check(SSCHEMA, prefix=prefix, depth=depth))
-                    else:
+                else:
+                    if field.field_type != "RECORD" and (self.check_depth >= 0 or \
+                            (self.check_depth >= -1 and (
+                                    re.search("update.*time", field.name.lower()) or \
+                                    re.search("modifi.*time", field.name.lower()) or \
+                                    re.search("version", field.name.lower()) or \
+                                    re.search("creat.*time", field.name.lower())))):
+                        # add the unnestof repeated base type can use own field name
+                        fieldname = "{}{}".format(aliasdict["alias"],field.name)
+                        aliasdict["extrajoinpredicates"] = """{}
+LEFT JOIN UNNEST(`{}`) AS `{}`""".format(aliasdict["extrajoinpredicates"],
+                                                                   field.name,
+                                                                   fieldname)
+                        if field.field_type == "STRING":
+                            expression_list.append("IFNULL(`{0}`,'')".format(fieldname))
+                        elif field.field_type == "TIMESTAMP":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
+                                    fieldname))
+                        elif field.field_type == "INTEGER" or field.field_type == "INT64":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(fieldname))
+                        elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
+                                field.field_type == "NUMERIC":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(fieldname))
+                        elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(fieldname))
+                        elif field.field_type == "BYTES":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(fieldname))
+                    if field.field_type == "RECORD":
                         # if we want to go deeper in checking
                         if depth < self.check_depth:
 
@@ -3473,6 +3505,11 @@ def cross_region_copy(copy_driver, table_name):
             # compress trade compute for network bandwidth
             job_config.compression = bigquery.job.Compression.DEFLATE
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
+            job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
+            if getattr(job_config,"schema_update_options",None):
+                job_config.schema_update_options = bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
+                job_config.schema_update_options = bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION
+            job_config.use_avro_logical_types = True
             job = copy_driver.query_client.load_table_from_uri([dst_uri], dsttable, job_config=job_config,
                                                location=copy_driver.destination_location)
 
