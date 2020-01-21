@@ -12,14 +12,15 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import concurrent
 import copy
 import json
 import logging
-import warnings
 import os
 import pprint
 import re
 import threading
+import warnings
 from datetime import datetime, date, timedelta, time
 from time import sleep
 
@@ -255,9 +256,9 @@ def get_json_struct(jsonobj, template=None):
             value = None
             if isinstance(jsonobj[key], bool):
                 value = False
-            elif isinstance(jsonobj[key], str):
+            elif isinstance(jsonobj[key], six.string_types):
                 value = ""
-            elif isinstance(jsonobj[key], unicode):
+            elif isinstance(jsonobj[key], six.text_type):
                 value = u""
             elif isinstance(jsonobj[key], int) or isinstance(jsonobj[key], long):
                 value = 0
@@ -355,10 +356,10 @@ def get_bq_schema_from_json_repr(jsondict):
         if isinstance(data, bool):
             field["type"] = "BOOLEAN"
             field["mode"] = "NULLABLE"
-        elif isinstance(data, str):
+        elif isinstance(data, six.string_types):
             field["type"] = "STRING"
             field["mode"] = "NULLABLE"
-        elif isinstance(data, unicode):
+        elif isinstance(data, six.text_type):
             field["type"] = "STRING"
             field["mode"] = "NULLABLE"
         elif isinstance(data, int):
@@ -376,7 +377,7 @@ def get_bq_schema_from_json_repr(jsondict):
         elif isinstance(data, time):
             field["type"] = "TIME"
             field["mode"] = "NULLABLE"
-        elif isinstance(data, bytes):
+        elif isinstance(data, six.binary_type):
             field["type"] = "BYTES"
             field["mode"] = "NULLABLE"
         elif isinstance(data, dict):
@@ -557,9 +558,9 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
                 fieldschema = bigquery.SchemaField(fname, 'DATE')
             elif isinstance(sobject, time):
                 fieldschema = bigquery.SchemaField(fname, 'TIME')
-            elif isinstance(sobject, str) or isinstance(sobject, unicode):
+            elif isinstance(sobject, six.string_types) or isinstance(sobject, six.text_type):
                 fieldschema = bigquery.SchemaField(fname, 'STRING')
-            elif isinstance(sobject, bytes):
+            elif isinstance(sobject, six.binary_type):
                 fieldschema = bigquery.SchemaField(fname, 'BYTES')
             elif isinstance(sobject, list):
                 # Big query cannot support non templated lists
@@ -2200,8 +2201,6 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"],") AND (".join(predicates)
         :param dsttable:
         :return:
         """
-        if srctable.partitioning_type == "DAY" and self.day_partition_deep_check:
-            return True
 
         return False
 
@@ -2677,6 +2676,10 @@ class MultiBQSyncCoordinator(object):
 
         self.__copy_drivers[0].logger.info("Calculating differences....")
         for copy_driver in self.__copy_drivers:
+            copy_driver.get_logger().info("{}.{} -> {}.{}".format(copy_driver.source_project,
+                                    copy_driver.source_dataset,
+                                    copy_driver.destination_project,
+                                    copy_driver.destination_dataset))
             sync_bq_datset(copy_driver)
 
         # once copied we can try doing access
@@ -3079,6 +3082,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     if "deleteandrecreate" in output:
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
+        return
     else:
         if output["changes"] > 0:
             dsttable.schema = output["workingchema"]
@@ -3098,8 +3102,6 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 "Patched table {}.{}.{} {}".format(copy_driver.destination_project,
                                                    copy_driver.destination_dataset,
                                                    table_name, ",".join(fields)))
-        else:
-            copy_driver.increment_tables_avoided()
 
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
@@ -3113,6 +3115,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                                                               dsttable.num_rows,
                                                               srctable.num_rows])))
         else:
+            copy_driver.increment_tables_avoided()
             copy_driver.add_bytes_avoided(srctable.num_bytes)
             copy_driver.add_rows_avoided(srctable.num_rows)
 
@@ -3446,6 +3449,7 @@ def cross_region_copy(copy_driver, table_name):
     src_uri = "gs://{}/{}".format(copy_driver.source_bucket, blobname)
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
     job_config = bigquery.ExtractJobConfig()
+    job_config.use_avro_logical_types = True
     # use avros as parallel read/write
     job_config.destination_format = bigquery.job.DestinationFormat.AVRO
     # compress trade compute for network bandwidth
@@ -3459,43 +3463,55 @@ def cross_region_copy(copy_driver, table_name):
             copy_driver.increment_extract_fails()
         else:
             blob_uris = int(job._job_statistics().get('destinationUriFileCounts')[0])
-            client = storage.Client(project=copy_driver.source_project)
-            src_bucket = client.get_bucket(copy_driver.source_bucket)
-            dst_bucket = client.get_bucket(copy_driver.destination_bucket)
-            for blob_num in range(blob_uris):
-                ablobname = blobname.replace("*", "{:012d}".format(blob_num))
-                src_blob = storage.blob.Blob(ablobname, src_bucket)
 
-                dst_blob = storage.blob.Blob(ablobname, dst_bucket)
-                srcnotfound = True
+            def generate_cp_files():
+                """Generate sources and destinations."""
+                for blob_num in range(blob_uris):
+                    ablobname = blobname.replace("*", "{:012d}".format(blob_num))
+                    yield ablobname
+
+            def rewrite_blob(new_name):
                 try:
+                    client = storage.Client(project=copy_driver.source_project)
+
+                    src_bucket = client.get_bucket(copy_driver.source_bucket)
+                    dst_bucket = client.get_bucket(copy_driver.destination_bucket)
+                    src_blob = storage.blob.Blob(new_name, src_bucket)
+
+                    dst_blob = storage.blob.Blob(new_name, dst_bucket)
+
                     (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
 
                     # wait for rewrite to finish
                     while token is not None:
                         (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob,
                                                                                  token=token)
-
-                    srcnotfound = False
-
-                except exceptions.NotFound as e:
-                    copy_driver.logger.exception(
-                        "Failed to copy blob gs://{}/{} to destination as not found".format(
+                    src_blob.delete()
+                except Exception:
+                    copy_driver.get_logger().exception(
+                        "Exception re-writing blob in cross region copy gs://{}/{} to gs://{}/{"
+                        "}".format(
                             copy_driver.source_bucket,
-                            ablobname, copy_driver.destination_bucket))
+                            new_name, copy_driver.destination_bucket, new_name))
 
-                if not srcnotfound:
-                    try:
-                        src_blob.delete()
-                    except exceptions.NotFound as e:
-                        copy_driver.logger.exception(
-                            "Failed to delete blob gs://{}/{}".format(copy_driver.source_bucket,
-                                                                      ablobname))
-                    except exceptions.TooManyRequests:
-                        # just ignor too many requests
-                        pass
-                    except Exceptions as e:
-                        pass
+            # set worker for small 1 is good enough as volume grows cap the max
+            # grows dynamically up to 100 then caps at 20
+            max_workers = min(max(int(blob_uris/5), 1), 20)
+
+            # None is ThreadPoolExecutor max_workers default. 1 is single-threaded.
+            # this fires up a number of background threads to rewrite all the blobs
+            # we keep storage client work withi
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) \
+                    as executor:
+                futures = [
+                    executor.submit(
+                        rewrite_blob,
+                        new_name=blob_name)
+                    for blob_name in generate_cp_files()
+                ]
+
+                for future in futures:
+                    _ = future.result()
 
             dst_uri = "gs://{}/{}".format(copy_driver.destination_bucket, blobname)
             bqclient = copy_driver.destination_client
@@ -3908,6 +3924,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         elif (destination_ended and not source_ended) or (
                 not source_ended and source_row["table_name"] < destination_row["table_name"]):
             if copy_driver.istableincluded(source_row["table_name"]):
+                copy_driver.increment_tables_synced()
                 schema_q.put((0, BQSyncTask(create_and_copy_table, [copy_driver, source_row["table_name"]])))
             try:
                 source_row = next(source_generator)

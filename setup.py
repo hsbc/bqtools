@@ -39,7 +39,8 @@ setuptools.setup(
         "pprint",
         "absl-py",
         "boto",
-        "deepdiff>=3.3.0"
+        "deepdiff>=3.3.0",
+        'futures; python_version == "2.7"'
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
