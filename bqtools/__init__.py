@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import pprint
+import random
 import re
 import threading
 import warnings
@@ -1640,6 +1641,22 @@ class DefaultBQSyncDriver(object):
         self.__load_input_file_bytes = 0
         self.__load_input_files = 0
         self.__load_output_bytes = 0
+        self.__blob_rewrite_retried_exceptions = 0
+        self.__blob_rewrite_unretryable_exceptions = 0
+
+    @property
+    def blob_rewrite_retried_exceptions(self):
+        return self.__blob_rewrite_retried_exceptions
+
+    @property
+    def blob_rewrite_unretryable_exceptions(self):
+        return self.__blob_rewrite_unretryable_exceptions
+
+    def increment_blob_rewrite_retried_exceptions(self):
+        self.__blob_rewrite_retried_exceptions += 1
+
+    def increment_blob_rewrite_unretryable_exceptions(self):
+        self.__blob_rewrite_unretryable_exceptions += 1
 
     @property
     def models_synced(self):
@@ -2496,6 +2513,20 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
+    def blob_rewrite_retried_exceptions(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.blob_rewrite_retried_exceptions
+        return total
+
+    @property
+    def blob_rewrite_unretryable_exceptions(self):
+        total = 0
+        for copy_driver in self.__copy_drivers:
+            total += copy_driver.blob_rewrite_unretryable_exceptions
+        return total
+
+    @property
     def views_synced(self):
         total = 0
         for copy_driver in self.__copy_drivers:
@@ -2732,6 +2763,8 @@ class MultiBQSyncCoordinator(object):
                                                                      1024.0), 2)))
         self.logger.info("Query Cache Hits {:,d}".format(self.query_cache_hits))
         self.logger.info("Extract Fails {:,d}".format(self.extract_fails))
+        self.logger.info("Blob retryable exceptions {:,d}".format(self.blob_rewrite_retried_exceptions))
+        self.logger.info("Blob unretryable exceptions {:,d}".format(self.blob_rewrite_unretryable_exceptions))
         self.logger.info("Load Fails {:,d}".format(self.load_fails))
         self.logger.info("Copy Fails {:,d}".format(self.copy_fails))
         self.logger.info(
@@ -3471,28 +3504,58 @@ def cross_region_copy(copy_driver, table_name):
                     yield ablobname
 
             def rewrite_blob(new_name):
-                try:
-                    client = storage.Client(project=copy_driver.source_project)
+                total_bytes = 0
+                bytes_rewritten = 0
+                retry=True
+                loop = 0
 
-                    src_bucket = client.get_bucket(copy_driver.source_bucket)
-                    dst_bucket = client.get_bucket(copy_driver.destination_bucket)
-                    src_blob = storage.blob.Blob(new_name, src_bucket)
+                while(retry):
+                    retry=False
+                    try:
+                        client = storage.Client(project=copy_driver.source_project)
 
-                    dst_blob = storage.blob.Blob(new_name, dst_bucket)
+                        src_bucket = client.get_bucket(copy_driver.source_bucket)
+                        dst_bucket = client.get_bucket(copy_driver.destination_bucket)
+                        src_blob = storage.blob.Blob(new_name, src_bucket)
 
-                    (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
+                        dst_blob = storage.blob.Blob(new_name, dst_bucket)
 
-                    # wait for rewrite to finish
-                    while token is not None:
-                        (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob,
-                                                                                 token=token)
+                        (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
+
+                        # wait for rewrite to finish
+                        while token is not None:
+                            (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob,
+                                                                                     token=token)
+
+                    # retry based upon https://cloud.google.com/storage/docs/json_api/v1/status-codes
+                    except (exceptions.BadGateway,
+                            exceptions.GatewayTimeout,
+                            exceptions.InternalServerError,
+                            exceptions.TooManyRequests,
+                            exceptions.ServiceUnavailable) as e:
+                        # exponential back off for these
+                        copy_driver.increment_blob_rewrite_retried_exceptions()
+                        loop = loop + 1
+                        sleep_time_secs = min(random.random() * (2 ** loop), 32.0)
+                        copy_driver.get_logger().exception(
+                            "Retryable exception  re-writing blob in cross region copy gs://{}/{} to gs://{}/{"
+                            "} backing off {}".format(
+                                copy_driver.source_bucket,
+                                new_name,
+                                copy_driver.destination_bucket,
+                                new_name,
+                                sleep_time_secs))
+                        sleep(sleep_time_secs)
+                        retry = True
+                    except Exception as e:
+                        copy_driver.increment_blob_rewrite_unretryable_exceptions()
+                        copy_driver.get_logger().exception(
+                            "Exception re-writing blob in cross region copy gs://{}/{} to gs://{}/{"
+                            "}".format(
+                                copy_driver.source_bucket,
+                                new_name, copy_driver.destination_bucket, new_name))
+
                     src_blob.delete()
-                except Exception:
-                    copy_driver.get_logger().exception(
-                        "Exception re-writing blob in cross region copy gs://{}/{} to gs://{}/{"
-                        "}".format(
-                            copy_driver.source_bucket,
-                            new_name, copy_driver.destination_bucket, new_name))
 
             # set worker for small 1 is good enough as volume grows cap the max
             # grows dynamically up to 100 then caps at 20
