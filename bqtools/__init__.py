@@ -1451,6 +1451,48 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 
     return
 
+class ExportImportType(object):
+    """
+    Class that calculate the export import types that are best to use to copy the table
+    passed in initialiser across region
+    """
+    def __init__(self,srctable):
+        assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
+        self.__table = srctable
+        # detect if any GEOGRAPHY or DATETIME fields
+        def _detect_non_avro_types(schema):
+            for field in schema:
+                if field.field_type == 'GEOGRAPHY' or field.field_type == "DATETIME":
+                    return True
+                if field.field_type == "RECORD":
+                    if _detect_non_avro_types(list(field.fields)):
+                        return True
+            return False
+
+        self.__destination_format = bigquery.job.DestinationFormat.AVRO
+        if _detect_non_avro_types(list(srctable.schema)):
+            self.__destination_format = bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
+
+    @property
+    def destination_format(self):
+        return self.__destination_format
+
+    @property
+    def source_format(self):
+        # only support the exports that are possible
+        if self.destination_format == bigquery.job.DestinationFormat.AVRO:
+            return bigquery.job.SourceFormat.AVRO
+        if self.destination_format == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON:
+            return bigquery.job.SourceFormat.NEWLINE_DELIMITED_JSON
+        if self.destination_format == bigquery.job.DestinationFormat.CSV:
+            return bigquery.job.SourceFormat.CSV
+
+    @property
+    def compression_format(self):
+        if self.destination_format == bigquery.job.DestinationFormat.AVRO:
+            return bigquery.job.Compression.DEFLATE
+        return bigquery.job.Compression.GZIP
+
 
 class DefaultBQSyncDriver(object):
     """ This class provides mechanical input to qsync functions"""
@@ -2015,6 +2057,13 @@ class DefaultBQSyncDriver(object):
         return getattr(
             DefaultBQSyncDriver.threadLocal, self.destination_project + self.destination_dataset,
             None)
+
+    def export_import_format_supported(self,srctable):
+        """ Calculates a suitable export import type based upon schema
+        default mecahnism is to use AVRO and SNAPPY as parallel and fast
+        If though a schema type notsupported by AVRO fall back to jsonnl and gzip
+        """
+        return ExportImportType(srctable)
 
     @property
     def source_project(self):
@@ -2924,6 +2973,7 @@ def create_and_copy_table(copy_driver, table_name):
                 copy_driver.increment_tables_failed_sync()
     else:
         NEW_SCHEMA = list(srctable.schema)
+        export_import_type = copy_driver.export_import_format_supported(srctable)
         destination_table_ref = copy_driver.destination_client.dataset(
             copy_driver.destination_dataset).table(table_name)
         destination_table = bigquery.Table(destination_table_ref, schema=NEW_SCHEMA)
@@ -2980,7 +3030,8 @@ def create_and_copy_table(copy_driver, table_name):
                                                                        [copy_driver, table_name,
                                                                         srctable.partitioning_type,
                                                                         0,
-                                                                        srctable.num_rows])))
+                                                                        srctable.num_rows,
+                                                                        export_import_type])))
 
 
 def create_and_copy_model(copy_driver, model_name):
@@ -3164,11 +3215,13 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
+            export_import_type = copy_driver.export_import_format_supported(srctable)
             copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
                                                                        [copy_driver, table_name,
                                                                         srctable.partitioning_type,
                                                                         dsttable.num_rows,
-                                                                        srctable.num_rows])))
+                                                                        srctable.num_rows,
+                                                                        export_import_type])))
         else:
             copy_driver.increment_tables_avoided()
             copy_driver.add_bytes_avoided(srctable.num_bytes)
@@ -3200,7 +3253,12 @@ def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
     return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 
-def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_rows):
+def copy_table_data(copy_driver,
+                    table_name,
+                    partitioning_type,
+                    dst_rows,
+                    src_rows,
+                    export_import_format):
     """
     Function copies data assumes schemas are identical
     :param copy_driver:
@@ -3371,7 +3429,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
     # load
     else:
         if partitioning_type != "DAY":
-            cross_region_copy(copy_driver, table_name)
+            cross_region_copy(copy_driver, table_name,export_import_format)
         else:
             source_ended = False
             destination_ended = False
@@ -3441,7 +3499,8 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                                                     "{}${}".format(
                                                                         table_name,
                                                                         source_row[
-                                                                            "partitionName"])])))
+                                                                            "partitionName"]),
+                                                                    export_import_format])))
                     else:
                         copy_driver.add_rows_avoided(source_row["rowNum"])
                     try:
@@ -3472,7 +3531,9 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                                                                                    "{}${}".format(
                                                                                        table_name,
                                                                                        source_row[
-                                                                                           "partitionName"])])))
+                                                                                           "partitionName"],
+                                                                                   ),
+                                                                                   export_import_format])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -3488,7 +3549,7 @@ def copy_table_data(copy_driver, table_name, partitioning_type, dst_rows, src_ro
                         destination_ended = True
 
 
-def cross_region_copy(copy_driver, table_name):
+def cross_region_copy(copy_driver, table_name, export_import_type):
     """
     Copy data acoss region each table is
     Extracted out to avro file to cloud storage src
@@ -3507,11 +3568,18 @@ def cross_region_copy(copy_driver, table_name):
     src_uri = "gs://{}/{}".format(copy_driver.source_bucket, blobname)
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
     job_config = bigquery.ExtractJobConfig()
-    job_config.use_avro_logical_types = True
+    # using logical types expads clumn types supported
+    # but has no DATETIME support
+    # do logic that is avros speific
+    if export_import_type.destination_format == bigquery.job.DestinationFormat.AVRO:
+        job_config.use_avro_logical_types = True
+
     # use avros as parallel read/write
-    job_config.destination_format = bigquery.job.DestinationFormat.AVRO
+    # worth noting avro does not support DATETIME
+    job_config.destination_format = export_import_type.destination_format
     # compress trade compute for network bandwidth
-    job_config.compression = bigquery.job.Compression.DEFLATE
+    job_config.compression = export_import_type.compression_format
+
     # start the extract
     job = copy_driver.query_client.extract_table(srctable, [src_uri], job_config=job_config,
                                                  location=copy_driver.source_location)
@@ -3613,16 +3681,20 @@ def cross_region_copy(copy_driver, table_name):
             bqclient = copy_driver.destination_client
             dsttable = bqclient.dataset(copy_driver.destination_dataset).table(table_name)
             job_config = bigquery.LoadJobConfig()
-            job_config.source_format = bigquery.job.SourceFormat.AVRO
+
+            if export_import_type.source_format == bigquery.job.SourceFormat.AVRO:
+                job_config.use_avro_logical_types = True
+            job_config.source_format = export_import_type.source_format
             # compress trade compute for network bandwidth
-            job_config.compression = bigquery.job.Compression.DEFLATE
+            job_config.compression = export_import_type.compression_format
+
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
             if getattr(job_config, "schema_update_options", None):
                 job_config.schema_update_options = bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
                 job_config.schema_update_options = \
                     bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION
-            job_config.use_avro_logical_types = True
+
             job = copy_driver.query_client.load_table_from_uri([dst_uri], dsttable,
                                                                job_config=job_config,
                                                                location=copy_driver.destination_location)

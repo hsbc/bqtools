@@ -2013,15 +2013,15 @@ class TestScannerMethods(unittest.TestCase):
         test_source_configs = []
 
         # small dataset good to start tests basic types
-        # test_source_configs.append({
-        #     "description":"small dataset good to start tests basic types",
-        #     "dataset_name":"fcc_political_ads",
-        #     "table_filter_regexp":['broadcast_tv_radio_station',
-        #                            'content_info',
-        #                            'file_history',
-        #                            'file_record'],
-        #     "max_last_days":365
-        # })
+        test_source_configs.append({
+            "description":"small dataset good to start tests basic types",
+            "dataset_name":"fcc_political_ads",
+            "table_filter_regexp":['broadcast_tv_radio_station',
+                                   'content_info',
+                                   'file_history',
+                                   'file_record'],
+            "max_last_days":365
+        })
         # small dataset good to start tests basic types
         test_source_configs.append({
             "description": "date partitioned 1 date type field",
