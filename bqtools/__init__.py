@@ -1454,9 +1454,14 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 class ExportImportType(object):
     """
     Class that calculate the export import types that are best to use to copy the table
-    passed in initialiser across region
+    passed in initialiser across region.
     """
     def __init__(self,srctable):
+        """
+        Construct an ExportImportType around  a tbale that describes best format to copy this table across region
+        how to compress
+        :param srctable:
+        """
         assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
         self.__table = srctable
         # detect if any GEOGRAPHY or DATETIME fields
@@ -1475,10 +1480,18 @@ class ExportImportType(object):
 
     @property
     def destination_format(self):
+        """
+        The destination format to use for exports for ths table when copying across regions
+        :return: a bigquery.job.DestinationFormat enumerator
+        """
         return self.__destination_format
 
     @property
     def source_format(self):
+        """
+        The source format to use to load this table in destnation region
+        :return:  a bigquery.job.SourceFormat enumerator that matches the prefferd export format
+        """
         # only support the exports that are possible
         if self.destination_format == bigquery.job.DestinationFormat.AVRO:
             return bigquery.job.SourceFormat.AVRO
@@ -1489,13 +1502,25 @@ class ExportImportType(object):
 
     @property
     def compression_format(self):
+        """
+        The calculated compression type to use based on supported format
+        :return:  one of bigquery.job.Compression enumerators or None
+        """
         if self.destination_format == bigquery.job.DestinationFormat.AVRO:
             return bigquery.job.Compression.DEFLATE
         return bigquery.job.Compression.GZIP
 
+    @property
+    def schema(self):
+        """
+        The target schema so if needed on load can be obtained from same object
+        :return:
+        """
+        return self.__table.schema
+
 
 class DefaultBQSyncDriver(object):
-    """ This class provides mechanical input to qsync functions"""
+    """ This class provides mechanical input to bqsync functions"""
     threadLocal = threading.local()
 
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
@@ -3687,6 +3712,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
             job_config.source_format = export_import_type.source_format
             # compress trade compute for network bandwidth
             job_config.compression = export_import_type.compression_format
+            job_config.schema = export_import_type.schema
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
