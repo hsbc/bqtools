@@ -1518,6 +1518,10 @@ class ExportImportType(object):
         """
         return self.__table.schema
 
+    @property
+    def encryption_configuration(self):
+        return self.__table.encryption_configuration
+
 
 class DefaultBQSyncDriver(object):
     """ This class provides mechanical input to bqsync functions"""
@@ -2331,6 +2335,26 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
         return view_definition
 
+    def calculate_target_cmek_config(self, encryption_config):
+        assert isinstance(encryption_config,
+                          bigquery.EncryptionConfiguration), \
+                          " To recaclculate a new encryption " \
+                          "config the original config has to be passed in and be of class " \
+                          "bigquery.EncryptionConfig"
+
+        # if a global key or same region we are good to go
+        if self.same_region or encryption_config.kms_key_name.find(
+                                    "/locations/global/") != -1:
+            return encryption_config
+
+        # if global key can still be used
+        parts = encryption_config.kms_key_name.split("/")
+        parts[3] = MAPBQREGION2KMSREGION.get(self.destination_location,
+                                             self.destination_location.lower())
+
+        return bigquery.encryption_configuration.EncryptionConfiguration(kms_key_name="/".join(parts))
+
+
     def copy_access_to_destination(self):
         # for those not created compare data structures
         # copy data
@@ -2394,19 +2418,9 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                     if src_dataset.default_encryption_configuration is None:
                         dst_dataset.default_encryption_configuration = None
                     else:
-                        if self.same_region or \
-                                src_dataset.default_encryption_configuration.kms_key_name.find(
-                                    "/locations/global/") != -1:
-                            dst_dataset.default_encryption_configuration = encryption_config
-                        else:
-                            # if global key can still be used
-                            parts = src_dataset.default_encryption_configuration.kms_key_name.split(
-                                "/")
-                            parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset.location,
-                                                                 dst_dataset.location.lower())
-                            dst_dataset.default_encryption_configuration = \
-                                bigquery.encryption_configuration.EncryptionConfiguration(
-                                    kms_key_name="/".join(parts))
+                        dst_dataset.default_encryption_configuration = \
+                            self.calculate_target_cmek_config(
+                                src_dataset.default_encryption_configuration)
                     fields.append("default_encryption_configuration")
 
             try:
@@ -3022,17 +3036,8 @@ def create_and_copy_table(copy_driver, table_name):
 
         # encryption configs can be location specific
         if encryption_config is not None:
-            if copy_driver.same_region or encryption_config.kms_key_name.find(
-                    "/locations/global/") != -1:
-                destination_table.encryption_config = encryption_config
-            else:
-                # if global key can still be used
-                parts = encryption_config.kms_key_name.split("/")
-                parts[3] = MAPBQREGION2KMSREGION.get(dst_dataset_impl.location,
-                                                     dst_dataset_impl.location.lower())
-                destination_table.encryption_config = \
-                    bigquery.encryption_configuration.EncryptionConfiguration(
-                        kms_key_name="/".join(parts))
+            destination_table.encryption_config  = \
+                copy_driver.calculate_target_cmek_config(encryption_config)
 
         # and create the table
         try:
@@ -3118,6 +3123,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     OLD_SCHEMA = list(dsttable.schema)
 
     fields = []
+    if srctable.encryption_configuration is not None and dsttable.encryption_configuration is None:
+        dsttable.encryption_configuration = copy_driver.calculate_target_cmek_config(srctable.encryption_configuration)
+        fields.append("encryption_configuration")
     if dsttable.description != srctable.description:
         dsttable.description = srctable.description
         fields.append("description")
@@ -3224,7 +3232,14 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
             try:
                 copy_driver.destination_client.update_table(dsttable,
                                                             fields)
-            except Exception:
+            except exceptions.BadRequest as e:
+                if "encryption_configuration" in fields and \
+                    str(e).find("Changing from Default to Cloud KMS encryption key and back must be done via table.copy job") != -1:
+                    pass
+                else:
+                    copy_driver.increment_tables_failed_sync()
+                    raise
+            except Exception as e:
                 copy_driver.increment_tables_failed_sync()
                 raise
 
@@ -3236,6 +3251,21 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
+
+        # as not possible to patch on day partition with data time to rebuild this table
+        # this should be feasible with an in region copy
+        if "encryption_configuration" in fields and \
+                dsttable.num_rows != 0 and \
+                (dsttable.partitioning_type == "DAY" or
+                 dsttable.encryption_configuration is None): # going from none to some needs to
+                                                             # happen via a copy
+                update_table_cmek_via_copy(copy_driver.destination_client,
+                                           dsttable,
+                                           copy_driver.calculate_target_cmek_config(
+                                                    srctable.encryption_configuration),
+                                           copy_driver.get_logger())
+                dsttable = copy_driver.source_client.get_table(dsttable_ref)
+
         if dsttable.num_rows != srctable.num_rows or \
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
@@ -3252,6 +3282,46 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
             copy_driver.add_bytes_avoided(srctable.num_bytes)
             copy_driver.add_rows_avoided(srctable.num_rows)
 
+
+def update_table_cmek_via_copy(client,
+                               srctable,
+                               encryption_configuration,
+                               logger):
+    """
+    being asked to update a day partition tables cmek copy it within dataset
+    recreate and copy back
+    :param table_to_update:
+    :param encryption_configuration:
+    :return:
+    """
+
+    # copy to a temp table
+    dsttable = client.dataset(srctable.dataset_id).table("zz" + srctable.table_id + "_temp")
+    if table_exists(client, dsttable):
+        client.delete_table(dsttable)
+
+    job_config = bigquery.CopyJobConfig()
+    job_config.destination_encryption_configuration = encryption_configuration
+    job = client.copy_table(
+        srctable, dsttable, job_config=job_config,
+        location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
+
+    wait_for_jobs([job],logger=logger)
+
+    dsttable_id = srctable.table_id
+    srctable = dsttable
+    dsttable = client.dataset(srctable.dataset_id).table(dsttable_id)
+    if table_exists(client, dsttable):
+        client.delete_table(dsttable)
+    job_config = bigquery.CopyJobConfig()
+    job_config.destination_encryption_configuration = encryption_configuration
+    job = client.copy_table(
+        srctable, dsttable, job_config=job_config,
+        location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
+
+    wait_for_jobs([job],logger=logger)
+
+    client.delete_table(srctable)
 
 def remove_deleted_destination_table(copy_driver, table_name):
     """
@@ -3713,6 +3783,12 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
             # compress trade compute for network bandwidth
             job_config.compression = export_import_type.compression_format
             job_config.schema = export_import_type.schema
+
+            # this is required but nee dto sort patching of cmek first
+            if export_import_type.encryption_configuration is not None:
+                job_config.destination_encryption_configuration = copy_driver. \
+                    calculate_target_cmek_config(export_import_type.encryption_configuration)
+
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
