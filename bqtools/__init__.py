@@ -3123,6 +3123,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     OLD_SCHEMA = list(dsttable.schema)
 
     fields = []
+    # Only check encryption if missing if its has been updated but exists left as is
     if srctable.encryption_configuration is not None and dsttable.encryption_configuration is None:
         dsttable.encryption_configuration = copy_driver.calculate_target_cmek_config(srctable.encryption_configuration)
         fields.append("encryption_configuration")
