@@ -19,13 +19,20 @@ import logging
 import os
 import pprint
 import random
-import requests
 import re
 import threading
 import warnings
 from datetime import datetime, date, timedelta, time
 from time import sleep
+import time
 
+from opencensus.ext.stackdriver import stats_exporter
+from opencensus.stats import aggregation
+from opencensus.stats import measure
+from opencensus.stats import stats
+from opencensus.stats import view
+
+import requests
 # handle python 2 and 3 versions of this
 import six
 from google.cloud import bigquery, exceptions, storage
@@ -128,6 +135,58 @@ MAPBQREGION2KMSREGION = {
 BQSYNCQUERYLABELS = {
     "bqsyncversion": "bqyncv0_4"
 }
+BQSYNC_TABLES_SYNCED = measure.MeasureInt(
+    "bqsync_tables_synced",
+    "Number of tables synced in bqsync",
+    "TABLES")
+
+BQSYNC_TABLESSYNCED_VIEW = view.View(
+    "bqsync_tables_synced_distribution",
+    "The distribution of the number of tables synced",
+    [],
+    BQSYNC_TABLES_SYNCED,
+    # Buckets of tables synce
+    aggregation.CountAggregation())
+
+BQSYNC_TABLES_FAILED_SYNCED = measure.MeasureInt(
+    "bqsync_tablesfailed__synced",
+    "Number of tables failed synced in bqsync",
+    "TABLES")
+
+BQSYNC_TABLESFAILEDSYNCED_VIEW = view.View(
+    "bqsync_tablesfailed_synced_distribution",
+    "The distribution of the number of tables failed synced",
+    [],
+    BQSYNC_TABLES_FAILED_SYNCED,
+    # Buckets of tables synced
+    aggregation.CountAggregation())
+
+BQSYNC_BQ_MBS = measure.MeasureFloat(
+    "bqsync_bq_mbps",
+    "Throughput of bqsync raw Big Query data",
+    "MBPS")
+
+BQSYNC_BQMBS_VIEW = view.View(
+    "bqsync_bq_mbps_distribution",
+    "The distribution of the bqsync BQ network throughput",
+    [],
+    BQSYNC_BQ_MBS,
+    # Throughput MBPs in buckets: [>=0MBPs, >=100MBPs, >=200MBPs, >=400MBPs, >=1000MBPs, >=2000MBPs, >=4000MBPs]
+    aggregation.LastValueAggregation())
+
+BQSYNC_NW_MBS = measure.MeasureFloat(
+    "bqsync_nw_mbps",
+    "Throughput bqsync of network syncing data",
+    "MBPS")
+
+BQSYNC_NWMBS_VIEW = view.View(
+    "bqsync_nw_mbps_distribution",
+    "The distribution of the raw bqsync network throughput",
+    [],
+    BQSYNC_NW_MBS,
+    # Throughput MBPs in buckets: [>=0MBPs, >=100MBPs, >=200MBPs, >=400MBPs, >=1000MBPs, >=2000MBPs, >=4000MBPs]
+    aggregation.LastValueAggregation())
+
 
 
 class BQJsonEncoder(json.JSONEncoder):
@@ -2493,7 +2552,8 @@ class MultiBQSyncCoordinator(object):
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
-                 analysis_project=None):
+                 analysis_project=None,
+                 cloud_logging_and_monitoring=False):
         assert len(srcproject_and_dataset_list) == len(
             dstproject_and_dataset_list), "Source and destination lists must be same length"
         assert len(
@@ -2504,6 +2564,21 @@ class MultiBQSyncCoordinator(object):
         # the sequence of these should be any cross dataset views are created correctly
         self.__copy_drivers = []
         self.__check_depth = check_depth
+        self.__cloud_logging_and_monitoring = cloud_logging_and_monitoring
+        if self.cloud_logging_and_monitoring:
+            stats.stats.view_manager.register_view(BQSYNC_TABLESSYNCED_VIEW)
+            stats.stats.view_manager.register_view(BQSYNC_TABLESFAILEDSYNCED_VIEW)
+            stats.stats.view_manager.register_view(BQSYNC_BQMBS_VIEW)
+            stats.stats.view_manager.register_view(BQSYNC_NWMBS_VIEW)
+
+
+            # Create the Stackdriver stats exporter and start exporting metrics in the
+            # background, once every 60 seconds by default.
+            exporter = stats_exporter.new_stats_exporter()
+
+
+            # Register exporter to the view manager.
+            stats.stats.view_manager.register_exporter(exporter)
 
         # create a copy driver for each pair of source destinations
         # note assumption is a set will always be from same source location to destination location
@@ -2527,6 +2602,16 @@ class MultiBQSyncCoordinator(object):
                                             day_partition_deep_check=day_partition_deep_check,
                                             analysis_project=analysis_project)
             self.__copy_drivers.append(copy_driver)
+
+    @property
+    def cloud_logging_and_monitoring(self):
+        return self.__cloud_logging_and_monitoring
+
+    @property
+    def cloud_monitoring_client(self):
+        if self.cloud_logging_and_monitoring:
+            return google.cloud.monitoring_v3.MetricServiceClient()
+        return None
 
     @property
     def start_time(self):
@@ -2889,6 +2974,15 @@ class MultiBQSyncCoordinator(object):
             round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
                   self.sync_time_seconds, 3)))
         self.logger.info("Speed up {:1,.2f}".format(round(speed_up, 2)))
+        if self.cloud_logging_and_monitoring:
+            mmap = stats.stats.stats_recorder.new_measurement_map()
+            mmap.measure_int_put(BQSYNC_TABLES_SYNCED,self.tables_synced)
+            mmap.measure_int_put(BQSYNC_TABLES_FAILED_SYNCED,self.tables_failed_sync)
+            mmap.measure_float_put(BQSYNC_BQ_MBS, round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
+                                                        self.sync_time_seconds, 3))
+            mmap.measure_float_put(BQSYNC_NW_MBS, round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
+                                                        self.sync_time_seconds, 3))
+            mmap.record()
 
     def create_access_view(self, entity_id):
         access = None

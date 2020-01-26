@@ -171,6 +171,12 @@ def main(argv):
 
 
     # if cloud logging is set
+    # TBD:This uses httplib2 which ignore env variable :-(
+    # so to work behind proxy a transport is required
+    # I am leaving this for the minute as its a complete pain
+    # but based on demand will fix in general I am running bqsync
+    # on compute host with no proxy so I don't have an urgent need to
+    # resolve this issue
     if FLAGS.gcp_logging_monitoring:
         client = google.cloud.logging.Client()
         handler = CloudLoggingHandler(client, name="bqsync")
@@ -192,7 +198,8 @@ def main(argv):
                                                    latest_date=latest_date,
                                                    days_before_latest_day=FLAGS.days_before_latest_day,
                                                    day_partition_deep_check=FLAGS.do_day_partition_deep_check,
-                                                   analysis_project=FLAGS.analysis_project)
+                                                   analysis_project=FLAGS.analysis_project,
+                                                   cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring)
 
     multi_bq_copy.logger = logging
 
