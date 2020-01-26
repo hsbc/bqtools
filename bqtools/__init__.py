@@ -1515,14 +1515,20 @@ class ExportImportType(object):
     Class that calculate the export import types that are best to use to copy the table
     passed in initialiser across region.
     """
-    def __init__(self,srctable):
+    def __init__(self,srctable,dsttable=None):
         """
         Construct an ExportImportType around  a tbale that describes best format to copy this table across region
         how to compress
         :param srctable:
         """
         assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
-        self.__table = srctable
+        assert dsttable is None or isinstance(dsttable, bigquery.Table), "Export Import dsttabl Type MUST be constructed with a bigquery.Table object or None"
+
+        if dsttable is None:
+            self.__table = srctable
+        else:
+            self.__table = dsttable
+            
         # detect if any GEOGRAPHY or DATETIME fields
         def _detect_non_avro_types(schema):
             for field in schema:
@@ -2146,12 +2152,12 @@ class DefaultBQSyncDriver(object):
             DefaultBQSyncDriver.threadLocal, self.destination_project + self.destination_dataset,
             None)
 
-    def export_import_format_supported(self,srctable):
+    def export_import_format_supported(self,srctable,dsttable=None):
         """ Calculates a suitable export import type based upon schema
         default mecahnism is to use AVRO and SNAPPY as parallel and fast
         If though a schema type notsupported by AVRO fall back to jsonnl and gzip
         """
-        return ExportImportType(srctable)
+        return ExportImportType(srctable,dsttable)
 
     @property
     def source_project(self):
@@ -3365,7 +3371,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
-            export_import_type = copy_driver.export_import_format_supported(srctable)
+            export_import_type = copy_driver.export_import_format_supported(srctable,dsttable)
             copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
                                                                        [copy_driver, table_name,
                                                                         srctable.partitioning_type,
