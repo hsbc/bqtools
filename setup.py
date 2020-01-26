@@ -36,6 +36,8 @@ setuptools.setup(
         "datetime",
         "google-cloud-bigquery",
         "google-cloud-storage",
+        "google-cloud-logging",
+        "google-cloud-monitoring",
         "pprint",
         "absl-py",
         "boto",

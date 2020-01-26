@@ -5,14 +5,16 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
+import datetime
 import logging
 import os
 import sys
-import datetime
 
 import boto
+import google.cloud.logging
 from absl import app
 from absl import flags
+from google.cloud.logging.handlers import CloudLoggingHandler
 
 import bqtools
 
@@ -32,6 +34,9 @@ flags.DEFINE_string('src_bucket', None,
 will be extracted from source dataset into this bucket meaning it MUST be in the same region as 
 the source datasets when
 copying across regions.""")
+flags.DEFINE_string('log_level', "INFO",
+                    """Python logging level default is INFO set to one of DEBUG,INFO,WARNING,ERROR
+to adjust logging verbosity""")
 flags.DEFINE_string('dst_bucket', None,
                     """If the destination set is different to the source the data extracted into 
 src_bucket will rewritten to this destination bucket and then loaded into the destination datasets.""")
@@ -84,6 +89,9 @@ flags.DEFINE_bool('do_day_partition_deep_check', False,
 default is False this will not do a check unless number of bytes differ and mod time of source > 
 destination tables modification time.""")
 
+flags.DEFINE_bool('gcp_logging_monitoring', False,
+                  """If set to True will directly log to Global Logs->bqsync and create custom metrics for bqsync custom/bqsync/*""")
+
 flags.DEFINE_string('analysis_project', None,
                     """The project that all queries will be billed too by default None and that means destination project pays for the queries
 This is assumption as for example public datasets there would be no ability to run queries on the source. Setting this allows another project 
@@ -107,6 +115,8 @@ def main(argv):
 
     assert FLAGS.check_depth >= -2, "Check depth for data comparison MUST be > -2 see --help " \
                                    "for details"
+    assert FLAGS.log_level in ["DEBUG","INFO","WARNING","ERROR"], "log_level MUST be one of DEBUG," \
+                                                                  "INFO,WARNING or ERROR"
 
     for type in FLAGS.copy_types:
         assert type in ["TABLE","VIEW","ROUTINE"], "copy_types list items must be one of TABLE, VIEW or ROUTINE"
@@ -146,6 +156,28 @@ def main(argv):
     src_project_datasets_list = FLAGS.src_project_datasets
     dst_project_datasets_list = FLAGS.dst_project_datasets
 
+    # tweak loggingas wanted
+    loglevel = logging.INFO
+    if FLAGS.log_level == "DEBUG":
+        loglevel = logging.DEBUG
+    elif FLAGS.log_level == "INFO":
+        loglevel = logging.INFO
+    elif FLAGS.log_level == "WARNING":
+        loglevel = logging.WARNING
+    elif FLAGS.log_level == "ERROR":
+        loglevel = logging.ERROR
+
+    logging.basicConfig(stream=sys.stdout, level=loglevel)
+
+
+    # if cloud logging is set
+    if FLAGS.gcp_logging_monitoring:
+        client = google.cloud.logging.Client()
+        handler = CloudLoggingHandler(client, name="bqsync")
+        cloud_logger = logging.getLogger()
+        cloud_logger.setLevel(loglevel)
+        cloud_logger.addHandler(handler)
+
     # set up sync
     multi_bq_copy = bqtools.MultiBQSyncCoordinator(src_project_datasets_list,
                                                    dst_project_datasets_list,
@@ -162,8 +194,6 @@ def main(argv):
                                                    day_partition_deep_check=FLAGS.do_day_partition_deep_check,
                                                    analysis_project=FLAGS.analysis_project)
 
-    # tweak logging
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     multi_bq_copy.logger = logging
 
     # actually do the sync
