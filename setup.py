@@ -16,7 +16,7 @@ with open("README.md", "r", encoding='utf-8') as fh:
 
 setuptools.setup(
     name='bqtools-json',
-    version='0.4.63',
+    version='0.4.64',
     author="Mike Moore",
     author_email="z_z_zebra@yahoo.com",
     description="A Big Query json utility package",
