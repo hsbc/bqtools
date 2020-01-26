@@ -1528,7 +1528,7 @@ class ExportImportType(object):
             self.__table = srctable
         else:
             self.__table = dsttable
-            
+
         # detect if any GEOGRAPHY or DATETIME fields
         def _detect_non_avro_types(schema):
             for field in schema:
