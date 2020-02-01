@@ -22,15 +22,8 @@ import random
 import re
 import threading
 import warnings
-from datetime import datetime, date, timedelta, time
+from datetime import datetime, date, timedelta, time as dttime
 from time import sleep
-import time
-
-from opencensus.ext.stackdriver import stats_exporter
-from opencensus.stats import aggregation
-from opencensus.stats import measure
-from opencensus.stats import stats
-from opencensus.stats import view
 
 import requests
 # handle python 2 and 3 versions of this
@@ -135,58 +128,6 @@ MAPBQREGION2KMSREGION = {
 BQSYNCQUERYLABELS = {
     "bqsyncversion": "bqyncv0_4"
 }
-BQSYNC_TABLES_SYNCED = measure.MeasureInt(
-    "bqsync_tables_synced",
-    "Number of tables synced in bqsync",
-    "TABLES")
-
-BQSYNC_TABLESSYNCED_VIEW = view.View(
-    "bqsync_tables_synced_distribution",
-    "The distribution of the number of tables synced",
-    [],
-    BQSYNC_TABLES_SYNCED,
-    # Buckets of tables synce
-    aggregation.CountAggregation())
-
-BQSYNC_TABLES_FAILED_SYNCED = measure.MeasureInt(
-    "bqsync_tablesfailed__synced",
-    "Number of tables failed synced in bqsync",
-    "TABLES")
-
-BQSYNC_TABLESFAILEDSYNCED_VIEW = view.View(
-    "bqsync_tablesfailed_synced_distribution",
-    "The distribution of the number of tables failed synced",
-    [],
-    BQSYNC_TABLES_FAILED_SYNCED,
-    # Buckets of tables synced
-    aggregation.CountAggregation())
-
-BQSYNC_BQ_MBS = measure.MeasureFloat(
-    "bqsync_bq_mbps",
-    "Throughput of bqsync raw Big Query data",
-    "MBPS")
-
-BQSYNC_BQMBS_VIEW = view.View(
-    "bqsync_bq_mbps_distribution",
-    "The distribution of the bqsync BQ network throughput",
-    [],
-    BQSYNC_BQ_MBS,
-    # Throughput MBPs in buckets: [>=0MBPs, >=100MBPs, >=200MBPs, >=400MBPs, >=1000MBPs, >=2000MBPs, >=4000MBPs]
-    aggregation.LastValueAggregation())
-
-BQSYNC_NW_MBS = measure.MeasureFloat(
-    "bqsync_nw_mbps",
-    "Throughput bqsync of network syncing data",
-    "MBPS")
-
-BQSYNC_NWMBS_VIEW = view.View(
-    "bqsync_nw_mbps_distribution",
-    "The distribution of the raw bqsync network throughput",
-    [],
-    BQSYNC_NW_MBS,
-    # Throughput MBPs in buckets: [>=0MBPs, >=100MBPs, >=200MBPs, >=400MBPs, >=1000MBPs, >=2000MBPs, >=4000MBPs]
-    aggregation.LastValueAggregation())
-
 
 
 class BQJsonEncoder(json.JSONEncoder):
@@ -433,7 +374,7 @@ def get_bq_schema_from_json_repr(jsondict):
         elif isinstance(data, date):
             field["type"] = "DATE"
             field["mode"] = "NULLABLE"
-        elif isinstance(data, time):
+        elif isinstance(data, dttime):
             field["type"] = "TIME"
             field["mode"] = "NULLABLE"
         elif isinstance(data, six.binary_type):
@@ -615,7 +556,7 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
                 fieldschema = bigquery.SchemaField(fname, 'DATETIME')
             elif isinstance(sobject, date):
                 fieldschema = bigquery.SchemaField(fname, 'DATE')
-            elif isinstance(sobject, time):
+            elif isinstance(sobject, dttime):
                 fieldschema = bigquery.SchemaField(fname, 'TIME')
             elif isinstance(sobject, six.string_types) or isinstance(sobject, six.text_type):
                 fieldschema = bigquery.SchemaField(fname, 'STRING')
@@ -2981,14 +2922,7 @@ class MultiBQSyncCoordinator(object):
                   self.sync_time_seconds, 3)))
         self.logger.info("Speed up {:1,.2f}".format(round(speed_up, 2)))
         if self.cloud_logging_and_monitoring:
-            mmap = stats.stats.stats_recorder.new_measurement_map()
-            mmap.measure_int_put(BQSYNC_TABLES_SYNCED,self.tables_synced)
-            mmap.measure_int_put(BQSYNC_TABLES_FAILED_SYNCED,self.tables_failed_sync)
-            mmap.measure_float_put(BQSYNC_BQ_MBS, round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
-                                                        self.sync_time_seconds, 3))
-            mmap.measure_float_put(BQSYNC_NW_MBS, round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
-                                                        self.sync_time_seconds, 3))
-            mmap.record()
+            pass
 
     def create_access_view(self, entity_id):
         access = None
