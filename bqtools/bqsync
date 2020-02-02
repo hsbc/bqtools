@@ -28,6 +28,17 @@ The list in this argument MUST contain same number as in the dst_project_dataset
 flags.DEFINE_list('dst_project_datasets', [],
                     """A comma separated list of projects and datasets to copy into. These maybe 
 in a different region if they are then the src_bucket and dst_bucket MUST be specified.""")
+
+flags.DEFINE_list('src_ref_project_datasets', [],
+                    """A comma separated list of projects and datasets that are referenced in old 
+location views,permissions. That exist and are moved outside scope of this sync but in permissions 
+and views need refactoring""")
+
+flags.DEFINE_list('dst_ref_project_datasets', [],
+                    """A comma separated list of projects and datasets that are replacements of the 
+referenced in old location views,permissions to use in new location. That exist and are moved 
+outside scope of this sync but in permissions and views need refactoring""")
+
 flags.DEFINE_string('src_bucket', None,
                     """If the source set of datasets and region are different to the destination 
                     datasets region data
@@ -199,7 +210,9 @@ def main(argv):
                                                    days_before_latest_day=FLAGS.days_before_latest_day,
                                                    day_partition_deep_check=FLAGS.do_day_partition_deep_check,
                                                    analysis_project=FLAGS.analysis_project,
-                                                   cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring)
+                                                   cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring,
+                                                   src_ref_project_datasets=FLAGS.src_ref_project_datasets,
+                                                   dst_ref_project_datasets=FLAGS.dst_ref_project_datasets)
 
     multi_bq_copy.logger = logging
 

@@ -2500,12 +2500,20 @@ class MultiBQSyncCoordinator(object):
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
                  analysis_project=None,
-                 cloud_logging_and_monitoring=False):
+                 cloud_logging_and_monitoring=False,
+                 src_ref_project_datasets=[],
+                 dst_ref_project_datasets=[]):
         assert len(srcproject_and_dataset_list) == len(
             dstproject_and_dataset_list), "Source and destination lists must be same length"
         assert len(
             srcproject_and_dataset_list) > 0, "Fro multi copy we need at least 1 source and 1 " \
                                               "destination"
+
+        assert len(src_ref_project_datasets) == len(
+            dst_ref_project_datasets), "referenced datsets dst_ref_project_datasets and " \
+                                       "dst_ref_project_datasets MUST be same length"
+        self.__src_ref_project_datasets = src_ref_project_datasets
+        self.__dst_ref_project_datasets = dst_ref_project_datasets
 
         # create the underlying copy drivers to copy each dataset
         # the sequence of these should be any cross dataset views are created correctly
@@ -2935,9 +2943,26 @@ class MultiBQSyncCoordinator(object):
         return access
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
+        # handle projects and dasets in the copy
         for copy_driver in self.__copy_drivers:
             view_definition = copy_driver.real_update_source_view_definition(view_definition,
                                                                              use_standard_sql)
+
+        # handle referenced projects and datsets if any
+        for numproj,src_proj_dataset, src_dataset in enumerate(self.__src_ref_project_datasets):
+            dst_proj_dataset = self.__dst_ref_project_datasets[numproj]
+            src_proj,src_dataset = src_proj_dataset.split(".")
+            dst_proj, dst_dataset = dst_proj_dataset.split(".")
+            view_definition = view_definition.replace(
+                r'`{}.{}.'.format(src_proj, src_dataset),
+                "`{}.{}.".format(dst_proj, dst_dataset))
+            view_definition = view_definition.replace(
+                r'[{}:{}.'.format(src_proj, src_dataset),
+                "[{}:{}.".format(dst_proj, dst_dataset))
+            # this should not be required but seems it is
+            view_definition = view_definition.replace(
+                r'[{}.{}.'.format(src_proj, src_dataset),
+                "[{}:{}.".format(dst_proj, dst_dataset))
         return view_definition
 
 
@@ -2968,6 +2993,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      day_partition_deep_check=day_partition_deep_check,
                                      analysis_project=analysis_project)
         self.__coordinater = coordinator
+
 
     @property
     def coordinater(self):
@@ -3013,7 +3039,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         return self.coordinater.create_access_view(entity_id)
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
-        return self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
+        view_defintion = self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
+        return view_defintion
 
 
 def create_and_copy_table(copy_driver, table_name):
