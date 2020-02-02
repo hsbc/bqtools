@@ -7,6 +7,8 @@ basic usage is as follows
  
     bqsync--src_project_datasets=[project1.dataset1,project1.dataset2,project2.dataset3] \
     --dst_project_datasset=[project1.dataset4,project2.dataset5,project3.dataset6] \
+    --src_ref_project_datasets=[project1.dataset6,project1.dataset7] \
+    --dst_ref_project_datasets=[project1.dataset8,project2.dataset9] \
     --src_bucket=bucket_name --dst_bucket=another_bucket_name \
     --copy_data=True \
     --copy_views=True \
