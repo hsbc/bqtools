@@ -27,7 +27,12 @@ The list in this argument **MUST** contain same number as in the *dst_project_da
 
 *dst_project_datasets* - A comma separated list of projects and datasets to copy into. These maybe
 in a different region if they are then the *src_bucket* and *dst_bucket* **MUST** be specified.
- 
+
+*src_ref_project_datasets* - A comma separated list of projects and datasets that are referenced that still need 
+remapping in view and access control (only relevant if copying views and access)
+
+*dst_ref_project_datasets* - A comma separated list of projects and datasets to map src_ref_project_datasets to.
+
 *src_bucket* - If the source set of datasets and region are different to the destination datasets
 region data will be extracted from source dataset into this bucket meaning it **MUST** be in the
 same region as the source datasets when copying across regions.
