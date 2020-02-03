@@ -37,8 +37,6 @@ setuptools.setup(
         "google-cloud-bigquery",
         "google-cloud-storage",
         "google-cloud-logging",
-        "opencensus",
-        "opencensus-ext-stackdriver",
         "pprint",
         "absl-py",
         "boto",
