@@ -23,6 +23,7 @@ import re
 import threading
 import warnings
 from datetime import datetime, date, timedelta, time as dttime
+from io import open
 from time import sleep
 
 import requests
@@ -410,7 +411,7 @@ def generate_create_schema(resourcelist, file_handle):
     )
     objtemplate = jinjaenv.get_template("bqschema.in")
     output = objtemplate.render(resourcelist=resourcelist)
-    print(output.encode('utf-8'), file=file_handle)
+    print(output, file=file_handle)
 
 
 def generate_create_schema_file(filename, resourcelist):
@@ -424,7 +425,7 @@ def generate_create_schema_file(filename, resourcelist):
     :param resourcelist: list of resources to genereate code for
     :return:nothing
     """
-    with open(filename, mode='wb+') as file_handle:
+    with open(filename, mode='w+',encoding="utf-8") as file_handle:
         generate_create_schema(resourcelist, file_handle)
 
 
