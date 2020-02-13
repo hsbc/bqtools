@@ -2522,19 +2522,8 @@ class MultiBQSyncCoordinator(object):
         self.__check_depth = check_depth
         self.__cloud_logging_and_monitoring = cloud_logging_and_monitoring
         if self.cloud_logging_and_monitoring:
-            stats.stats.view_manager.register_view(BQSYNC_TABLESSYNCED_VIEW)
-            stats.stats.view_manager.register_view(BQSYNC_TABLESFAILEDSYNCED_VIEW)
-            stats.stats.view_manager.register_view(BQSYNC_BQMBS_VIEW)
-            stats.stats.view_manager.register_view(BQSYNC_NWMBS_VIEW)
-
-
-            # Create the Stackdriver stats exporter and start exporting metrics in the
-            # background, once every 60 seconds by default.
-            exporter = stats_exporter.new_stats_exporter()
-
-
-            # Register exporter to the view manager.
-            stats.stats.view_manager.register_exporter(exporter)
+            # TODO: Add metrics
+            pass
 
         # create a copy driver for each pair of source destinations
         # note assumption is a set will always be from same source location to destination location
