@@ -2347,7 +2347,9 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                           " To recaclculate a new encryption " \
                           "config the original config has to be passed in and be of class " \
                           "bigquery.EncryptionConfig"
-
+        # if destination dataset has default kms key already, just use the same
+        if self.destination_dataset_impl.default_encryption_configuration is not None:
+            return self.destination_dataset_impl.default_encryption_configuration
         # if a global key or same region we are good to go
         if self.same_region or encryption_config.kms_key_name.find(
                                     "/locations/global/") != -1:
@@ -2421,12 +2423,17 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                 if not (
                         src_dataset.default_encryption_configuration is None and
                         dst_dataset.default_encryption_configuration is None):
-                    if src_dataset.default_encryption_configuration is None:
-                        dst_dataset.default_encryption_configuration = None
-                    else:
+                    # if src_dataset.default_encryption_configuration is None:
+                    #     dst_dataset.default_encryption_configuration = None
+                    # else:
+                    #     dst_dataset.default_encryption_configuration = \
+                    #         self.calculate_target_cmek_config(
+                    #             src_dataset.default_encryption_configuration)
+                    
+                    # equate dest kms config to src only if it's None
+                    if dst_dataset.default_encryption_configuration is None:
                         dst_dataset.default_encryption_configuration = \
-                            self.calculate_target_cmek_config(
-                                src_dataset.default_encryption_configuration)
+                            self.calculate_target_cmek_config(src_dataset.default_encryption_configuration)
                     fields.append("default_encryption_configuration")
 
             try:
