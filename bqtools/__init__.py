@@ -150,6 +150,7 @@ FROM (
       SELECT
         field
       FROM ({mutatedimmutablefields}
+            {joinfields}
             {mutablefieldchanges})
       WHERE
         field IS NOT NULL) ) AS updatedFields,
@@ -190,7 +191,20 @@ TEMPLATEBEFOREORAFTER = """ifnull(later.{fieldname},
 
 TEMPLATEFORIMMUTABLEJOINFIELD = """earlier.{fieldname} = later.{fieldname}
 """
-
+AVOIDLASTSETINCROSSJOIN="""
+    partRowNumber < (SELECT 
+        MAX(partRowNumber)
+    FROM (
+      SELECT
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT {time_expr} AS scantime,
+        FROM
+          `{project}.{dataset}.{table}`)
+    ))
+"""
 class BQJsonEncoder(json.JSONEncoder):
     """ Class to implement encoding for date times, dates and timedelta
 
@@ -1062,15 +1076,15 @@ SELECT
     baseendselectclause = """
     JOIN (
       SELECT
-        {time_expr} as scantime,
-        ROW_NUMBER() OVER(ORDER BY {time_expr}) AS partRowNumber
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
       FROM (
         SELECT
           DISTINCT {time_expr} AS scantime,
         FROM
           `{project}.{dataset}.{table}`)) AS xxrownumbering
     ON
-      {table}.{time_expr} = xxrownumbering.scantime
+      {time_expr} = xxrownumbering.scantime
     """.format(time_expr=time_expr,project=project,dataset=dataset,table=table)
 
     curtablealias = "ta" + table
@@ -1164,6 +1178,9 @@ SELECT
     recurse_diff_base(schema, fieldprefix, curtablealias)
     allfields = fields4diff + fields_update_only
     basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
+    joinfields = ""
+    if len(fields4diff) > 0 and len(fields_update_only) >0:
+        joinfields ="\n   UNION ALL\n"
     auditchangequery = AUDITCHANGESELECT.format(
         mutatedimmutablefields="\n     UNION ALL".join(
             [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
@@ -1176,22 +1193,10 @@ SELECT
         basechangeselect=basechangeselect,
         immutablefieldjoin="AND ".join(
             [TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field) for field in
-             allfields]),
-        avoidlastpredicate="""
-    partRowNumber < (SELECT 
-        MAX(partRowNumber)
-    FROM (
-      SELECT
-        {time_expr} as scantime,
-        ROW_NUMBER() OVER(ORDER BY {time_expr}) AS partRowNumber
-      FROM (
-        SELECT
-          DISTINCT {time_expr} AS scantime,
-        FROM
-          `{project}.{dataset}.{table}`)
-    )
-""".format(time_expr=time_expr, project=project, dataset=dataset, table=table)
-
+             fields4diff]),
+        avoidlastpredicate=AVOIDLASTSETINCROSSJOIN.format(time_expr=time_expr, project=project,
+                                                          dataset=dataset, table=table),
+        joinfields=joinfields
     )
 
     views.append({"name": basediffview, "query": basechangeselect,

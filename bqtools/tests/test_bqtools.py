@@ -2129,7 +2129,7 @@ class TestScannerMethods(unittest.TestCase):
         # for each source run sub tests
         logging.info("Staring tests...")
         # uncomment below if sync tests not required
-        # test_source_configs =[]
+        test_source_configs =[]
         for test_config in test_source_configs:
 
             # run sub test basically an initial copy followed by
@@ -2246,15 +2246,15 @@ LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2
     JOIN (
       SELECT
-        _PARTITIONTIME as scantime,
-        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
       FROM (
         SELECT
           DISTINCT _PARTITIONTIME AS scantime,
         FROM
           `foo.ar.bob`)) AS xxrownumbering
     ON
-      bob._PARTITIONTIME = xxrownumbering.scantime
+      _PARTITIONTIME = xxrownumbering.scantime
     """,
             "description": "View used as basis for diffview:A test schema"},
                      'bobaudit' : {
@@ -2342,6 +2342,7 @@ FROM (
               WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordboolean2"
              ELSE CAST(null as string) END as field
 
+            
             )
       WHERE
         field IS NOT NULL) ) AS updatedFields,
@@ -2388,15 +2389,15 @@ LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2
     JOIN (
       SELECT
-        _PARTITIONTIME as scantime,
-        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
       FROM (
         SELECT
           DISTINCT _PARTITIONTIME AS scantime,
         FROM
           `foo.ar.bob`)) AS xxrownumbering
     ON
-      bob._PARTITIONTIME = xxrownumbering.scantime
+      _PARTITIONTIME = xxrownumbering.scantime
     ) as later 
   FULL OUTER JOIN 
      (#standardSQL
@@ -2419,15 +2420,15 @@ LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2
     JOIN (
       SELECT
-        _PARTITIONTIME as scantime,
-        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
       FROM (
         SELECT
           DISTINCT _PARTITIONTIME AS scantime,
         FROM
           `foo.ar.bob`)) AS xxrownumbering
     ON
-      bob._PARTITIONTIME = xxrownumbering.scantime
+      _PARTITIONTIME = xxrownumbering.scantime
     
      -- avoid last row as full outer join this will attempt to find a row later
      -- that won't exist showing as a false delete
@@ -2436,14 +2437,14 @@ LEFT JOIN UNNEST(tabob.anotherarray) as A2
         MAX(partRowNumber)
     FROM (
       SELECT
-        _PARTITIONTIME as scantime,
-        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
       FROM (
         SELECT
           DISTINCT _PARTITIONTIME AS scantime,
         FROM
           `foo.ar.bob`)
-    )
+    ))
 ) as earlier
   ON
     earlier.partRowNumber = later.partRowNumber -1
