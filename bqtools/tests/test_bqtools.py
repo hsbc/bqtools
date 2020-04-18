@@ -2129,7 +2129,7 @@ class TestScannerMethods(unittest.TestCase):
         # for each source run sub tests
         logging.info("Staring tests...")
         # uncomment below if sync tests not required
-        test_source_configs =[]
+        # test_source_configs =[]
         for test_config in test_source_configs:
 
             # run sub test basically an initial copy followed by
