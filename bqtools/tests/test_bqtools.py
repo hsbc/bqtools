@@ -2128,6 +2128,8 @@ class TestScannerMethods(unittest.TestCase):
 
         # for each source run sub tests
         logging.info("Staring tests...")
+        # uncomment below if sync tests not required
+        # test_source_configs =[]
         for test_config in test_source_configs:
 
             # run sub test basically an initial copy followed by
@@ -2227,6 +2229,7 @@ class TestScannerMethods(unittest.TestCase):
             "query": """#standardSQL
 SELECT
     _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
     ifnull(tabob.integer,0) as integer,
     ifnull(A1.integer3,0) as arrayinteger3,
     ifnull(A1.foo,0.0) as arrayfoo,
@@ -2240,8 +2243,227 @@ SELECT
     ifnull(tabob.record.boolean2,False) as recordboolean2
 from `foo.ar.bob` as tabob
 LEFT JOIN UNNEST(tabob.array) as A1
-LEFT JOIN UNNEST(tabob.anotherarray) as A2""",
+LEFT JOIN UNNEST(tabob.anotherarray) as A2
+    JOIN (
+      SELECT
+        _PARTITIONTIME as scantime,
+        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      bob._PARTITIONTIME = xxrownumbering.scantime
+    """,
             "description": "View used as basis for diffview:A test schema"},
+                     'bobaudit' : {
+                         "query":"""#standardSQL
+SELECT
+  *
+FROM (
+  SELECT
+    ifnull(earlier.scantime,
+      later.scantime) AS scantime,
+    CASE
+      WHEN earlier.scantime IS NULL AND later.scantime IS NOT NULL THEN 1
+      WHEN earlier.scantime IS NOT NULL
+    AND later.scantime IS NULL THEN -1
+    ELSE
+    0
+  END
+    AS action,
+    ARRAY((
+      SELECT
+        field
+      FROM (
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "integer"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arrayinteger3"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arrayfoo"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arraystring3"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "anotherarraytest1"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "anotherarraytest2"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "string"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordappended1"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordfloat"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordstring2"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordboolean2"
+             ELSE CAST(null as string) END as field
+
+            )
+      WHERE
+        field IS NOT NULL) ) AS updatedFields,
+    ifnull(later.integer,
+      earlier.integer) AS integer,
+ifnull(later.arrayinteger3,
+      earlier.arrayinteger3) AS arrayinteger3,
+ifnull(later.arrayfoo,
+      earlier.arrayfoo) AS arrayfoo,
+ifnull(later.arraystring3,
+      earlier.arraystring3) AS arraystring3,
+ifnull(later.anotherarraytest1,
+      earlier.anotherarraytest1) AS anotherarraytest1,
+ifnull(later.anotherarraytest2,
+      earlier.anotherarraytest2) AS anotherarraytest2,
+ifnull(later.string,
+      earlier.string) AS string,
+ifnull(later.recordappended1,
+      earlier.recordappended1) AS recordappended1,
+ifnull(later.recordfloat,
+      earlier.recordfloat) AS recordfloat,
+ifnull(later.recordstring2,
+      earlier.recordstring2) AS recordstring2,
+ifnull(later.recordboolean2,
+      earlier.recordboolean2) AS recordboolean2
+  FROM 
+     (#standardSQL
+SELECT
+    _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
+    ifnull(tabob.integer,0) as integer,
+    ifnull(A1.integer3,0) as arrayinteger3,
+    ifnull(A1.foo,0.0) as arrayfoo,
+    ifnull(A1.string3,"None") as arraystring3,
+    ifnull(A2.test1,0) as anotherarraytest1,
+    ifnull(A2.test2,False) as anotherarraytest2,
+    ifnull(tabob.string,"None") as string,
+    ifnull(tabob.record.appended1,"None") as recordappended1,
+    ifnull(tabob.record.float,0.0) as recordfloat,
+    ifnull(tabob.record.string2,"None") as recordstring2,
+    ifnull(tabob.record.boolean2,False) as recordboolean2
+from `foo.ar.bob` as tabob
+LEFT JOIN UNNEST(tabob.array) as A1
+LEFT JOIN UNNEST(tabob.anotherarray) as A2
+    JOIN (
+      SELECT
+        _PARTITIONTIME as scantime,
+        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      bob._PARTITIONTIME = xxrownumbering.scantime
+    ) as later 
+  FULL OUTER JOIN 
+     (#standardSQL
+SELECT
+    _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
+    ifnull(tabob.integer,0) as integer,
+    ifnull(A1.integer3,0) as arrayinteger3,
+    ifnull(A1.foo,0.0) as arrayfoo,
+    ifnull(A1.string3,"None") as arraystring3,
+    ifnull(A2.test1,0) as anotherarraytest1,
+    ifnull(A2.test2,False) as anotherarraytest2,
+    ifnull(tabob.string,"None") as string,
+    ifnull(tabob.record.appended1,"None") as recordappended1,
+    ifnull(tabob.record.float,0.0) as recordfloat,
+    ifnull(tabob.record.string2,"None") as recordstring2,
+    ifnull(tabob.record.boolean2,False) as recordboolean2
+from `foo.ar.bob` as tabob
+LEFT JOIN UNNEST(tabob.array) as A1
+LEFT JOIN UNNEST(tabob.anotherarray) as A2
+    JOIN (
+      SELECT
+        _PARTITIONTIME as scantime,
+        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      bob._PARTITIONTIME = xxrownumbering.scantime
+    
+     -- avoid last row as full outer join this will attempt to find a row later
+     -- that won't exist showing as a false delete
+     WHERE 
+    partRowNumber < (SELECT 
+        MAX(partRowNumber)
+    FROM (
+      SELECT
+        _PARTITIONTIME as scantime,
+        ROW_NUMBER() OVER(ORDER BY _PARTITIONTIME) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)
+    )
+) as earlier
+  ON
+    earlier.partRowNumber = later.partRowNumber -1
+    AND earlier.integer = later.integer
+AND earlier.arrayinteger3 = later.arrayinteger3
+AND earlier.arrayfoo = later.arrayfoo
+AND earlier.arraystring3 = later.arraystring3
+AND earlier.anotherarraytest1 = later.anotherarraytest1
+AND earlier.anotherarraytest2 = later.anotherarraytest2
+AND earlier.string = later.string
+AND earlier.recordappended1 = later.recordappended1
+AND earlier.recordfloat = later.recordfloat
+AND earlier.recordstring2 = later.recordstring2
+AND earlier.recordboolean2 = later.recordboolean2
+)
+WHERE
+  (action != 0 or array_length(updatedFields) > 0)
+""",
+                         "description":'View calculates what has changed at what time:A test schema'
+                     },
                      'bobdiffday': {
                          "query": """#standardSQL
 SELECT

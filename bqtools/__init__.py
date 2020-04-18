@@ -130,6 +130,66 @@ BQSYNCQUERYLABELS = {
     "bqsyncversion": "bqyncv0_4"
 }
 
+# some template SQL statements to work out audit changes
+AUDITCHANGESELECT = """#standardSQL
+SELECT
+  *
+FROM (
+  SELECT
+    ifnull(earlier.scantime,
+      later.scantime) AS scantime,
+    CASE
+      WHEN earlier.scantime IS NULL AND later.scantime IS NOT NULL THEN 1
+      WHEN earlier.scantime IS NOT NULL
+    AND later.scantime IS NULL THEN -1
+    ELSE
+    0
+  END
+    AS action,
+    ARRAY((
+      SELECT
+        field
+      FROM ({mutatedimmutablefields}
+            {mutablefieldchanges})
+      WHERE
+        field IS NOT NULL) ) AS updatedFields,
+    {beforeorafterfields}
+  FROM 
+     ({basechangeselect}) as later 
+  FULL OUTER JOIN 
+     ({basechangeselect}
+     -- avoid last row as full outer join this will attempt to find a row later
+     -- that won't exist showing as a false delete
+     WHERE {avoidlastpredicate}) as earlier
+  ON
+    earlier.partRowNumber = later.partRowNumber -1
+    AND {immutablefieldjoin})
+WHERE
+  (action != 0 or array_length(updatedFields) > 0)
+"""
+# template for immutable fields
+TEMPLATEMUTATEDIMMUTABLE = """
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "{fieldname}"
+             ELSE CAST(null as string) END as field
+"""
+# template for mutable fields
+TEMPLATEMUTATEDFIELD = """
+        SELECT
+          CASE
+            WHEN earlier.{fieldname} = later.{fieldname} THEN CAST(NULL AS string)
+          ELSE
+          "{fieldname}"
+        END
+          AS field
+"""
+# get the latest field value
+TEMPLATEBEFOREORAFTER = """ifnull(later.{fieldname},
+      earlier.{fieldname}) AS {fieldname}"""
+
+TEMPLATEFORIMMUTABLEJOINFIELD = """earlier.{fieldname} = later.{fieldname}
+"""
 
 class BQJsonEncoder(json.JSONEncoder):
     """ Class to implement encoding for date times, dates and timedelta
@@ -260,7 +320,7 @@ def get_json_struct(jsonobj, template=None):
             elif isinstance(jsonobj[key], six.string_types):
                 value = ""
             elif isinstance(jsonobj[key], six.text_type):
-                value = u""
+                value = ""
             elif isinstance(jsonobj[key], int) or isinstance(jsonobj[key], long):
                 value = 0
             elif isinstance(jsonobj[key], float):
@@ -352,7 +412,7 @@ def get_bq_schema_from_json_repr(jsondict):
     :return: a big query schema
     """
     fields = []
-    for key, data in jsondict.items():
+    for key, data in list(jsondict.items()):
         field = {"name": key}
         if isinstance(data, bool):
             field["type"] = "BOOLEAN"
@@ -786,7 +846,7 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
             schema.extend(toadd)
             if logger is not None:
                 logger.warning(
-                    u"Evolved path = {}, struct={}".format(path + "." + thekey,
+                    "Evolved path = {}, struct={}".format(path + "." + thekey,
                                                            pretty_printer.pformat(
                                                                objtomatch[keyi])))
             evolved = True
@@ -997,7 +1057,21 @@ def gen_diff_views(project,
     basefromclause = "\nfrom `{}` as {}".format(fqtablename, "ta" + table)
     baseselectclause = """#standardSQL
 SELECT
-    {} AS scantime""".format(time_expr)
+    {} AS scantime,
+    xxrownumbering.partRowNumber""".format(time_expr)
+    baseendselectclause = """
+    JOIN (
+      SELECT
+        {time_expr} as scantime,
+        ROW_NUMBER() OVER(ORDER BY {time_expr}) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT {time_expr} AS scantime,
+        FROM
+          `{project}.{dataset}.{table}`)) AS xxrownumbering
+    ON
+      {table}.{time_expr} = xxrownumbering.scantime
+    """.format(time_expr=time_expr,project=project,dataset=dataset,table=table)
 
     curtablealias = "ta" + table
     fieldprefix = ""
@@ -1088,8 +1162,43 @@ SELECT
         return
 
     recurse_diff_base(schema, fieldprefix, curtablealias)
-    views.append({"name": basediffview, "query": basedata['select'] + basedata['from'],
+    allfields = fields4diff + fields_update_only
+    basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
+    auditchangequery = AUDITCHANGESELECT.format(
+        mutatedimmutablefields="\n     UNION ALL".join(
+            [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
+             fields4diff]),
+        mutablefieldchanges="\n    UNION ALL".join(
+            [TEMPLATEMUTATEDFIELD.format(fieldname=field) for field in
+             fields_update_only]),
+        beforeorafterfields=",\n".join([TEMPLATEBEFOREORAFTER.format(fieldname=field) for field in
+                                        allfields]),
+        basechangeselect=basechangeselect,
+        immutablefieldjoin="AND ".join(
+            [TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field) for field in
+             allfields]),
+        avoidlastpredicate="""
+    partRowNumber < (SELECT 
+        MAX(partRowNumber)
+    FROM (
+      SELECT
+        {time_expr} as scantime,
+        ROW_NUMBER() OVER(ORDER BY {time_expr}) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT {time_expr} AS scantime,
+        FROM
+          `{project}.{dataset}.{table}`)
+    )
+""".format(time_expr=time_expr, project=project, dataset=dataset, table=table)
+
+    )
+
+    views.append({"name": basediffview, "query": basechangeselect,
                   "description": "View used as basis for diffview:" + description})
+    views.append({"name": "{}audit".format(table), "query": auditchangequery,
+                  "description": "View calculates what has changed at what time:" + description})
+
     refbasediffview = "{}.{}.{}".format(project, dataset, basediffview)
 
     # Now fields4 diff has field sto compare fieldsnot4diff appear in select but are not compared.
@@ -1102,6 +1211,13 @@ SELECT
     # from diffbaseview as orig with select of orig timestamp
     # from diffbaseview as later with select of later timestamp
     # This template logic is then changed for each interval to actually generate concrete views
+
+
+    mutatedimmutablefields=""
+    mutablefieldchanges=""
+    beforeorafterfields=""
+    basechangeselect=""
+    immutablefieldjoin=""
 
     diffviewselectclause = """#standardSQL
 SELECT
@@ -1224,8 +1340,8 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
     if evolved:
         if logger is not None:
             logger.warning(
-                u"Evolving schema as new field(s) on {}:{}.{} views with * will need "
-                u"reapplying".format(
+                "Evolving schema as new field(s) on {}:{}.{} views with * will need "
+                "reapplying".format(
                     table.project, table.dataset_id, table.table_id))
 
         treq = bigquery.tables().get(projectId=table.project, datasetId=table.dataset_id,
@@ -1318,11 +1434,11 @@ class ViewCompiler(object):
         standard_sql = True
         compiled_sql = sql
         prefix = ""
-        if sql.strip().lower().find(u"#standardsql") == 0:
-            prefix = u"#standardSQL\n"
+        if sql.strip().lower().find("#standardsql") == 0:
+            prefix = "#standardSQL\n"
         else:
             standard_sql = False
-            prefix = u"#legacySQL\n"
+            prefix = "#legacySQL\n"
 
         # get rid of nested comments as they can break this even if in a string in a query
         prefix = prefix + r"""
@@ -1428,7 +1544,7 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 
         if query_job.state == 'DONE':
             if query_job.error_result:
-                errtext = u"Query error {}{}".format(pretty_printer.pformat(query_job.error_result),
+                errtext = "Query error {}{}".format(pretty_printer.pformat(query_job.error_result),
                                                      pretty_printer.pformat(query_job.errors))
                 logger.error(errtext, exc_info=True)
                 raise BQQueryError(
@@ -3964,13 +4080,13 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
                     didnothing = False
                     if job.error_result:
                         logger.error(
-                            u"{}:Error BQ {} Job {} error {}".format(desc, job.job_type, job.job_id,
+                            "{}:Error BQ {} Job {} error {}".format(desc, job.job_type, job.job_id,
                                                                      str(job.error_result)))
                     else:
                         if (job.job_type == "load") and \
                                 job.output_rows is not None:
                             logger.info(
-                                u"{}:BQ {} Job completed:{} rows {}ed {:,d}".format(desc,
+                                "{}:BQ {} Job completed:{} rows {}ed {:,d}".format(desc,
                                                                                     job.job_type,
                                                                                     job.job_id,
                                                                                     job.job_type,
@@ -3981,7 +4097,7 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
 
             else:
                 didnothing = False
-                logger.debug(u"{}:BQ {} Job completed:{}".format(desc, job.job_type, job.job_id))
+                logger.debug("{}:BQ {} Job completed:{}".format(desc, job.job_type, job.job_id))
 
         if didnothing:
             sleep(sleepTime)
