@@ -989,7 +989,8 @@ def gen_diff_views(project,
                    schema,
                    description="",
                    intervals=None,
-                   update_only_fields=None,
+                   hint_fields=None,
+                   hint_mutable_fields=True,
                    time_expr=None,
                    fieldsappend=None):
     """
@@ -1001,7 +1002,7 @@ def gen_diff_views(project,
     :param schema: the schema of the base table
     :param description: a base description for the views
     :param intervals: a list of form []
-    :param update_only_fields:
+    :param hint_fields:
     :param time_expr:
     :param fieldsappend:
     :return:
@@ -1019,8 +1020,8 @@ def gen_diff_views(project,
     if isinstance(fieldsappend, list):
         for fdiffi in fieldsappend:
             fieldsnot4diff.append(fdiffi)
-    if update_only_fields is None:
-        update_only_fields = ['creationTime',
+    if hint_fields is None:
+        hint_fields = ['creationTime',
                               'usage',
                               'title',
                               'description',
@@ -1163,10 +1164,16 @@ SELECT
                 curtablealias = aliasstack.pop()
                 fieldprefix = fieldprefixstack.pop()
                 continue
-            update_only = False
-            for fndi in update_only_fields:
+            if hint_mutable_fields:
+                update_only = False
+            else:
+                update_only = True
+            for fndi in hint_fields:
                 if schema_item.name == fndi:
-                    update_only = True
+                    if hint_mutable_fields:
+                        update_only = True
+                    else:
+                        update_only = False
                     break
             if update_only:
                 fields_update_only.append(fieldprefix + schema_item.name)
