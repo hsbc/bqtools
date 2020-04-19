@@ -1208,7 +1208,7 @@ SELECT
 
     views.append({"name": basediffview, "query": basechangeselect,
                   "description": "View used as basis for diffview:" + description})
-    views.append({"name": "{}audit".format(table), "query": auditchangequery,
+    views.append({"name": "{}diff".format(table), "query": auditchangequery,
                   "description": "View calculates what has changed at what time:" + description})
 
     refbasediffview = "{}.{}.{}".format(project, dataset, basediffview)
