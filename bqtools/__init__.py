@@ -970,8 +970,8 @@ FROM `{0}.{1}.{2}` as ut
 JOIN (
     SELECT 
        id,
-       {4} AS firstSeenTime,
-       {4} AS lastSeenTime,
+       min({4}) AS firstSeenTime,
+       max({4}) AS lastSeenTime,
        COUNT(*) AS numSeen
     FROM `{0}.{1}.{2}`
     GROUP BY 
