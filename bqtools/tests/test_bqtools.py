@@ -2257,7 +2257,7 @@ LEFT JOIN UNNEST(tabob.anotherarray) as A2
       _PARTITIONTIME = xxrownumbering.scantime
     """,
             "description": "View used as basis for diffview:A test schema"},
-                     'bobaudit' : {
+                     'bobdiff' : {
                          "query":"""#standardSQL
 SELECT
   *
