@@ -961,8 +961,6 @@ def recurse_and_add_to_schema(schema, oschema):
 FSLST = """#standardSQL
 SELECT 
      ut.*, 
-     fls.firstSeenScanversion,
-     fls.lastSeenScanVersion,
      fls.firstSeenTime,
      fls.lastSeenTime,
      fls.numSeen
