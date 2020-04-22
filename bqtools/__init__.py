@@ -205,6 +205,8 @@ AVOIDLASTSETINCROSSJOIN="""
           `{project}.{dataset}.{table}`)
     ))
 """
+
+
 class BQJsonEncoder(json.JSONEncoder):
     """ Class to implement encoding for date times, dates and timedelta
 
@@ -1110,37 +1112,37 @@ SELECT
             if skip:
                 continue
             if schema_item.field_type == 'STRING':
-                basefield = ',\n    ifnull({}.{},"None") as {}'.format(
+                basefield = ',\n    ifnull({}.{},"None") as `{}`'.format(
                     curtablealias,
                     schema_item.name,
                     fieldprefix + schema_item.name)
             elif schema_item.field_type == 'BOOLEAN':
-                basefield = ',\n    ifnull({}.{},False) as {}'.format(curtablealias,
+                basefield = ',\n    ifnull({}.{},False) as `{}`'.format(curtablealias,
                                                                       schema_item.name,
                                                                       fieldprefix +
                                                                       schema_item.name)
             elif schema_item.field_type == 'INTEGER':
-                basefield = ',\n    ifnull({}.{},0) as {}'.format(curtablealias, schema_item.name,
+                basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias, schema_item.name,
                                                                   fieldprefix + schema_item.name)
             elif schema_item.field_type == 'FLOAT':
-                basefield = ',\n    ifnull({}.{},0.0) as {}'.format(curtablealias, schema_item.name,
+                basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias, schema_item.name,
                                                                     fieldprefix + schema_item.name)
             elif schema_item.field_type == 'DATE':
-                basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as {}'.format(curtablealias,
+                basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as `{}`'.format(curtablealias,
                                                                                schema_item.name,
                                                                                fieldprefix +
                                                                                schema_item.name)
             elif schema_item.field_type == 'DATETIME':
-                basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as {}'.format(
+                basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
                     curtablealias, schema_item.name,
                     fieldprefix + schema_item.name)
             elif schema_item.field_type == 'TIME':
-                basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as {}'.format(curtablealias,
+                basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as `{}`'.format(curtablealias,
                                                                             schema_item.name,
                                                                             fieldprefix +
                                                                             schema_item.name)
             elif schema_item.field_type == 'BYTES':
-                basefield = ',\n    ifnull({}.{},b"\x00") as {}'.format(curtablealias,
+                basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(curtablealias,
                                                                         schema_item.name,
                                                                         fieldprefix +
                                                                         schema_item.name)
