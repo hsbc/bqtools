@@ -187,7 +187,7 @@ TEMPLATEMUTATEDFIELD = """
 """
 # get the latest field value
 TEMPLATEBEFOREORAFTER = """ifnull(later.{fieldname},
-      earlier.{fieldname}) AS {fieldname}"""
+      earlier.{fieldname}) AS `{fieldname}`"""
 
 TEMPLATEFORIMMUTABLEJOINFIELD = """earlier.{fieldname} = later.{fieldname}
 """
