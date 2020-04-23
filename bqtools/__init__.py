@@ -1372,7 +1372,8 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
     return evolved
 
 
-def create_default_bq_resources(template, basename, project, dataset, location):
+def create_default_bq_resources(template, basename, project, dataset, location,hint_fields=None,
+                   hint_mutable_fields=True):
     """
 
     :param template: a template json object to create a big query schema for
@@ -1404,7 +1405,9 @@ def create_default_bq_resources(template, basename, project, dataset, location):
     views = gen_diff_views(project,
                            dataset,
                            basename,
-                           create_schema(template))
+                           create_schema(template),
+                           hint_fields=hint_fields,
+                           hint_mutable_fields=hint_mutable_fields)
     table = {
         "type": "VIEW",
         "tableReference": {
