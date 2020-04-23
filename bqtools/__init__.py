@@ -172,7 +172,7 @@ WHERE
 TEMPLATEMUTATEDIMMUTABLE = """
          SELECT 
            CASE 
-              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "{fieldname}"
+              WHEN earlier.{fieldname} IS NULL or later.{fieldname} IS NULL then "{fieldname}"
              ELSE CAST(null as string) END as field
 """
 # template for mutable fields
