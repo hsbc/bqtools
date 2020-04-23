@@ -172,7 +172,7 @@ WHERE
 TEMPLATEMUTATEDIMMUTABLE = """
          SELECT 
            CASE 
-              WHEN earlier.{fieldname} IS NULL or later.{fieldname} IS NULL then "{fieldname}"
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "{fieldname}"
              ELSE CAST(null as string) END as field
 """
 # template for mutable fields
@@ -446,7 +446,7 @@ def get_bq_schema_from_json_repr(jsondict):
             field["type"] = "FLOAT"
             field["mode"] = "NULLABLE"
         elif isinstance(data, datetime):
-            field["type"] = "DATETIME"
+            field["type"] = "TIMESTAMP"
             field["mode"] = "NULLABLE"
         elif isinstance(data, date):
             field["type"] = "DATE"
@@ -630,7 +630,7 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
             # https://docs.python.org/3/library/datetime.html subclass
             # relationships
             elif isinstance(sobject, datetime):
-                fieldschema = bigquery.SchemaField(fname, 'DATETIME')
+                fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP')
             elif isinstance(sobject, date):
                 fieldschema = bigquery.SchemaField(fname, 'DATE')
             elif isinstance(sobject, dttime):
@@ -741,7 +741,7 @@ def gen_template_dict(schema):
             value = 0.0
         elif schema_item.field_type == 'STRING':
             value = ""
-        elif schema_item.field_type == 'DATETIME':
+        elif schema_item.field_type == 'TIMESTAMP':
             value = datetime.utcnow()
         elif schema_item.field_type == 'DATE':
             value = date.today()
@@ -1134,6 +1134,10 @@ SELECT
                                                                                schema_item.name)
             elif schema_item.field_type == 'DATETIME':
                 basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
+                    curtablealias, schema_item.name,
+                    fieldprefix + schema_item.name)
+            elif schema_item.field_type == 'TIMESTAMP':
+                basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{}`'.format(
                     curtablealias, schema_item.name,
                     fieldprefix + schema_item.name)
             elif schema_item.field_type == 'TIME':
