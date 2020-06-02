@@ -1594,9 +1594,10 @@ class ExportImportType(object):
     """
     def __init__(self,srctable,dsttable=None):
         """
-        Construct an ExportImportType around  a tbale that describes best format to copy this table across region
+        Construct an ExportImportType around  a table that describes best format to copy this table across region
         how to compress
-        :param srctable:
+        :param srctable: A big query table implementation that is he source of the copy
+        :param dsttable: optional the target definition if not specified specificfication of source used if provided it dominates
         """
         assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
         assert dsttable is None or isinstance(dsttable, bigquery.Table), "Export Import dsttabl Type MUST be constructed with a bigquery.Table object or None"
