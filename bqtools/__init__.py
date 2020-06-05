@@ -1592,12 +1592,13 @@ class ExportImportType(object):
     Class that calculate the export import types that are best to use to copy the table
     passed in initialiser across region.
     """
-    def __init__(self,srctable,dsttable=None):
+    def __init__(self,srctable,dsttable=None,dst_encryption_configuration=None):
         """
         Construct an ExportImportType around  a table that describes best format to copy this table across region
         how to compress
         :param srctable: A big query table implementation that is he source of the copy
         :param dsttable: optional the target definition if not specified specificfication of source used if provided it dominates
+        :param dst_encryption_configuration: if set overrides keys on tables some calc has driven this
         """
         assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
         assert dsttable is None or isinstance(dsttable, bigquery.Table), "Export Import dsttabl Type MUST be constructed with a bigquery.Table object or None"
@@ -1606,6 +1607,10 @@ class ExportImportType(object):
             self.__table = srctable
         else:
             self.__table = dsttable
+
+        self._dst_encryption_configuration = None
+        if dst_encryption_configuration is not None:
+            self._dst_encryption_configuration = dst_encryption_configuration
 
         # detect if any GEOGRAPHY or DATETIME fields
         def _detect_non_avro_types(schema):
@@ -1663,6 +1668,8 @@ class ExportImportType(object):
 
     @property
     def encryption_configuration(self):
+        if self._dst_encryption_configuration is not None:
+            return self._dst_encryption_configuration
         return self.__table.encryption_configuration
 
 
@@ -2235,7 +2242,11 @@ class DefaultBQSyncDriver(object):
         default mecahnism is to use AVRO and SNAPPY as parallel and fast
         If though a schema type notsupported by AVRO fall back to jsonnl and gzip
         """
-        return ExportImportType(srctable,dsttable)
+        dst_encryption_configuration = None
+        if dsttable is None:
+            dst_encryption_configuration = calculate_target_cmek_config(srctable.encryption_configuration)
+
+        return ExportImportType(srctable,dsttable,dst_encryption_configuration)
 
     @property
     def source_project(self):
@@ -2484,9 +2495,11 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                           " To recaclculate a new encryption " \
                           "config the original config has to be passed in and be of class " \
                           "bigquery.EncryptionConfig"
+
         # if destination dataset has default kms key already, just use the same
         if self.destination_dataset_impl.default_encryption_configuration is not None:
             return self.destination_dataset_impl.default_encryption_configuration
+
         # if a global key or same region we are good to go
         if self.same_region or encryption_config.kms_key_name.find(
                                     "/locations/global/") != -1:
@@ -3981,8 +3994,8 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
 
             # this is required but nee dto sort patching of cmek first
             if export_import_type.encryption_configuration is not None:
-                job_config.destination_encryption_configuration = copy_driver. \
-                    calculate_target_cmek_config(export_import_type.encryption_configuration)
+                # no calc encryption MUST exists and MUSt be set in destination format
+                job_config.destination_encryption_configuration = export_import_type.encryption_configuration
 
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
