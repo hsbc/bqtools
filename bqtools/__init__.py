@@ -2244,7 +2244,7 @@ class DefaultBQSyncDriver(object):
         """
         dst_encryption_configuration = None
         if dsttable is None:
-            dst_encryption_configuration = calculate_target_cmek_config(srctable.encryption_configuration)
+            dst_encryption_configuration = self.calculate_target_cmek_config(srctable.encryption_configuration)
 
         return ExportImportType(srctable,dsttable,dst_encryption_configuration)
 
@@ -4298,7 +4298,7 @@ def patch_destination_view(copy_driver, table_name, view_input):
         fields.append("labels")
     if dsttable.view_use_legacy_sql != use_legacy_sql:
         dsttable.view_use_legacy_sql = use_legacy_sql
-        fields.append("use_legacy_sql")
+        fields.append("view_use_legacy_sql")
     if dsttable.view_query != view_input["view_definition"]:
         dsttable.view_query = view_input["view_definition"]
         fields.append("view_query")
