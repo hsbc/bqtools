@@ -2084,7 +2084,7 @@ class TestScannerMethods(unittest.TestCase):
             "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
             "max_last_days": None
         })
-
+        test_source_configs = []
         test_destination_datasets_list = []
         for src_destination in test_source_configs:
             tests = []
@@ -2230,17 +2230,17 @@ class TestScannerMethods(unittest.TestCase):
 SELECT
     _PARTITIONTIME AS scantime,
     xxrownumbering.partRowNumber,
-    ifnull(tabob.integer,0) as integer,
-    ifnull(A1.integer3,0) as arrayinteger3,
-    ifnull(A1.foo,0.0) as arrayfoo,
-    ifnull(A1.string3,"None") as arraystring3,
-    ifnull(A2.test1,0) as anotherarraytest1,
-    ifnull(A2.test2,False) as anotherarraytest2,
-    ifnull(tabob.string,"None") as string,
-    ifnull(tabob.record.appended1,"None") as recordappended1,
-    ifnull(tabob.record.float,0.0) as recordfloat,
-    ifnull(tabob.record.string2,"None") as recordstring2,
-    ifnull(tabob.record.boolean2,False) as recordboolean2
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A1.integer3,0) as `arrayinteger3`,
+    ifnull(A1.foo,0.0) as `arrayfoo`,
+    ifnull(A1.string3,"None") as `arraystring3`,
+    ifnull(A2.test1,0) as `anotherarraytest1`,
+    ifnull(A2.test2,False) as `anotherarraytest2`,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`
 from `foo.ar.bob` as tabob
 LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2
@@ -2347,43 +2347,43 @@ FROM (
       WHERE
         field IS NOT NULL) ) AS updatedFields,
     ifnull(later.integer,
-      earlier.integer) AS integer,
+      earlier.integer) AS `integer`,
 ifnull(later.arrayinteger3,
-      earlier.arrayinteger3) AS arrayinteger3,
+      earlier.arrayinteger3) AS `arrayinteger3`,
 ifnull(later.arrayfoo,
-      earlier.arrayfoo) AS arrayfoo,
+      earlier.arrayfoo) AS `arrayfoo`,
 ifnull(later.arraystring3,
-      earlier.arraystring3) AS arraystring3,
+      earlier.arraystring3) AS `arraystring3`,
 ifnull(later.anotherarraytest1,
-      earlier.anotherarraytest1) AS anotherarraytest1,
+      earlier.anotherarraytest1) AS `anotherarraytest1`,
 ifnull(later.anotherarraytest2,
-      earlier.anotherarraytest2) AS anotherarraytest2,
+      earlier.anotherarraytest2) AS `anotherarraytest2`,
 ifnull(later.string,
-      earlier.string) AS string,
+      earlier.string) AS `string`,
 ifnull(later.recordappended1,
-      earlier.recordappended1) AS recordappended1,
+      earlier.recordappended1) AS `recordappended1`,
 ifnull(later.recordfloat,
-      earlier.recordfloat) AS recordfloat,
+      earlier.recordfloat) AS `recordfloat`,
 ifnull(later.recordstring2,
-      earlier.recordstring2) AS recordstring2,
+      earlier.recordstring2) AS `recordstring2`,
 ifnull(later.recordboolean2,
-      earlier.recordboolean2) AS recordboolean2
+      earlier.recordboolean2) AS `recordboolean2`
   FROM 
      (#standardSQL
 SELECT
     _PARTITIONTIME AS scantime,
     xxrownumbering.partRowNumber,
-    ifnull(tabob.integer,0) as integer,
-    ifnull(A1.integer3,0) as arrayinteger3,
-    ifnull(A1.foo,0.0) as arrayfoo,
-    ifnull(A1.string3,"None") as arraystring3,
-    ifnull(A2.test1,0) as anotherarraytest1,
-    ifnull(A2.test2,False) as anotherarraytest2,
-    ifnull(tabob.string,"None") as string,
-    ifnull(tabob.record.appended1,"None") as recordappended1,
-    ifnull(tabob.record.float,0.0) as recordfloat,
-    ifnull(tabob.record.string2,"None") as recordstring2,
-    ifnull(tabob.record.boolean2,False) as recordboolean2
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A1.integer3,0) as `arrayinteger3`,
+    ifnull(A1.foo,0.0) as `arrayfoo`,
+    ifnull(A1.string3,"None") as `arraystring3`,
+    ifnull(A2.test1,0) as `anotherarraytest1`,
+    ifnull(A2.test2,False) as `anotherarraytest2`,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`
 from `foo.ar.bob` as tabob
 LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2
@@ -2404,17 +2404,17 @@ LEFT JOIN UNNEST(tabob.anotherarray) as A2
 SELECT
     _PARTITIONTIME AS scantime,
     xxrownumbering.partRowNumber,
-    ifnull(tabob.integer,0) as integer,
-    ifnull(A1.integer3,0) as arrayinteger3,
-    ifnull(A1.foo,0.0) as arrayfoo,
-    ifnull(A1.string3,"None") as arraystring3,
-    ifnull(A2.test1,0) as anotherarraytest1,
-    ifnull(A2.test2,False) as anotherarraytest2,
-    ifnull(tabob.string,"None") as string,
-    ifnull(tabob.record.appended1,"None") as recordappended1,
-    ifnull(tabob.record.float,0.0) as recordfloat,
-    ifnull(tabob.record.string2,"None") as recordstring2,
-    ifnull(tabob.record.boolean2,False) as recordboolean2
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A1.integer3,0) as `arrayinteger3`,
+    ifnull(A1.foo,0.0) as `arrayfoo`,
+    ifnull(A1.string3,"None") as `arraystring3`,
+    ifnull(A2.test1,0) as `anotherarraytest1`,
+    ifnull(A2.test2,False) as `anotherarraytest2`,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`
 from `foo.ar.bob` as tabob
 LEFT JOIN UNNEST(tabob.array) as A1
 LEFT JOIN UNNEST(tabob.anotherarray) as A2

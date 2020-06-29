@@ -251,7 +251,7 @@ class NotADictionary(BQTError):
 
     def __init__(self, resource_name):
         super(NotADictionary, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name))
 
 
 class UnexpectedType(BQTError):
@@ -259,7 +259,7 @@ class UnexpectedType(BQTError):
 
     def __init__(self, resource_name):
         super(UnexpectedType, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name))
 
 
 class UnexpectedDict(BQTError):
@@ -559,6 +559,33 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
 
     if fname is not None:
         fname = INVALIDBQFIELDCHARS.sub("_", fname)
+
+    def _create_field(fname, sobject, mode='NULLABLE'):
+        fieldschema = None
+        if isinstance(sobject, bool):
+            fieldschema = bigquery.SchemaField(fname, 'BOOLEAN', mode=mode)
+        elif isinstance(sobject, int) or isinstance(sobject, long):
+            fieldschema = bigquery.SchemaField(fname, 'INTEGER', mode=mode)
+        elif isinstance(sobject, float):
+            fieldschema = bigquery.SchemaField(fname, 'FLOAT', mode=mode)
+        # start adtes and times at lowest levelof hierarchy
+        # https://docs.python.org/3/library/datetime.html subclass
+        # relationships
+        elif isinstance(sobject, datetime):
+            fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP', mode=mode)
+        elif isinstance(sobject, date):
+            fieldschema = bigquery.SchemaField(fname, 'DATE', mode=mode)
+        elif isinstance(sobject, dttime):
+            fieldschema = bigquery.SchemaField(fname, 'TIME', mode=mode)
+        elif isinstance(sobject, six.string_types):
+            fieldschema = bigquery.SchemaField(fname, 'STRING', mode=mode)
+        elif isinstance(sobject, bytes):
+            fieldschema = bigquery.SchemaField(fname, 'BYTES', mode=mode)
+        else:
+            raise UnexpectedType(str(type(sobject)))
+
+        return fieldschema
+
     if isinstance(sobject, list):
         tschema = []
         # if fname is not None:
@@ -575,17 +602,27 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
         if fname is not None and fname not in dschema:
             dschema[fname] = {}
             pdschema = dschema[fname]
+        fieldschema = False
+        sampleobject = None
         for i in sobject:
             # lists must have dictionaries and not base types
             # if not a dictionary skip
-            if isinstance(sobject, dict) or isinstance(sobject, list):
+            if (isinstance(sobject, dict) or isinstance(sobject, list)) and isinstance(i, dict):
                 tschema.extend(create_schema(i, dschema=pdschema))
-        if len(tschema) == 0:
+            else:
+                fieldschema = True
+                sampleobject = i
+                break
+        if len(tschema) == 0 and not fieldschema:
             tschema.append(dummyfield)
         if fname is not None:
-            recordschema = bigquery.SchemaField(fname, 'RECORD', mode='REPEATED', fields=tschema)
-            # recordschema.fields = tuple(tschema)
-            schema.append(recordschema)
+            if not fieldschema:
+                recordschema = bigquery.SchemaField(fname, 'RECORD', mode='REPEATED',
+                                                    fields=tschema)
+                # recordschema.fields = tuple(tschema)
+                schema.append(recordschema)
+            else:
+                schema.append(_create_field(fname, sampleobject, mode="REPEATED"))
         else:
             schema = tschema
 
@@ -620,47 +657,29 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
     else:
         fieldschema = None
         if fname is not None:
-            if isinstance(sobject, bool):
-                fieldschema = bigquery.SchemaField(fname, 'BOOLEAN')
-            elif isinstance(sobject, int):
-                fieldschema = bigquery.SchemaField(fname, 'INTEGER')
-            elif isinstance(sobject, float):
-                fieldschema = bigquery.SchemaField(fname, 'FLOAT')
-            # start adtes and times at lowest levelof hierarchy
-            # https://docs.python.org/3/library/datetime.html subclass
-            # relationships
-            elif isinstance(sobject, datetime):
-                fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP')
-            elif isinstance(sobject, date):
-                fieldschema = bigquery.SchemaField(fname, 'DATE')
-            elif isinstance(sobject, dttime):
-                fieldschema = bigquery.SchemaField(fname, 'TIME')
-            elif isinstance(sobject, six.string_types) or isinstance(sobject, six.text_type):
-                fieldschema = bigquery.SchemaField(fname, 'STRING')
-            elif isinstance(sobject, six.binary_type):
-                fieldschema = bigquery.SchemaField(fname, 'BYTES')
-            elif isinstance(sobject, list):
-                # Big query cannot support non templated lists
-                # Will cause error 'Failed to create table: Field bill is
-                # type RECORD but has no schema'
+            if isinstance(sobject, list):
                 if len(sobject) > 0:
-                    fieldschema = bigquery.SchemaField(fname, 'RECORD')
-                    fieldschema.mode = 'REPEATED'
-                    mylist = sobject
-                    head = mylist[0]
-                    fieldschema.fields = create_schema(head, schema_depth + 1)
+                    if isinstance(sobject[0], dict):
+                        fieldschema = bigquery.SchemaField(fname, 'RECORD')
+                        fieldschema.mode = 'REPEATED'
+                        mylist = sobject
+                        head = mylist[0]
+                        fieldschema.fields = create_schema(head, schema_depth + 1)
+                    else:
+                        fieldschema = _create_field(fname, sobject, mode=REPEATED)
             elif isinstance(sobject, dict):
                 fieldschema = bigquery.SchemaField(fname, 'RECORD')
                 fieldschema.fields = create_schema(sobject, schema_depth + 1)
             else:
-                raise UnexpectedType(str(type(sobject)))
+                fieldschema = _create_field(fname, sobject)
+
             if dschema is not None:
                 dschema["simple"] = True
-            return [fieldschema]
+            return ([fieldschema])
         else:
-            return []
+            return ([])
 
-    return schema
+    return (schema)
 
 
 # convert a dict and with a schema object to assict convert dict into tuple
@@ -728,7 +747,7 @@ def gen_template_dict(schema):
     for schema_item in schema:
         value = None
         if schema_item.field_type == 'RECORD':
-            tvalue = self.gen_template_dict(schema_item.fields)
+            tvalue = gen_template_dict(schema_item.fields)
             if schema_item.mode == 'REPEATED':
                 value = [tvalue]
             else:
