@@ -2084,7 +2084,7 @@ class TestScannerMethods(unittest.TestCase):
             "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
             "max_last_days": None
         })
-        test_source_configs = []
+
         test_destination_datasets_list = []
         for src_destination in test_source_configs:
             tests = []
