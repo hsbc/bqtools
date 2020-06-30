@@ -797,24 +797,26 @@ class TestScannerMethods(unittest.TestCase):
                                                                 'type': 'RECORD'}}}, diff,
                          "Schema evolution not as expected")
 
-    def test_patchbare(self):
-        startschema = bqtools.create_schema(self.schema2startnobare)
-        resultschema = bqtools.create_schema(self.schemaTest2nonbare)
+    # def test_patchbare(self):
+    #     startschema = bqtools.create_schema(self.schema2startnobare)
+    #     resultschema = bqtools.create_schema(self.schemaTest2nonbare)
+    #
+    #     origobject = copy.deepcopy(self.schemaTest2bare)
+    #
+    #     evolved = bqtools.match_and_addtoschema(self.schemaTest2bare, startschema)
+    #     self.assertEqual(evolved, True,
+    #                      "Bare llist and multi dict evolution has not happened as expected")
+    #     diff = DeepDiff(resultschema, startschema, ignore_order=True)
+    #
+    #     print(
+    #         "============================================ mixed arrays added  diff start  "
+    #         "====================================")
+    #     print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+    #     print(
+    #         "============================================ mixed arrays added  diff end  "
+    #         "====================================")
 
-        origobject = copy.deepcopy(self.schemaTest2bare)
 
-        evolved = bqtools.match_and_addtoschema(self.schemaTest2bare, startschema)
-        self.assertEqual(evolved, True,
-                         "Bare llist and multi dict evolution has not happened as expected")
-        diff = DeepDiff(resultschema, startschema, ignore_order=True)
-
-        print(
-            "============================================ mixed arrays added  diff start  "
-            "====================================")
-        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
-        print(
-            "============================================ mixed arrays added  diff end  "
-            "====================================")
 
     def test_patch(self):
 
@@ -1765,6 +1767,703 @@ class TestScannerMethods(unittest.TestCase):
         print(
             "============================================ mixed arrays added  diff end  "
             "====================================")
+
+        bare_schema = bqtools.create_schema(origobject)
+        views = bqtools.gen_diff_views('foo', 'ar', 'bob', bare_schema,
+                                       description="A test schema")
+        expected_views = [
+            {"query":"""#standardSQL
+SELECT
+    _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(A1,"None") as stringarray,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`,
+    ifnull(A2,0) as intarray,
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A3.integer3,0) as `arrayinteger3`,
+    ifnull(A3.foo,0.0) as `arrayfoo`,
+    ifnull(A3.string3,"None") as `arraystring3`,
+    ifnull(A4.a,"None") as `mixArraya`,
+    ifnull(A4.b,"None") as `mixArrayb`,
+    ifnull(A4.d,"None") as `mixArrayd`,
+    ifnull(A4.c,0) as `mixArrayc`
+from `foo.ar.bob` as tabob
+LEFT JOIN UNNEST(tabob.stringarray) as A1
+LEFT JOIN UNNEST(tabob.intarray) as A2
+LEFT JOIN UNNEST(tabob.array) as A3
+LEFT JOIN UNNEST(tabob.mixArray) as A4
+    JOIN (
+      SELECT
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      _PARTITIONTIME = xxrownumbering.scantime
+    """},
+            {"query":"""#standardSQL
+SELECT
+  *
+FROM (
+  SELECT
+    ifnull(earlier.scantime,
+      later.scantime) AS scantime,
+    CASE
+      WHEN earlier.scantime IS NULL AND later.scantime IS NOT NULL THEN 1
+      WHEN earlier.scantime IS NOT NULL
+    AND later.scantime IS NULL THEN -1
+    ELSE
+    0
+  END
+    AS action,
+    ARRAY((
+      SELECT
+        field
+      FROM (
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "string"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "stringarray"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordappended1"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordfloat"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordstring2"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "recordboolean2"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "intarray"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "integer"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arrayinteger3"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arrayfoo"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "arraystring3"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "mixArraya"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "mixArrayb"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "mixArrayd"
+             ELSE CAST(null as string) END as field
+
+     UNION ALL
+         SELECT 
+           CASE 
+              WHEN earlier.scantime IS NULL or later.scantime IS NULL then "mixArrayc"
+             ELSE CAST(null as string) END as field
+
+            
+            )
+      WHERE
+        field IS NOT NULL) ) AS updatedFields,
+    ifnull(later.string,
+      earlier.string) AS `string`,
+ifnull(later.stringarray,
+      earlier.stringarray) AS `stringarray`,
+ifnull(later.recordappended1,
+      earlier.recordappended1) AS `recordappended1`,
+ifnull(later.recordfloat,
+      earlier.recordfloat) AS `recordfloat`,
+ifnull(later.recordstring2,
+      earlier.recordstring2) AS `recordstring2`,
+ifnull(later.recordboolean2,
+      earlier.recordboolean2) AS `recordboolean2`,
+ifnull(later.intarray,
+      earlier.intarray) AS `intarray`,
+ifnull(later.integer,
+      earlier.integer) AS `integer`,
+ifnull(later.arrayinteger3,
+      earlier.arrayinteger3) AS `arrayinteger3`,
+ifnull(later.arrayfoo,
+      earlier.arrayfoo) AS `arrayfoo`,
+ifnull(later.arraystring3,
+      earlier.arraystring3) AS `arraystring3`,
+ifnull(later.mixArraya,
+      earlier.mixArraya) AS `mixArraya`,
+ifnull(later.mixArrayb,
+      earlier.mixArrayb) AS `mixArrayb`,
+ifnull(later.mixArrayd,
+      earlier.mixArrayd) AS `mixArrayd`,
+ifnull(later.mixArrayc,
+      earlier.mixArrayc) AS `mixArrayc`
+  FROM 
+     (#standardSQL
+SELECT
+    _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(A1,"None") as stringarray,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`,
+    ifnull(A2,0) as intarray,
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A3.integer3,0) as `arrayinteger3`,
+    ifnull(A3.foo,0.0) as `arrayfoo`,
+    ifnull(A3.string3,"None") as `arraystring3`,
+    ifnull(A4.a,"None") as `mixArraya`,
+    ifnull(A4.b,"None") as `mixArrayb`,
+    ifnull(A4.d,"None") as `mixArrayd`,
+    ifnull(A4.c,0) as `mixArrayc`
+from `foo.ar.bob` as tabob
+LEFT JOIN UNNEST(tabob.stringarray) as A1
+LEFT JOIN UNNEST(tabob.intarray) as A2
+LEFT JOIN UNNEST(tabob.array) as A3
+LEFT JOIN UNNEST(tabob.mixArray) as A4
+    JOIN (
+      SELECT
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      _PARTITIONTIME = xxrownumbering.scantime
+    ) as later 
+  FULL OUTER JOIN 
+     (#standardSQL
+SELECT
+    _PARTITIONTIME AS scantime,
+    xxrownumbering.partRowNumber,
+    ifnull(tabob.string,"None") as `string`,
+    ifnull(A1,"None") as stringarray,
+    ifnull(tabob.record.appended1,"None") as `recordappended1`,
+    ifnull(tabob.record.float,0.0) as `recordfloat`,
+    ifnull(tabob.record.string2,"None") as `recordstring2`,
+    ifnull(tabob.record.boolean2,False) as `recordboolean2`,
+    ifnull(A2,0) as intarray,
+    ifnull(tabob.integer,0) as `integer`,
+    ifnull(A3.integer3,0) as `arrayinteger3`,
+    ifnull(A3.foo,0.0) as `arrayfoo`,
+    ifnull(A3.string3,"None") as `arraystring3`,
+    ifnull(A4.a,"None") as `mixArraya`,
+    ifnull(A4.b,"None") as `mixArrayb`,
+    ifnull(A4.d,"None") as `mixArrayd`,
+    ifnull(A4.c,0) as `mixArrayc`
+from `foo.ar.bob` as tabob
+LEFT JOIN UNNEST(tabob.stringarray) as A1
+LEFT JOIN UNNEST(tabob.intarray) as A2
+LEFT JOIN UNNEST(tabob.array) as A3
+LEFT JOIN UNNEST(tabob.mixArray) as A4
+    JOIN (
+      SELECT
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)) AS xxrownumbering
+    ON
+      _PARTITIONTIME = xxrownumbering.scantime
+    
+     -- avoid last row as full outer join this will attempt to find a row later
+     -- that won't exist showing as a false delete
+     WHERE 
+    partRowNumber < (SELECT 
+        MAX(partRowNumber)
+    FROM (
+      SELECT
+        scantime,
+        ROW_NUMBER() OVER(ORDER BY scantime) AS partRowNumber
+      FROM (
+        SELECT
+          DISTINCT _PARTITIONTIME AS scantime,
+        FROM
+          `foo.ar.bob`)
+    ))
+) as earlier
+  ON
+    earlier.partRowNumber = later.partRowNumber -1
+    AND earlier.string = later.string
+AND earlier.stringarray = later.stringarray
+AND earlier.recordappended1 = later.recordappended1
+AND earlier.recordfloat = later.recordfloat
+AND earlier.recordstring2 = later.recordstring2
+AND earlier.recordboolean2 = later.recordboolean2
+AND earlier.intarray = later.intarray
+AND earlier.integer = later.integer
+AND earlier.arrayinteger3 = later.arrayinteger3
+AND earlier.arrayfoo = later.arrayfoo
+AND earlier.arraystring3 = later.arraystring3
+AND earlier.mixArraya = later.mixArraya
+AND earlier.mixArrayb = later.mixArrayb
+AND earlier.mixArrayd = later.mixArrayd
+AND earlier.mixArrayc = later.mixArrayc
+)
+WHERE
+  (action != 0 or array_length(updatedFields) > 0)
+"""},
+            {"query":"""#standardSQL
+SELECT
+    o.scantime as origscantime,
+    l.scantime as laterscantime,
+    CASE
+    WHEN o.string IS NULL THEN 'Added'
+    WHEN l.string IS NULL THEN 'Deleted'
+    WHEN o.string = l.string AND o.stringarray = l.stringarray AND o.recordappended1 = l.recordappended1 AND o.recordfloat = l.recordfloat AND o.recordstring2 = l.recordstring2 AND o.recordboolean2 = l.recordboolean2 AND o.intarray = l.intarray AND o.integer = l.integer AND o.arrayinteger3 = l.arrayinteger3 AND o.arrayfoo = l.arrayfoo AND o.arraystring3 = l.arraystring3 AND o.mixArraya = l.mixArraya AND o.mixArrayb = l.mixArrayb AND o.mixArrayd = l.mixArrayd AND o.mixArrayc = l.mixArrayc THEN 'Same'
+    ELSE 'Updated'
+  END AS action,
+    o.string as origstring,
+    l.string as laterstring,
+    case when o.string = l.string then 0 else 1 end as diffstring,
+    o.stringarray as origstringarray,
+    l.stringarray as laterstringarray,
+    case when o.stringarray = l.stringarray then 0 else 1 end as diffstringarray,
+    o.recordappended1 as origrecordappended1,
+    l.recordappended1 as laterrecordappended1,
+    case when o.recordappended1 = l.recordappended1 then 0 else 1 end as diffrecordappended1,
+    o.recordfloat as origrecordfloat,
+    l.recordfloat as laterrecordfloat,
+    case when o.recordfloat = l.recordfloat then 0 else 1 end as diffrecordfloat,
+    o.recordstring2 as origrecordstring2,
+    l.recordstring2 as laterrecordstring2,
+    case when o.recordstring2 = l.recordstring2 then 0 else 1 end as diffrecordstring2,
+    o.recordboolean2 as origrecordboolean2,
+    l.recordboolean2 as laterrecordboolean2,
+    case when o.recordboolean2 = l.recordboolean2 then 0 else 1 end as diffrecordboolean2,
+    o.intarray as origintarray,
+    l.intarray as laterintarray,
+    case when o.intarray = l.intarray then 0 else 1 end as diffintarray,
+    o.integer as originteger,
+    l.integer as laterinteger,
+    case when o.integer = l.integer then 0 else 1 end as diffinteger,
+    o.arrayinteger3 as origarrayinteger3,
+    l.arrayinteger3 as laterarrayinteger3,
+    case when o.arrayinteger3 = l.arrayinteger3 then 0 else 1 end as diffarrayinteger3,
+    o.arrayfoo as origarrayfoo,
+    l.arrayfoo as laterarrayfoo,
+    case when o.arrayfoo = l.arrayfoo then 0 else 1 end as diffarrayfoo,
+    o.arraystring3 as origarraystring3,
+    l.arraystring3 as laterarraystring3,
+    case when o.arraystring3 = l.arraystring3 then 0 else 1 end as diffarraystring3,
+    o.mixArraya as origmixArraya,
+    l.mixArraya as latermixArraya,
+    case when o.mixArraya = l.mixArraya then 0 else 1 end as diffmixArraya,
+    o.mixArrayb as origmixArrayb,
+    l.mixArrayb as latermixArrayb,
+    case when o.mixArrayb = l.mixArrayb then 0 else 1 end as diffmixArrayb,
+    o.mixArrayd as origmixArrayd,
+    l.mixArrayd as latermixArrayd,
+    case when o.mixArrayd = l.mixArrayd then 0 else 1 end as diffmixArrayd,
+    o.mixArrayc as origmixArrayc,
+    l.mixArrayc as latermixArrayc,
+    case when o.mixArrayc = l.mixArrayc then 0 else 1 end as diffmixArrayc
+  FROM (SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime = (
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob`
+    WHERE
+      _PARTITIONTIME < (
+      SELECT
+        MAX(_PARTITIONTIME)
+      FROM
+        `foo.ar.bob`)
+      AND
+      _PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 1 DAY) ) ) o
+FULL OUTER JOIN (
+  SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime =(
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob` )) l
+ON
+    l.string = o.string
+    AND l.stringarray=o.stringarray
+    AND l.recordappended1=o.recordappended1
+    AND l.recordfloat=o.recordfloat
+    AND l.recordstring2=o.recordstring2
+    AND l.recordboolean2=o.recordboolean2
+    AND l.intarray=o.intarray
+    AND l.integer=o.integer
+    AND l.arrayinteger3=o.arrayinteger3
+    AND l.arrayfoo=o.arrayfoo
+    AND l.arraystring3=o.arraystring3
+    AND l.mixArraya=o.mixArraya
+    AND l.mixArrayb=o.mixArrayb
+    AND l.mixArrayd=o.mixArrayd
+    AND l.mixArrayc=o.mixArrayc"""},
+            {"query":"""#standardSQL
+SELECT
+    o.scantime as origscantime,
+    l.scantime as laterscantime,
+    CASE
+    WHEN o.string IS NULL THEN 'Added'
+    WHEN l.string IS NULL THEN 'Deleted'
+    WHEN o.string = l.string AND o.stringarray = l.stringarray AND o.recordappended1 = l.recordappended1 AND o.recordfloat = l.recordfloat AND o.recordstring2 = l.recordstring2 AND o.recordboolean2 = l.recordboolean2 AND o.intarray = l.intarray AND o.integer = l.integer AND o.arrayinteger3 = l.arrayinteger3 AND o.arrayfoo = l.arrayfoo AND o.arraystring3 = l.arraystring3 AND o.mixArraya = l.mixArraya AND o.mixArrayb = l.mixArrayb AND o.mixArrayd = l.mixArrayd AND o.mixArrayc = l.mixArrayc THEN 'Same'
+    ELSE 'Updated'
+  END AS action,
+    o.string as origstring,
+    l.string as laterstring,
+    case when o.string = l.string then 0 else 1 end as diffstring,
+    o.stringarray as origstringarray,
+    l.stringarray as laterstringarray,
+    case when o.stringarray = l.stringarray then 0 else 1 end as diffstringarray,
+    o.recordappended1 as origrecordappended1,
+    l.recordappended1 as laterrecordappended1,
+    case when o.recordappended1 = l.recordappended1 then 0 else 1 end as diffrecordappended1,
+    o.recordfloat as origrecordfloat,
+    l.recordfloat as laterrecordfloat,
+    case when o.recordfloat = l.recordfloat then 0 else 1 end as diffrecordfloat,
+    o.recordstring2 as origrecordstring2,
+    l.recordstring2 as laterrecordstring2,
+    case when o.recordstring2 = l.recordstring2 then 0 else 1 end as diffrecordstring2,
+    o.recordboolean2 as origrecordboolean2,
+    l.recordboolean2 as laterrecordboolean2,
+    case when o.recordboolean2 = l.recordboolean2 then 0 else 1 end as diffrecordboolean2,
+    o.intarray as origintarray,
+    l.intarray as laterintarray,
+    case when o.intarray = l.intarray then 0 else 1 end as diffintarray,
+    o.integer as originteger,
+    l.integer as laterinteger,
+    case when o.integer = l.integer then 0 else 1 end as diffinteger,
+    o.arrayinteger3 as origarrayinteger3,
+    l.arrayinteger3 as laterarrayinteger3,
+    case when o.arrayinteger3 = l.arrayinteger3 then 0 else 1 end as diffarrayinteger3,
+    o.arrayfoo as origarrayfoo,
+    l.arrayfoo as laterarrayfoo,
+    case when o.arrayfoo = l.arrayfoo then 0 else 1 end as diffarrayfoo,
+    o.arraystring3 as origarraystring3,
+    l.arraystring3 as laterarraystring3,
+    case when o.arraystring3 = l.arraystring3 then 0 else 1 end as diffarraystring3,
+    o.mixArraya as origmixArraya,
+    l.mixArraya as latermixArraya,
+    case when o.mixArraya = l.mixArraya then 0 else 1 end as diffmixArraya,
+    o.mixArrayb as origmixArrayb,
+    l.mixArrayb as latermixArrayb,
+    case when o.mixArrayb = l.mixArrayb then 0 else 1 end as diffmixArrayb,
+    o.mixArrayd as origmixArrayd,
+    l.mixArrayd as latermixArrayd,
+    case when o.mixArrayd = l.mixArrayd then 0 else 1 end as diffmixArrayd,
+    o.mixArrayc as origmixArrayc,
+    l.mixArrayc as latermixArrayc,
+    case when o.mixArrayc = l.mixArrayc then 0 else 1 end as diffmixArrayc
+  FROM (SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime = (
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob`
+    WHERE
+      _PARTITIONTIME < (
+      SELECT
+        MAX(_PARTITIONTIME)
+      FROM
+        `foo.ar.bob`)
+      AND
+      _PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 7 DAY) ) ) o
+FULL OUTER JOIN (
+  SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime =(
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob` )) l
+ON
+    l.string = o.string
+    AND l.stringarray=o.stringarray
+    AND l.recordappended1=o.recordappended1
+    AND l.recordfloat=o.recordfloat
+    AND l.recordstring2=o.recordstring2
+    AND l.recordboolean2=o.recordboolean2
+    AND l.intarray=o.intarray
+    AND l.integer=o.integer
+    AND l.arrayinteger3=o.arrayinteger3
+    AND l.arrayfoo=o.arrayfoo
+    AND l.arraystring3=o.arraystring3
+    AND l.mixArraya=o.mixArraya
+    AND l.mixArrayb=o.mixArrayb
+    AND l.mixArrayd=o.mixArrayd
+    AND l.mixArrayc=o.mixArrayc"""},
+            {"query":"""#standardSQL
+SELECT
+    o.scantime as origscantime,
+    l.scantime as laterscantime,
+    CASE
+    WHEN o.string IS NULL THEN 'Added'
+    WHEN l.string IS NULL THEN 'Deleted'
+    WHEN o.string = l.string AND o.stringarray = l.stringarray AND o.recordappended1 = l.recordappended1 AND o.recordfloat = l.recordfloat AND o.recordstring2 = l.recordstring2 AND o.recordboolean2 = l.recordboolean2 AND o.intarray = l.intarray AND o.integer = l.integer AND o.arrayinteger3 = l.arrayinteger3 AND o.arrayfoo = l.arrayfoo AND o.arraystring3 = l.arraystring3 AND o.mixArraya = l.mixArraya AND o.mixArrayb = l.mixArrayb AND o.mixArrayd = l.mixArrayd AND o.mixArrayc = l.mixArrayc THEN 'Same'
+    ELSE 'Updated'
+  END AS action,
+    o.string as origstring,
+    l.string as laterstring,
+    case when o.string = l.string then 0 else 1 end as diffstring,
+    o.stringarray as origstringarray,
+    l.stringarray as laterstringarray,
+    case when o.stringarray = l.stringarray then 0 else 1 end as diffstringarray,
+    o.recordappended1 as origrecordappended1,
+    l.recordappended1 as laterrecordappended1,
+    case when o.recordappended1 = l.recordappended1 then 0 else 1 end as diffrecordappended1,
+    o.recordfloat as origrecordfloat,
+    l.recordfloat as laterrecordfloat,
+    case when o.recordfloat = l.recordfloat then 0 else 1 end as diffrecordfloat,
+    o.recordstring2 as origrecordstring2,
+    l.recordstring2 as laterrecordstring2,
+    case when o.recordstring2 = l.recordstring2 then 0 else 1 end as diffrecordstring2,
+    o.recordboolean2 as origrecordboolean2,
+    l.recordboolean2 as laterrecordboolean2,
+    case when o.recordboolean2 = l.recordboolean2 then 0 else 1 end as diffrecordboolean2,
+    o.intarray as origintarray,
+    l.intarray as laterintarray,
+    case when o.intarray = l.intarray then 0 else 1 end as diffintarray,
+    o.integer as originteger,
+    l.integer as laterinteger,
+    case when o.integer = l.integer then 0 else 1 end as diffinteger,
+    o.arrayinteger3 as origarrayinteger3,
+    l.arrayinteger3 as laterarrayinteger3,
+    case when o.arrayinteger3 = l.arrayinteger3 then 0 else 1 end as diffarrayinteger3,
+    o.arrayfoo as origarrayfoo,
+    l.arrayfoo as laterarrayfoo,
+    case when o.arrayfoo = l.arrayfoo then 0 else 1 end as diffarrayfoo,
+    o.arraystring3 as origarraystring3,
+    l.arraystring3 as laterarraystring3,
+    case when o.arraystring3 = l.arraystring3 then 0 else 1 end as diffarraystring3,
+    o.mixArraya as origmixArraya,
+    l.mixArraya as latermixArraya,
+    case when o.mixArraya = l.mixArraya then 0 else 1 end as diffmixArraya,
+    o.mixArrayb as origmixArrayb,
+    l.mixArrayb as latermixArrayb,
+    case when o.mixArrayb = l.mixArrayb then 0 else 1 end as diffmixArrayb,
+    o.mixArrayd as origmixArrayd,
+    l.mixArrayd as latermixArrayd,
+    case when o.mixArrayd = l.mixArrayd then 0 else 1 end as diffmixArrayd,
+    o.mixArrayc as origmixArrayc,
+    l.mixArrayc as latermixArrayc,
+    case when o.mixArrayc = l.mixArrayc then 0 else 1 end as diffmixArrayc
+  FROM (SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime = (
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob`
+    WHERE
+      _PARTITIONTIME < (
+      SELECT
+        MAX(_PARTITIONTIME)
+      FROM
+        `foo.ar.bob`)
+      AND
+      _PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 30 DAY) ) ) o
+FULL OUTER JOIN (
+  SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime =(
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob` )) l
+ON
+    l.string = o.string
+    AND l.stringarray=o.stringarray
+    AND l.recordappended1=o.recordappended1
+    AND l.recordfloat=o.recordfloat
+    AND l.recordstring2=o.recordstring2
+    AND l.recordboolean2=o.recordboolean2
+    AND l.intarray=o.intarray
+    AND l.integer=o.integer
+    AND l.arrayinteger3=o.arrayinteger3
+    AND l.arrayfoo=o.arrayfoo
+    AND l.arraystring3=o.arraystring3
+    AND l.mixArraya=o.mixArraya
+    AND l.mixArrayb=o.mixArrayb
+    AND l.mixArrayd=o.mixArrayd
+    AND l.mixArrayc=o.mixArrayc"""},
+            {"query":"""#standardSQL
+SELECT
+    o.scantime as origscantime,
+    l.scantime as laterscantime,
+    CASE
+    WHEN o.string IS NULL THEN 'Added'
+    WHEN l.string IS NULL THEN 'Deleted'
+    WHEN o.string = l.string AND o.stringarray = l.stringarray AND o.recordappended1 = l.recordappended1 AND o.recordfloat = l.recordfloat AND o.recordstring2 = l.recordstring2 AND o.recordboolean2 = l.recordboolean2 AND o.intarray = l.intarray AND o.integer = l.integer AND o.arrayinteger3 = l.arrayinteger3 AND o.arrayfoo = l.arrayfoo AND o.arraystring3 = l.arraystring3 AND o.mixArraya = l.mixArraya AND o.mixArrayb = l.mixArrayb AND o.mixArrayd = l.mixArrayd AND o.mixArrayc = l.mixArrayc THEN 'Same'
+    ELSE 'Updated'
+  END AS action,
+    o.string as origstring,
+    l.string as laterstring,
+    case when o.string = l.string then 0 else 1 end as diffstring,
+    o.stringarray as origstringarray,
+    l.stringarray as laterstringarray,
+    case when o.stringarray = l.stringarray then 0 else 1 end as diffstringarray,
+    o.recordappended1 as origrecordappended1,
+    l.recordappended1 as laterrecordappended1,
+    case when o.recordappended1 = l.recordappended1 then 0 else 1 end as diffrecordappended1,
+    o.recordfloat as origrecordfloat,
+    l.recordfloat as laterrecordfloat,
+    case when o.recordfloat = l.recordfloat then 0 else 1 end as diffrecordfloat,
+    o.recordstring2 as origrecordstring2,
+    l.recordstring2 as laterrecordstring2,
+    case when o.recordstring2 = l.recordstring2 then 0 else 1 end as diffrecordstring2,
+    o.recordboolean2 as origrecordboolean2,
+    l.recordboolean2 as laterrecordboolean2,
+    case when o.recordboolean2 = l.recordboolean2 then 0 else 1 end as diffrecordboolean2,
+    o.intarray as origintarray,
+    l.intarray as laterintarray,
+    case when o.intarray = l.intarray then 0 else 1 end as diffintarray,
+    o.integer as originteger,
+    l.integer as laterinteger,
+    case when o.integer = l.integer then 0 else 1 end as diffinteger,
+    o.arrayinteger3 as origarrayinteger3,
+    l.arrayinteger3 as laterarrayinteger3,
+    case when o.arrayinteger3 = l.arrayinteger3 then 0 else 1 end as diffarrayinteger3,
+    o.arrayfoo as origarrayfoo,
+    l.arrayfoo as laterarrayfoo,
+    case when o.arrayfoo = l.arrayfoo then 0 else 1 end as diffarrayfoo,
+    o.arraystring3 as origarraystring3,
+    l.arraystring3 as laterarraystring3,
+    case when o.arraystring3 = l.arraystring3 then 0 else 1 end as diffarraystring3,
+    o.mixArraya as origmixArraya,
+    l.mixArraya as latermixArraya,
+    case when o.mixArraya = l.mixArraya then 0 else 1 end as diffmixArraya,
+    o.mixArrayb as origmixArrayb,
+    l.mixArrayb as latermixArrayb,
+    case when o.mixArrayb = l.mixArrayb then 0 else 1 end as diffmixArrayb,
+    o.mixArrayd as origmixArrayd,
+    l.mixArrayd as latermixArrayd,
+    case when o.mixArrayd = l.mixArrayd then 0 else 1 end as diffmixArrayd,
+    o.mixArrayc as origmixArrayc,
+    l.mixArrayc as latermixArrayc,
+    case when o.mixArrayc = l.mixArrayc then 0 else 1 end as diffmixArrayc
+  FROM (SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime = (
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob`
+    WHERE
+      _PARTITIONTIME < (
+      SELECT
+        MAX(_PARTITIONTIME)
+      FROM
+        `foo.ar.bob`)
+      AND
+      _PARTITIONTIME < TIMESTAMP_SUB(CURRENT_TIMESTAMP(),INTERVAL 14 DAY) ) ) o
+FULL OUTER JOIN (
+  SELECT
+     *
+  FROM
+    `foo.ar.bobdb`
+  WHERE
+    scantime =(
+    SELECT
+      MAX(_PARTITIONTIME)
+    FROM
+      `foo.ar.bob` )) l
+ON
+    l.string = o.string
+    AND l.stringarray=o.stringarray
+    AND l.recordappended1=o.recordappended1
+    AND l.recordfloat=o.recordfloat
+    AND l.recordstring2=o.recordstring2
+    AND l.recordboolean2=o.recordboolean2
+    AND l.intarray=o.intarray
+    AND l.integer=o.integer
+    AND l.arrayinteger3=o.arrayinteger3
+    AND l.arrayfoo=o.arrayfoo
+    AND l.arraystring3=o.arraystring3
+    AND l.mixArraya=o.mixArraya
+    AND l.mixArrayb=o.mixArrayb
+    AND l.mixArrayd=o.mixArrayd
+    AND l.mixArrayc=o.mixArrayc"""}
+        ]
+        for i,vi in enumerate(views):
+            self.assertEqual(vi["query"],expected_views[i]["query"],"Bare list diff  {}".format(i))
 
     def test_patch(self):
 

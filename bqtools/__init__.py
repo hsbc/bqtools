@@ -1084,7 +1084,10 @@ def gen_diff_views(project,
                               'numUsers',
                               'isoCountryCodes',
                               'countries',
-                              'uriDescription']
+                              'uriDescription',
+                              'riskScore',
+                              'controlId',
+                              'resolutionDate']
 
     fqtablename = "{}.{}.{}".format(project, dataset, table)
     basediffview = table + "db"
@@ -1130,63 +1133,105 @@ SELECT
                     break
             if skip:
                 continue
-            if schema_item.field_type == 'STRING':
-                basefield = ',\n    ifnull({}.{},"None") as `{}`'.format(
-                    curtablealias,
-                    schema_item.name,
-                    fieldprefix + schema_item.name)
-            elif schema_item.field_type == 'BOOLEAN':
-                basefield = ',\n    ifnull({}.{},False) as `{}`'.format(curtablealias,
-                                                                      schema_item.name,
-                                                                      fieldprefix +
-                                                                      schema_item.name)
-            elif schema_item.field_type == 'INTEGER':
-                basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias, schema_item.name,
-                                                                  fieldprefix + schema_item.name)
-            elif schema_item.field_type == 'FLOAT':
-                basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias, schema_item.name,
-                                                                    fieldprefix + schema_item.name)
-            elif schema_item.field_type == 'DATE':
-                basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as `{}`'.format(curtablealias,
-                                                                               schema_item.name,
-                                                                               fieldprefix +
-                                                                               schema_item.name)
-            elif schema_item.field_type == 'DATETIME':
-                basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
-                    curtablealias, schema_item.name,
-                    fieldprefix + schema_item.name)
-            elif schema_item.field_type == 'TIMESTAMP':
-                basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{}`'.format(
-                    curtablealias, schema_item.name,
-                    fieldprefix + schema_item.name)
-            elif schema_item.field_type == 'TIME':
-                basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as `{}`'.format(curtablealias,
+            if schema_item.mode != 'REPEATED':
+                if schema_item.field_type == 'STRING':
+                    basefield = ',\n    ifnull({}.{},"None") as `{}`'.format(
+                        curtablealias,
+                        schema_item.name,
+                        fieldprefix + schema_item.name)
+                elif schema_item.field_type == 'BOOLEAN':
+                    basefield = ',\n    ifnull({}.{},False) as `{}`'.format(curtablealias,
+                                                                          schema_item.name,
+                                                                          fieldprefix +
+                                                                          schema_item.name)
+                elif schema_item.field_type == 'INTEGER':
+                    basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias, schema_item.name,
+                                                                      fieldprefix + schema_item.name)
+                elif schema_item.field_type == 'FLOAT':
+                    basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias, schema_item.name,
+                                                                        fieldprefix + schema_item.name)
+                elif schema_item.field_type == 'DATE':
+                    basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as `{}`'.format(curtablealias,
+                                                                                   schema_item.name,
+                                                                                   fieldprefix +
+                                                                                   schema_item.name)
+                elif schema_item.field_type == 'DATETIME':
+                    basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
+                        curtablealias, schema_item.name,
+                        fieldprefix + schema_item.name)
+                elif schema_item.field_type == 'TIMESTAMP':
+                    basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{}`'.format(
+                        curtablealias, schema_item.name,
+                        fieldprefix + schema_item.name)
+                elif schema_item.field_type == 'TIME':
+                    basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as `{}`'.format(curtablealias,
+                                                                                schema_item.name,
+                                                                                fieldprefix +
+                                                                                schema_item.name)
+                elif schema_item.field_type == 'BYTES':
+                    basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(curtablealias,
                                                                             schema_item.name,
                                                                             fieldprefix +
                                                                             schema_item.name)
-            elif schema_item.field_type == 'BYTES':
-                basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(curtablealias,
-                                                                        schema_item.name,
-                                                                        fieldprefix +
-                                                                        schema_item.name)
-            elif schema_item.field_type == 'RECORD':
+                elif schema_item.field_type == 'RECORD':
+                    aliasstack.append(curtablealias)
+                    fieldprefixstack.append(fieldprefix)
+                    fieldprefix = fieldprefix + schema_item.name
+                    if schema_item.mode == 'REPEATED':
+                        oldalias = curtablealias
+                        curtablealias = "A{}".format(basedata['aliasnum'])
+                        basedata['aliasnum'] = basedata['aliasnum'] + 1
+
+                        basedata['from'] = basedata['from'] + "\nLEFT JOIN UNNEST({}) as {}".format(
+                            oldalias + "." + schema_item.name, curtablealias)
+
+                    else:
+                        curtablealias = curtablealias + "." + schema_item.name
+                    recurse_diff_base(schema_item.fields, fieldprefix, curtablealias)
+                    curtablealias = aliasstack.pop()
+                    fieldprefix = fieldprefixstack.pop()
+                    continue
+            else:
                 aliasstack.append(curtablealias)
                 fieldprefixstack.append(fieldprefix)
                 fieldprefix = fieldprefix + schema_item.name
-                if schema_item.mode == 'REPEATED':
-                    oldalias = curtablealias
-                    curtablealias = "A{}".format(basedata['aliasnum'])
-                    basedata['aliasnum'] = basedata['aliasnum'] + 1
-
-                    basedata['from'] = basedata['from'] + "\nLEFT JOIN UNNEST({}) as {}".format(
-                        oldalias + "." + schema_item.name, curtablealias)
-
+                oldalias = curtablealias
+                curtablealias = "A{}".format(basedata['aliasnum'])
+                basedata['aliasnum'] = basedata['aliasnum'] + 1
+                basedata['from'] = basedata['from'] + "\nLEFT JOIN UNNEST({}) as {}".format(
+                    oldalias + "." + schema_item.name, curtablealias)
+                if schema_item.field_type == 'STRING':
+                    basefield = ',\n    ifnull({},"None") as {}'.format(
+                        curtablealias,
+                        fieldprefix)
+                elif schema_item.field_type == 'BOOLEAN':
+                    basefield = ',\n    ifnull({},False) as {}'.format(curtablealias, fieldprefix)
+                elif schema_item.field_type == 'INTEGER':
+                    basefield = ',\n    ifnull({},0) as {}'.format(curtablealias, fieldprefix)
+                elif schema_item.field_type == 'FLOAT':
+                    basefield = ',\n    ifnull({},0.0) as {}'.format(curtablealias, fieldprefix)
+                elif schema_item.field_type == 'DATE':
+                    basefield = ',\n    ifnull({},DATE(1970,1,1)) as {}'.format(curtablealias,
+                                                                                fieldprefix)
+                elif schema_item.field_type == 'DATETIME':
+                    basefield = ',\n    ifnull({},DATETIME(1970,1,1,0,0,0)) as {}'.format(
+                        curtablealias,
+                        fieldprefix)
+                elif schema_item.field_type == 'TIME':
+                    basefield = ',\n    ifnull({},TIME(0,0,0)) as {}'.format(curtablealias,
+                                                                             fieldprefix)
+                elif schema_item.field_type == 'BYTES':
+                    basefield = ',\n    ifnull({},b"\x00") as {}'.format(curtablealias, fieldprefix)
+                if schema_item.field_type == 'RECORD':
+                    recurse_diff_base(schema_item.fields, fieldprefix, curtablealias)
                 else:
-                    curtablealias = curtablealias + "." + schema_item.name
-                recurse_diff_base(schema_item.fields, fieldprefix, curtablealias)
+                    # as an array has to be a diff not an update
+                    fields4diff.append(fieldprefix)
+                    basedata['select'] = basedata['select'] + basefield
                 curtablealias = aliasstack.pop()
                 fieldprefix = fieldprefixstack.pop()
                 continue
+
             if hint_mutable_fields:
                 update_only = False
             else:
