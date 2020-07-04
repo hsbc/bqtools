@@ -50,6 +50,12 @@ WHERE
 
 _ROOT = os.path.abspath(os.path.dirname(__file__))
 
+LEGACY_SQL_PDCTABLEREGEXP = r"\[([a-z0-9\-]+?:[a-zA-Z0-9_]+?)\.[a-zA-Z0-9_]+?\]"
+LEGACY_SQL_PDTCTABLEREGEXP = r"\[([a-z0-9\-]+?:[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+?)?\]"
+STANDARD_SQL_PDCTABLEREGEXP = r"\`([a-z0-9\-]+?\.[a-zA-Z0-9_]+?)\.[a-zA-Z0-9_]+?\`"
+STANDARD_SQL_PDTCTABLEREGEXP = r"\`([a-z0-9\-]+?\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+?)?\`"
+SQL_COMMENT_REGEXP = r'(--.*)|(((/\*)+?[\w\W]+?(\*/)+))'
+
 # get a list of tables for a given dataset in table name
 # sorted by name so can be compared with anpther list
 DSTABLELISTQUERY = """SELECT
@@ -564,7 +570,7 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
         fieldschema = None
         if isinstance(sobject, bool):
             fieldschema = bigquery.SchemaField(fname, 'BOOLEAN', mode=mode)
-        elif isinstance(sobject, int) or isinstance(sobject, long):
+        elif isinstance(sobject, six.integer_types):
             fieldschema = bigquery.SchemaField(fname, 'INTEGER', mode=mode)
         elif isinstance(sobject, float):
             fieldschema = bigquery.SchemaField(fname, 'FLOAT', mode=mode)
@@ -1510,7 +1516,132 @@ def create_default_bq_resources(template, basename, project, dataset, location,h
 
 class ViewCompiler(object):
     def __init__(self):
-        self.view_depth_optimiser = []
+        self.view_depth_optimiser = {}
+        self._add_auth_view = {}
+        self._views = {}
+
+    def add_view_to_process(self,dataset, name, sql):
+        standard_sql = True
+        compiled_sql = sql
+        prefix = ""
+        if sql.strip().lower().find("#standardsql") == 0:
+            prefix = "#standardSQL\n"
+        else:
+            standard_sql = False
+            prefix = "#legacySQL\n"
+
+        splitprojectdataset = ":"
+        repattern = LEGACY_SQL_PDTCTABLEREGEXP
+        no_auth_view = "{}:{}".format(dataset.project, dataset.dataset_id)
+
+        if standard_sql:
+            splitprojectdataset = "."
+            repattern = STANDARD_SQL_PDTCTABLEREGEXP
+
+        key = "{}{}{}.{}".format(dataset.project, splitprojectdataset, dataset.dataset_id,name)
+
+        dependsOn = []
+
+        for project_dataset_table in re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
+                                                            sql).replace("\n", " ")):
+            dependsOn.append(project_dataset_table)
+
+        self._views[key] = {"sql":sql,"dataset":dataset,"name":name,"dependsOn":dependsOn}
+
+    def compile_views(self):
+        for tranche in self.view_tranche:
+            for view in self.view_in_tranche(tranche):
+                view["sql"] = self.compile(view["dataset"],view["name"],view["sql"])
+
+    @property
+    def view_tranche(self):
+        view_tranches = self.plan_view_apply_tranches()
+        for tranche in view_tranches:
+            yield tranche
+
+    def view_in_tranche(self,tranche):
+        for view in sorted(tranche):
+            yield self._views[view]
+
+    def plan_view_apply_tranches(self):
+        view_tranches = []
+
+        max_tranche_depth=0
+        for view in self._views:
+            depend_depth = self.calc_view_dependency_depth(view)
+            self._views[view]["tranche"] = depend_depth
+            if depend_depth > max_tranche_depth:
+                max_tranche_depth = depend_depth
+
+        for tranche in range(max_tranche_depth+1):
+            tranchelist = []
+            for view in self._views:
+                if self._views[view]["tranche"] == tranche:
+                    tranchelist.append(view)
+            view_tranches.append(tranchelist)
+
+        return view_tranches
+
+    def calc_view_dependency_depth(self,name,depth=0):
+        max_depth = depth
+        for depends_on in self._views[name].get("dependsOn",[]):
+            if depends_on in self._views:
+                retdepth = self.calc_view_dependency_depth(depends_on,depth=depth+1)
+                if retdepth  > max_depth:
+                    max_depth = retdepth
+        return max_depth
+        
+    def add_auth_view(self,project_auth,dataset_auth,view_to_authorise):
+        if project_auth not in self._add_auth_view:
+            self._add_auth_view[project_auth] = {}
+        if dataset_auth not in self._add_auth_view[project_auth]:
+            self._add_auth_view[project_auth][dataset_auth] = []
+        found = False
+        for view in self._add_auth_view[project_auth][dataset_auth]:
+            if view_to_authorise["tableId"] == view["tableId"] and view_to_authorise["datasetId"]\
+             == \
+                    view["datasetId"] and view_to_authorise["projectId"] == view["projectId"]:
+                found = True
+                break
+        if not found:
+            self._add_auth_view[project_auth][dataset_auth].append(view_to_authorise)
+
+    def projects_to_authorise_views_in(self):
+        for project in self._add_auth_view:
+            yield project
+
+    def datasets_to_authorise_views_in(self,project):
+        for dataset in self._add_auth_view.get(project,{}):
+            yield dataset
+
+    def update_authorised_view_access(self,project,dataset,current_access_entries):
+        if project in self._add_auth_view:
+            if dataset in self._add_auth_view[project]:
+                expected_auth_view_access = self._add_auth_view[project][dataset]
+                managed_by_view_compiler = {}
+                new_access_entries = []
+
+                # iterate expected authorised views
+                # from this caluclate the project and datsestt we want to reset auth
+                # views for
+                for access in expected_auth_view_access:
+                    if access["projectId"] not in managed_by_view_compiler:
+                        managed_by_view_compiler[access["projectId"]] = {}
+                    if access["datasetId"] not in managed_by_view_compiler[access["projectId"]]:
+                        managed_by_view_compiler[access["projectId"]][access["datasetId"]] = True
+                    new_access_entries.append(bigquery.dataset.AccessEntry(None, 'view', access))
+
+                for current_access in current_access_entries:
+                    if current_access.entity_type == "view":
+                        if current_access.entity_id["projectId"] in managed_by_view_compiler and \
+                                current_access.entity_id["datasetId"] in managed_by_view_compiler[
+                                current_access.entity_id["projectId"]]:
+                            continue
+                    new_access_entries.append(current_access)
+                return new_access_entries
+
+        return current_access_entries
+
 
     def compile(self, dataset, name, sql):
 
@@ -1540,18 +1671,45 @@ class ViewCompiler(object):
 --                            Compiled SQL below
 -- ===================================================================================
 """
-        for i in self.view_depth_optimiser:
-            # relaces a table or view name with sql
-            if not standard_sql:
-                compiled_sql = compiled_sql.replace(
-                    "[" + i + "]",
-                    "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
-                        'unnested'] + ")")
-            else:
-                compiled_sql = compiled_sql.replace(
-                    "`" + i.replace(':', '.') + "`",
-                    "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
-                        'unnested'] + ")")
+
+        splitprojectdataset = ":"
+        repattern = LEGACY_SQL_PDCTABLEREGEXP
+        no_auth_view = "{}:{}".format(dataset.project, dataset.dataset_id)
+
+        if standard_sql:
+            splitprojectdataset = "."
+            repattern = STANDARD_SQL_PDCTABLEREGEXP
+            no_auth_view = "{}.{}".format(dataset.project, dataset.dataset_id)
+
+        # strip off comments before analysing queries for tables used in the query and remove
+        # newlines
+        # to avoid false positives
+        for project_dataset in re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
+                                                            sql).replace("\n", " ")):
+            # if is a table in same dataset nothing to authorise
+            if project_dataset != no_auth_view:
+                project_auth, dataset_auth = project_dataset.split(splitprojectdataset)
+                # spool the view needs authorisation for the authorisation task
+                self.add_auth_view(project_auth, dataset_auth, {
+                    "projectId": dataset.project,
+                    "datasetId": dataset.dataset_id,
+                    "tableId": name
+                })
+                unnest = False
+
+        if unnest:
+            for i in self.view_depth_optimiser:
+                # relaces a table or view name with sql
+                if not standard_sql:
+                    compiled_sql = compiled_sql.replace(
+                        "[" + i + "]",
+                        "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
+                            'unnested'] + ")")
+                else:
+                    compiled_sql = compiled_sql.replace(
+                        "`" + i.replace(':', '.') + "`",
+                        "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
+                            'unnested'] + ")")
 
         self.view_depth_optimiser[dataset.project + ":" + dataset.dataset_id + "." + name] = {
             "raw": sql,

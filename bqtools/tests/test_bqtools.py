@@ -20,6 +20,17 @@ from google.cloud import bigquery, storage, exceptions
 
 import bqtools
 
+class MockDataset:
+    def __init__(self,project,dataset):
+        self._dataset = dataset
+        self._project = project
+    @property
+    def dataset_id(self):
+        return self._dataset
+
+    @property
+    def project(self):
+        return self._project
 
 class TestScannerMethods(unittest.TestCase):
     def load_data(self, file_name):
@@ -2609,6 +2620,72 @@ ON
     #        print("old {}".format(self.pp.pformat(osa)))
     #        print("new {}".format(self.pp.pformat(pschema)))
 
+    def test_compile(self):
+        dataset = MockDataset("a","b")
+        datasetav = MockDataset("a","c")
+        datasetin = MockDataset("a","a")
+        datasetav2 = MockDataset("b","c")
+
+
+        compiler = bqtools.ViewCompiler()
+        # tranche 0 a.b.z
+        compiler.add_view_to_process(dataset,"z","""#standardSQL
+select 1 
+from `a.a.input1`""")
+        # tranche 0 a.b.x
+        compiler.add_view_to_process(dataset, "x", """#standardSQL
+select 1 
+from `a.a.input2`
+where 1=0""")
+        # tranche 1 a.c.x
+        compiler.add_view_to_process(datasetav, "x", """#standardSQL
+select 1 
+from `a.b.x`
+where 1=0""")
+        # tranche 1 a.c.x2
+        compiler.add_view_to_process(datasetav, "x2", """#standardSQL
+select 1 
+from `a.b.z`
+join `a.b.x`
+where 1=0""")
+        # tranche 2 b.c.x3
+        compiler.add_view_to_process(datasetav2, "x3", """#standardSQL
+select 1 
+from `a.b.z`
+join `a.c.x2`
+where 1=0""")
+        # tranches 3 a.c.x4
+        compiler.add_view_to_process(datasetav, "x4", """#standardSQL
+select 1 
+from `a.b.z`
+join `a.c.x`
+join `b.c.x3`
+where 1=0""")
+        tranches = []
+        for view_tranche in compiler.view_tranche:
+            tranches.append(view_tranche)
+
+        self.assertEqual(len(tranches),4,"Unexpcted number of uncompiled view tranches")
+        self.assertEqual(len(tranches[0]),2,"Unexpected number of tranche 0 views")
+        self.assertEqual("a.b.z" in tranches[0], True, "Unexpected view a.b.z missing from tranche 0")
+        self.assertEqual("a.b.x" in tranches[0], True, "Unexpected view a.b.x missing from tranche 0")
+        self.assertEqual(len(tranches[1]), 2, "Unexpected number of tranche 1 views")
+        self.assertEqual("a.c.x" in tranches[1], True, "Unexpected view a.c.x missing from tranche 1")
+        self.assertEqual("a.c.x2" in tranches[1], True, "Unexpected view a.c.x2 missing from tranche 1")
+        self.assertEqual(len(tranches[2]), 1, "Unexpected number of tranche 2 views")
+        self.assertEqual("b.c.x3" in tranches[2], True,
+                         "Unexpected view b.c.x3missing from tranche 2")
+        self.assertEqual(len(tranches[3]), 1, "Unexpected number of tranche 2 views")
+        self.assertEqual("a.c.x4" in tranches[3], True,
+                         "Unexpected view a.c.x4 missing from tranche 2")
+
+        compiler.compile_views()
+
+        for view_tranche in compiler.view_tranche:
+            for view in compiler.view_in_tranche(view_tranche):
+                pass
+
+
     def test_patch2(self):
 
         bqSchema2 = bqtools.create_schema(self.schemaTest2)
@@ -2783,7 +2860,7 @@ ON
             "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
             "max_last_days": None
         })
-
+        test_source_configs = []
         test_destination_datasets_list = []
         for src_destination in test_source_configs:
             tests = []
