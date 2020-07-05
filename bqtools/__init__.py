@@ -30,7 +30,7 @@ import requests
 # handle python 2 and 3 versions of this
 import six
 from google.cloud import bigquery, exceptions, storage
-from jinja2 import Environment, select_autoescape, FileSystemLoader
+from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 from six.moves import queue
 
 # import logging
@@ -197,7 +197,7 @@ TEMPLATEBEFOREORAFTER = """ifnull(later.{fieldname},
 
 TEMPLATEFORIMMUTABLEJOINFIELD = """earlier.{fieldname} = later.{fieldname}
 """
-AVOIDLASTSETINCROSSJOIN="""
+AVOIDLASTSETINCROSSJOIN = """
     partRowNumber < (SELECT 
         MAX(partRowNumber)
     FROM (
@@ -507,7 +507,7 @@ def generate_create_schema_file(filename, resourcelist):
     :param resourcelist: list of resources to genereate code for
     :return:nothing
     """
-    with open(filename, mode='w+',encoding="utf-8") as file_handle:
+    with open(filename, mode='w+', encoding="utf-8") as file_handle:
         generate_create_schema(resourcelist, file_handle)
 
 
@@ -888,8 +888,8 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
             if logger is not None:
                 logger.warning(
                     "Evolved path = {}, struct={}".format(path + "." + thekey,
-                                                           pretty_printer.pformat(
-                                                               objtomatch[keyi])))
+                                                          pretty_printer.pformat(
+                                                              objtomatch[keyi])))
             evolved = True
 
     # If values of keys did need changing change them
@@ -1047,53 +1047,53 @@ def gen_diff_views(project,
             fieldsnot4diff.append(fdiffi)
     if hint_fields is None:
         hint_fields = ['creationTime',
-                              'usage',
-                              'title',
-                              'description',
-                              'preferred',
-                              'documentationLink',
-                              'discoveryLink',
-                              'numLongTermBytes',
-                              'detailedStatus',
-                              'lifecycleState',
-                              'size',
-                              'md5Hash',
-                              'crc32c',
-                              'timeStorageClassUpdated',
-                              'deleted',
-                              'networkIP',
-                              'natIP',
-                              'changePasswordAtNextLogin',
-                              'status',
-                              'state',
-                              'substate',
-                              'stateStartTime',
-                              'metricValue',
-                              'requestedState',
-                              'statusMessage',
-                              'numWorkers',
-                              'currentStateTime',
-                              'currentState',
-                              'lastLoginTime',
-                              'lastViewedByMeDate',
-                              'modifiedByMeDate',
-                              'etag',
-                              'servingStatus',
-                              'lastUpdated',
-                              'updateTime',
-                              'lastModified',
-                              'lastModifiedTime',
-                              'timeStorageClassUpdated',
-                              'updated',
-                              'numRows',
-                              'numBytes',
-                              'numUsers',
-                              'isoCountryCodes',
-                              'countries',
-                              'uriDescription',
-                              'riskScore',
-                              'controlId',
-                              'resolutionDate']
+                       'usage',
+                       'title',
+                       'description',
+                       'preferred',
+                       'documentationLink',
+                       'discoveryLink',
+                       'numLongTermBytes',
+                       'detailedStatus',
+                       'lifecycleState',
+                       'size',
+                       'md5Hash',
+                       'crc32c',
+                       'timeStorageClassUpdated',
+                       'deleted',
+                       'networkIP',
+                       'natIP',
+                       'changePasswordAtNextLogin',
+                       'status',
+                       'state',
+                       'substate',
+                       'stateStartTime',
+                       'metricValue',
+                       'requestedState',
+                       'statusMessage',
+                       'numWorkers',
+                       'currentStateTime',
+                       'currentState',
+                       'lastLoginTime',
+                       'lastViewedByMeDate',
+                       'modifiedByMeDate',
+                       'etag',
+                       'servingStatus',
+                       'lastUpdated',
+                       'updateTime',
+                       'lastModified',
+                       'lastModifiedTime',
+                       'timeStorageClassUpdated',
+                       'updated',
+                       'numRows',
+                       'numBytes',
+                       'numUsers',
+                       'isoCountryCodes',
+                       'countries',
+                       'uriDescription',
+                       'riskScore',
+                       'controlId',
+                       'resolutionDate']
 
     fqtablename = "{}.{}.{}".format(project, dataset, table)
     basediffview = table + "db"
@@ -1114,7 +1114,7 @@ SELECT
           `{project}.{dataset}.{table}`)) AS xxrownumbering
     ON
       {time_expr} = xxrownumbering.scantime
-    """.format(time_expr=time_expr,project=project,dataset=dataset,table=table)
+    """.format(time_expr=time_expr, project=project, dataset=dataset, table=table)
 
     curtablealias = "ta" + table
     fieldprefix = ""
@@ -1147,38 +1147,43 @@ SELECT
                         fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'BOOLEAN':
                     basefield = ',\n    ifnull({}.{},False) as `{}`'.format(curtablealias,
+                                                                            schema_item.name,
+                                                                            fieldprefix +
+                                                                            schema_item.name)
+                elif schema_item.field_type == 'INTEGER':
+                    basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias,
+                                                                        schema_item.name,
+                                                                        fieldprefix +
+                                                                        schema_item.name)
+                elif schema_item.field_type == 'FLOAT':
+                    basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias,
                                                                           schema_item.name,
                                                                           fieldprefix +
                                                                           schema_item.name)
-                elif schema_item.field_type == 'INTEGER':
-                    basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias, schema_item.name,
-                                                                      fieldprefix + schema_item.name)
-                elif schema_item.field_type == 'FLOAT':
-                    basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias, schema_item.name,
-                                                                        fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'DATE':
                     basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as `{}`'.format(curtablealias,
-                                                                                   schema_item.name,
-                                                                                   fieldprefix +
-                                                                                   schema_item.name)
+                                                                                     schema_item.name,
+                                                                                     fieldprefix +
+                                                                                     schema_item.name)
                 elif schema_item.field_type == 'DATETIME':
                     basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
                         curtablealias, schema_item.name,
                         fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'TIMESTAMP':
-                    basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{}`'.format(
+                    basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{' \
+                    '}`'.format(
                         curtablealias, schema_item.name,
                         fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'TIME':
                     basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as `{}`'.format(curtablealias,
-                                                                                schema_item.name,
-                                                                                fieldprefix +
-                                                                                schema_item.name)
+                                                                                  schema_item.name,
+                                                                                  fieldprefix +
+                                                                                  schema_item.name)
                 elif schema_item.field_type == 'BYTES':
                     basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(curtablealias,
-                                                                            schema_item.name,
-                                                                            fieldprefix +
-                                                                            schema_item.name)
+                                                                              schema_item.name,
+                                                                              fieldprefix +
+                                                                              schema_item.name)
                 elif schema_item.field_type == 'RECORD':
                     aliasstack.append(curtablealias)
                     fieldprefixstack.append(fieldprefix)
@@ -1260,8 +1265,8 @@ SELECT
     allfields = fields4diff + fields_update_only
     basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
     joinfields = ""
-    if len(fields4diff) > 0 and len(fields_update_only) >0:
-        joinfields ="\n   UNION ALL\n"
+    if len(fields4diff) > 0 and len(fields_update_only) > 0:
+        joinfields = "\n   UNION ALL\n"
     auditchangequery = AUDITCHANGESELECT.format(
         mutatedimmutablefields="\n     UNION ALL".join(
             [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
@@ -1298,12 +1303,11 @@ SELECT
     # from diffbaseview as later with select of later timestamp
     # This template logic is then changed for each interval to actually generate concrete views
 
-
-    mutatedimmutablefields=""
-    mutablefieldchanges=""
-    beforeorafterfields=""
-    basechangeselect=""
-    immutablefieldjoin=""
+    mutatedimmutablefields = ""
+    mutablefieldchanges = ""
+    beforeorafterfields = ""
+    basechangeselect = ""
+    immutablefieldjoin = ""
 
     diffviewselectclause = """#standardSQL
 SELECT
@@ -1446,8 +1450,8 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
     return evolved
 
 
-def create_default_bq_resources(template, basename, project, dataset, location,hint_fields=None,
-                   hint_mutable_fields=True):
+def create_default_bq_resources(template, basename, project, dataset, location, hint_fields=None,
+                                hint_mutable_fields=True):
     """
 
     :param template: a template json object to create a big query schema for
@@ -1515,14 +1519,31 @@ def create_default_bq_resources(template, basename, project, dataset, location,h
 
 
 class ViewCompiler(object):
-    def __init__(self):
+    def __init__(self,render_dictionary = {}):
         self.view_depth_optimiser = {}
         self._add_auth_view = {}
         self._views = {}
+        self._render_dictionary = render_dictionary
+        self._lock = threading.RLock()
 
-    def add_view_to_process(self,dataset, name, sql):
+    @property
+    def render_dictionary(self):
+        return self._render_dictionary
+
+    @render_dictionary.setter
+    def render_dictionary(self,render_dictionary):
+        self._render_dictionary = render_dictionary
+
+    def render(self,raw_sql):
+        template_for_render = Template(raw_sql)
+        return template_for_render.render(self.render_dictionary)
+
+
+    def add_view_to_process(self, dataset, name, sql, unnest=True, description=None):
+
         standard_sql = True
-        compiled_sql = sql
+        compiled_sql = self.render(sql)
+        sql = compiled_sql
         prefix = ""
         if sql.strip().lower().find("#standardsql") == 0:
             prefix = "#standardSQL\n"
@@ -1538,20 +1559,22 @@ class ViewCompiler(object):
             splitprojectdataset = "."
             repattern = STANDARD_SQL_PDTCTABLEREGEXP
 
-        key = "{}{}{}.{}".format(dataset.project, splitprojectdataset, dataset.dataset_id,name)
+        key = "{}{}{}.{}".format(dataset.project, splitprojectdataset, dataset.dataset_id, name)
 
         dependsOn = []
 
         for project_dataset_table in re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
-                                                            sql).replace("\n", " ")):
+                                                                  sql).replace("\n", " ")):
             dependsOn.append(project_dataset_table)
 
-        self._views[key] = {"sql":sql,"dataset":dataset,"name":name,"dependsOn":dependsOn}
+        self._views[key] = {"sql": sql, "dataset": dataset, "name": name, "dependsOn": dependsOn,
+                            "unnest": unnest, "description": description}
 
     def compile_views(self):
         for tranche in self.view_tranche:
             for view in self.view_in_tranche(tranche):
-                view["sql"] = self.compile(view["dataset"],view["name"],view["sql"])
+                view["sql"] = self.compile(view["dataset"], view["name"], view["sql"],
+                                           unnest=view["unnest"], description=view["description"],rendered=True)
 
     @property
     def view_tranche(self):
@@ -1559,21 +1582,21 @@ class ViewCompiler(object):
         for tranche in view_tranches:
             yield tranche
 
-    def view_in_tranche(self,tranche):
+    def view_in_tranche(self, tranche):
         for view in sorted(tranche):
             yield self._views[view]
 
     def plan_view_apply_tranches(self):
         view_tranches = []
 
-        max_tranche_depth=0
+        max_tranche_depth = 0
         for view in self._views:
             depend_depth = self.calc_view_dependency_depth(view)
             self._views[view]["tranche"] = depend_depth
             if depend_depth > max_tranche_depth:
                 max_tranche_depth = depend_depth
 
-        for tranche in range(max_tranche_depth+1):
+        for tranche in range(max_tranche_depth + 1):
             tranchelist = []
             for view in self._views:
                 if self._views[view]["tranche"] == tranche:
@@ -1582,39 +1605,40 @@ class ViewCompiler(object):
 
         return view_tranches
 
-    def calc_view_dependency_depth(self,name,depth=0):
+    def calc_view_dependency_depth(self, name, depth=0):
         max_depth = depth
-        for depends_on in self._views[name].get("dependsOn",[]):
+        for depends_on in self._views[name].get("dependsOn", []):
             if depends_on in self._views:
-                retdepth = self.calc_view_dependency_depth(depends_on,depth=depth+1)
-                if retdepth  > max_depth:
+                retdepth = self.calc_view_dependency_depth(depends_on, depth=depth + 1)
+                if retdepth > max_depth:
                     max_depth = retdepth
         return max_depth
-        
-    def add_auth_view(self,project_auth,dataset_auth,view_to_authorise):
+
+    def add_auth_view(self, project_auth, dataset_auth, view_to_authorise):
         if project_auth not in self._add_auth_view:
             self._add_auth_view[project_auth] = {}
         if dataset_auth not in self._add_auth_view[project_auth]:
             self._add_auth_view[project_auth][dataset_auth] = []
         found = False
         for view in self._add_auth_view[project_auth][dataset_auth]:
-            if view_to_authorise["tableId"] == view["tableId"] and view_to_authorise["datasetId"]\
-             == \
+            if view_to_authorise["tableId"] == view["tableId"] and view_to_authorise["datasetId"] \
+                    == \
                     view["datasetId"] and view_to_authorise["projectId"] == view["projectId"]:
                 found = True
                 break
         if not found:
             self._add_auth_view[project_auth][dataset_auth].append(view_to_authorise)
 
+    @property
     def projects_to_authorise_views_in(self):
         for project in self._add_auth_view:
             yield project
 
-    def datasets_to_authorise_views_in(self,project):
-        for dataset in self._add_auth_view.get(project,{}):
+    def datasets_to_authorise_views_in(self, project):
+        for dataset in self._add_auth_view.get(project, {}):
             yield dataset
 
-    def update_authorised_view_access(self,project,dataset,current_access_entries):
+    def update_authorised_view_access(self, project, dataset, current_access_entries):
         if project in self._add_auth_view:
             if dataset in self._add_auth_view[project]:
                 expected_auth_view_access = self._add_auth_view[project][dataset]
@@ -1635,15 +1659,17 @@ class ViewCompiler(object):
                     if current_access.entity_type == "view":
                         if current_access.entity_id["projectId"] in managed_by_view_compiler and \
                                 current_access.entity_id["datasetId"] in managed_by_view_compiler[
-                                current_access.entity_id["projectId"]]:
+                            current_access.entity_id["projectId"]]:
                             continue
                     new_access_entries.append(current_access)
                 return new_access_entries
 
         return current_access_entries
 
+    def compile(self, dataset, name, sql, unnest=True, description=None,rendered=False):
 
-    def compile(self, dataset, name, sql):
+        if not rendered:
+            sql = self.render(sql)
 
         standard_sql = True
         compiled_sql = sql
@@ -1698,22 +1724,23 @@ class ViewCompiler(object):
                 unnest = False
 
         if unnest:
-            for i in self.view_depth_optimiser:
-                # relaces a table or view name with sql
-                if not standard_sql:
-                    compiled_sql = compiled_sql.replace(
-                        "[" + i + "]",
-                        "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
-                            'unnested'] + ")")
-                else:
-                    compiled_sql = compiled_sql.replace(
-                        "`" + i.replace(':', '.') + "`",
-                        "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
-                            'unnested'] + ")")
-
-        self.view_depth_optimiser[dataset.project + ":" + dataset.dataset_id + "." + name] = {
-            "raw": sql,
-            "unnested": compiled_sql}
+            with self._lock:
+                for i in self.view_depth_optimiser:
+                    # relaces a table or view name with sql
+                    if not standard_sql:
+                        compiled_sql = compiled_sql.replace(
+                            "[" + i + "]",
+                            "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
+                                'unnested'] + ")")
+                    else:
+                        compiled_sql = compiled_sql.replace(
+                            "`" + i.replace(':', '.') + "`",
+                            "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
+                                'unnested'] + ")")
+        with self._lock:
+            self.view_depth_optimiser[dataset.project + ":" + dataset.dataset_id + "." + name] = {
+                "raw": sql,
+                "unnested": compiled_sql}
 
         # look to keep queriesbelow maximumsize
         if len(prefix + compiled_sql) > 256000:
@@ -1726,22 +1753,24 @@ class ViewCompiler(object):
             # and extra space
             if len(prefix + compiled_sql) > 256000:
                 nsql = ''
-                for line in compiled_sql.split("\n").trim():
+                for line in compiled_sql.split("\n"):
                     # if not a comment
-                    if line[:2] != "--":
-                        ' '.join(line.split())
-                        nsql = nsql + "\n" + line
+                    trimline = line.strip()
+                    if trimline[:2] != "--":
+                        ' '.join(trimline.split())
+                        nsql = nsql + "\n" + trimline
                 compiled_sql = nsql
 
                 # if still too big go back to original sql stripped
                 if len(prefix + compiled_sql) > 256000:
                     if len(sql) > 256000:
                         nsql = ''
-                        for line in origsql.split("\n").trim():
+                        for line in origsql.split("\n"):
+                            trimline = line.strip()
                             # if not a comment
-                            if line[:1] != "#":
+                            if trimline[:1] != "#":
                                 ' '.join(line.split())
-                                nsql = nsql + "\n" + line
+                                nsql = nsql + "\n" + trimline
                                 compiled_sql = nsql
                     else:
                         compiled_sql = sql
@@ -1786,7 +1815,7 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
         if query_job.state == 'DONE':
             if query_job.error_result:
                 errtext = "Query error {}{}".format(pretty_printer.pformat(query_job.error_result),
-                                                     pretty_printer.pformat(query_job.errors))
+                                                    pretty_printer.pformat(query_job.errors))
                 logger.error(errtext, exc_info=True)
                 raise BQQueryError(
                     query, desctext, errtext)
@@ -1809,21 +1838,30 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 
     return
 
+
 class ExportImportType(object):
     """
     Class that calculate the export import types that are best to use to copy the table
     passed in initialiser across region.
     """
-    def __init__(self,srctable,dsttable=None,dst_encryption_configuration=None):
+
+    def __init__(self, srctable, dsttable=None, dst_encryption_configuration=None):
         """
-        Construct an ExportImportType around  a table that describes best format to copy this table across region
+        Construct an ExportImportType around  a table that describes best format to copy this
+        table across region
         how to compress
         :param srctable: A big query table implementation that is he source of the copy
-        :param dsttable: optional the target definition if not specified specificfication of source used if provided it dominates
-        :param dst_encryption_configuration: if set overrides keys on tables some calc has driven this
+        :param dsttable: optional the target definition if not specified specificfication of
+        source used if provided it dominates
+        :param dst_encryption_configuration: if set overrides keys on tables some calc has driven
+        this
         """
-        assert isinstance(srctable,bigquery.Table), "Export Import Type MUST be constructed with a bigquery.Table object"
-        assert dsttable is None or isinstance(dsttable, bigquery.Table), "Export Import dsttabl Type MUST be constructed with a bigquery.Table object or None"
+        assert isinstance(srctable,
+                          bigquery.Table), "Export Import Type MUST be constructed with a " \
+                          "bigquery.Table object"
+        assert dsttable is None or isinstance(dsttable,
+                                              bigquery.Table), "Export Import dsttabl Type MUST " \
+                                              "be constructed with a bigquery.Table object or None"
 
         if dsttable is None:
             self.__table = srctable
@@ -2012,6 +2050,7 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(src_bucket.location,
                                                   source_dataset_impl.location), "Source bucket " \
                                                                                  "location is not " \
+                                                                                 "" \
                                                                                  "" \
                                                                                  "" \
                                                                                  "same as source " \
@@ -2459,16 +2498,17 @@ class DefaultBQSyncDriver(object):
             DefaultBQSyncDriver.threadLocal, self.destination_project + self.destination_dataset,
             None)
 
-    def export_import_format_supported(self,srctable,dsttable=None):
+    def export_import_format_supported(self, srctable, dsttable=None):
         """ Calculates a suitable export import type based upon schema
         default mecahnism is to use AVRO and SNAPPY as parallel and fast
         If though a schema type notsupported by AVRO fall back to jsonnl and gzip
         """
         dst_encryption_configuration = None
         if dsttable is None:
-            dst_encryption_configuration = self.calculate_target_cmek_config(srctable.encryption_configuration)
+            dst_encryption_configuration = self.calculate_target_cmek_config(
+                srctable.encryption_configuration)
 
-        return ExportImportType(srctable,dsttable,dst_encryption_configuration)
+        return ExportImportType(srctable, dsttable, dst_encryption_configuration)
 
     @property
     def source_project(self):
@@ -2714,9 +2754,9 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
     def calculate_target_cmek_config(self, encryption_config):
         assert isinstance(encryption_config,
                           bigquery.EncryptionConfiguration), \
-                          " To recaclculate a new encryption " \
-                          "config the original config has to be passed in and be of class " \
-                          "bigquery.EncryptionConfig"
+            " To recaclculate a new encryption " \
+            "config the original config has to be passed in and be of class " \
+            "bigquery.EncryptionConfig"
 
         # if destination dataset has default kms key already, just use the same
         if self.destination_dataset_impl.default_encryption_configuration is not None:
@@ -2724,7 +2764,7 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
         # if a global key or same region we are good to go
         if self.same_region or encryption_config.kms_key_name.find(
-                                    "/locations/global/") != -1:
+                "/locations/global/") != -1:
             return encryption_config
 
         # if global key can still be used
@@ -2732,8 +2772,8 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
         parts[3] = MAPBQREGION2KMSREGION.get(self.destination_location,
                                              self.destination_location.lower())
 
-        return bigquery.encryption_configuration.EncryptionConfiguration(kms_key_name="/".join(parts))
-
+        return bigquery.encryption_configuration.EncryptionConfiguration(
+            kms_key_name="/".join(parts))
 
     def copy_access_to_destination(self):
         # for those not created compare data structures
@@ -2801,11 +2841,12 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                     #     dst_dataset.default_encryption_configuration = \
                     #         self.calculate_target_cmek_config(
                     #             src_dataset.default_encryption_configuration)
-                    
+
                     # equate dest kms config to src only if it's None
                     if dst_dataset.default_encryption_configuration is None:
                         dst_dataset.default_encryption_configuration = \
-                            self.calculate_target_cmek_config(src_dataset.default_encryption_configuration)
+                            self.calculate_target_cmek_config(
+                                src_dataset.default_encryption_configuration)
                     fields.append("default_encryption_configuration")
 
             try:
@@ -3317,9 +3358,9 @@ class MultiBQSyncCoordinator(object):
                                                                              use_standard_sql)
 
         # handle referenced projects and datsets if any
-        for numproj,src_proj_dataset, src_dataset in enumerate(self.__src_ref_project_datasets):
+        for numproj, src_proj_dataset, src_dataset in enumerate(self.__src_ref_project_datasets):
             dst_proj_dataset = self.__dst_ref_project_datasets[numproj]
-            src_proj,src_dataset = src_proj_dataset.split(".")
+            src_proj, src_dataset = src_proj_dataset.split(".")
             dst_proj, dst_dataset = dst_proj_dataset.split(".")
             view_definition = view_definition.replace(
                 r'`{}.{}.'.format(src_proj, src_dataset),
@@ -3361,7 +3402,6 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      day_partition_deep_check=day_partition_deep_check,
                                      analysis_project=analysis_project)
         self.__coordinater = coordinator
-
 
     @property
     def coordinater(self):
@@ -3407,7 +3447,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         return self.coordinater.create_access_view(entity_id)
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
-        view_defintion = self.coordinater.update_source_view_definition(view_definition, use_standard_sql)
+        view_defintion = self.coordinater.update_source_view_definition(view_definition,
+                                                                        use_standard_sql)
         return view_defintion
 
 
@@ -3465,7 +3506,7 @@ def create_and_copy_table(copy_driver, table_name):
 
         # encryption configs can be location specific
         if encryption_config is not None:
-            destination_table.encryption_config  = \
+            destination_table.encryption_config = \
                 copy_driver.calculate_target_cmek_config(encryption_config)
 
         # and create the table
@@ -3554,7 +3595,8 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     fields = []
     # Only check encryption if missing if its has been updated but exists left as is
     if srctable.encryption_configuration is not None and dsttable.encryption_configuration is None:
-        dsttable.encryption_configuration = copy_driver.calculate_target_cmek_config(srctable.encryption_configuration)
+        dsttable.encryption_configuration = copy_driver.calculate_target_cmek_config(
+            srctable.encryption_configuration)
         fields.append("encryption_configuration")
     if dsttable.description != srctable.description:
         dsttable.description = srctable.description
@@ -3664,7 +3706,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                                                             fields)
             except exceptions.BadRequest as e:
                 if "encryption_configuration" in fields and \
-                    str(e).find("Changing from Default to Cloud KMS encryption key and back must be done via table.copy job") != -1:
+                        str(e).find(
+                            "Changing from Default to Cloud KMS encryption key and back must be "
+                            "done via table.copy job") != -1:
                     pass
                 else:
                     copy_driver.increment_tables_failed_sync()
@@ -3687,20 +3731,20 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         if "encryption_configuration" in fields and \
                 dsttable.num_rows != 0 and \
                 (dsttable.partitioning_type == "DAY" or
-                 dsttable.encryption_configuration is None): # going from none to some needs to
-                                                             # happen via a copy
-                update_table_cmek_via_copy(copy_driver.destination_client,
-                                           dsttable,
-                                           copy_driver.calculate_target_cmek_config(
-                                                    srctable.encryption_configuration),
-                                           copy_driver.get_logger())
-                dsttable = copy_driver.source_client.get_table(dsttable_ref)
+                 dsttable.encryption_configuration is None):  # going from none to some needs to
+            # happen via a copy
+            update_table_cmek_via_copy(copy_driver.destination_client,
+                                       dsttable,
+                                       copy_driver.calculate_target_cmek_config(
+                                           srctable.encryption_configuration),
+                                       copy_driver.get_logger())
+            dsttable = copy_driver.source_client.get_table(dsttable_ref)
 
         if dsttable.num_rows != srctable.num_rows or \
                 dsttable.num_bytes != srctable.num_bytes or \
                 srctable.modified >= dsttable.modified or \
                 copy_driver.table_data_change(srctable, dsttable):
-            export_import_type = copy_driver.export_import_format_supported(srctable,dsttable)
+            export_import_type = copy_driver.export_import_format_supported(srctable, dsttable)
             copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
                                                                        [copy_driver, table_name,
                                                                         srctable.partitioning_type,
@@ -3736,7 +3780,7 @@ def update_table_cmek_via_copy(client,
         srctable, dsttable, job_config=job_config,
         location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
 
-    wait_for_jobs([job],logger=logger)
+    wait_for_jobs([job], logger=logger)
 
     dsttable_id = srctable.table_id
     srctable = dsttable
@@ -3749,9 +3793,10 @@ def update_table_cmek_via_copy(client,
         srctable, dsttable, job_config=job_config,
         location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
 
-    wait_for_jobs([job],logger=logger)
+    wait_for_jobs([job], logger=logger)
 
     client.delete_table(srctable)
+
 
 def remove_deleted_destination_table(copy_driver, table_name):
     """
@@ -3954,7 +3999,7 @@ def copy_table_data(copy_driver,
     # load
     else:
         if partitioning_type != "DAY":
-            cross_region_copy(copy_driver, table_name,export_import_format)
+            cross_region_copy(copy_driver, table_name, export_import_format)
         else:
             source_ended = False
             destination_ended = False
@@ -4217,8 +4262,8 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
             # this is required but nee dto sort patching of cmek first
             if export_import_type.encryption_configuration is not None:
                 # no calc encryption MUST exists and MUSt be set in destination format
-                job_config.destination_encryption_configuration = export_import_type.encryption_configuration
-
+                job_config.destination_encryption_configuration = \
+                export_import_type.encryption_configuration
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
@@ -4336,16 +4381,16 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
                     if job.error_result:
                         logger.error(
                             "{}:Error BQ {} Job {} error {}".format(desc, job.job_type, job.job_id,
-                                                                     str(job.error_result)))
+                                                                    str(job.error_result)))
                     else:
                         if (job.job_type == "load") and \
                                 job.output_rows is not None:
                             logger.info(
                                 "{}:BQ {} Job completed:{} rows {}ed {:,d}".format(desc,
-                                                                                    job.job_type,
-                                                                                    job.job_id,
-                                                                                    job.job_type,
-                                                                                    job.output_rows))
+                                                                                   job.job_type,
+                                                                                   job.job_id,
+                                                                                   job.job_type,
+                                                                                   job.output_rows))
                     if call_back_on_complete is not None and job.job_id in \
                             call_back_on_complete:
                         call_back_on_complete[job.job_id](job)
@@ -4782,8 +4827,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 destination_ended = True
 
             while not source_ended or not destination_ended:
-                if not destination_ended and not source_ended and destination_row["routine_name"]\
-                 == \
+                if not destination_ended and not source_ended and destination_row["routine_name"] \
+                        == \
                         source_row["routine_name"]:
                     if copy_driver.istableincluded(source_row["routine_name"]):
                         copy_driver.increment_routines_synced()
