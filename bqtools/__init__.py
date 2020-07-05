@@ -1668,12 +1668,18 @@ class ViewCompiler(object):
 
     def compile(self, dataset, name, sql, unnest=True, description=None,rendered=False):
 
+        # if already done don't do again
+        key = dataset.project + ":" + dataset.dataset_id + "." + name
+        if key in self.view_depth_optimiser:
+            return self.view_depth_optimiser[key]["prefix"] + self.view_depth_optimiser[key]["unnested"]
+
         if not rendered:
             sql = self.render(sql)
 
         standard_sql = True
         compiled_sql = sql
         prefix = ""
+
         if sql.strip().lower().find("#standardsql") == 0:
             prefix = "#standardSQL\n"
         else:
@@ -1737,10 +1743,6 @@ class ViewCompiler(object):
                             "`" + i.replace(':', '.') + "`",
                             "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
                                 'unnested'] + ")")
-        with self._lock:
-            self.view_depth_optimiser[dataset.project + ":" + dataset.dataset_id + "." + name] = {
-                "raw": sql,
-                "unnested": compiled_sql}
 
         # look to keep queriesbelow maximumsize
         if len(prefix + compiled_sql) > 256000:
@@ -1774,6 +1776,12 @@ class ViewCompiler(object):
                                 compiled_sql = nsql
                     else:
                         compiled_sql = sql
+
+        with self._lock:
+            self.view_depth_optimiser[key] = {
+                "raw": sql,
+                "unnested": compiled_sql,
+                "prefix":prefix}
 
         return prefix + compiled_sql
 
