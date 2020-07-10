@@ -55,3 +55,10 @@ Demonstrates some of power of tools via [bqsync](https://github.com/MikeMoore63/
     
 Or you can find the source for this [here](https://github.com/MikeMoore63/bqtools/blob/master/bqtools/bqsync)
     
+Also provides means to handle views across environments supports SQL views based upon Jinja templates. So you can "configure" views for different environments.
+
+Provides support for calculating view dependencies such views can be applied in parallel tranches.
+
+Provides support for calculating authorised views based on set of views "compiled"
+
+Compilation flattens views to lower view depth but automatically does not flatten authorised views to keep access to data tight as feasible.
