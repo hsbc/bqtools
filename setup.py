@@ -16,7 +16,7 @@ with open("README.md", "r", encoding='utf-8') as fh:
 
 setuptools.setup(
     name='bqtools-json',
-    version='0.4.84',
+    version='0.4.85',
     author="Mike Moore",
     author_email="z_z_zebra@yahoo.com",
     description="A Big Query json utility package",
@@ -37,7 +37,6 @@ setuptools.setup(
         "google-cloud-bigquery",
         "google-cloud-storage",
         "google-cloud-logging",
-        "pprint",
         "absl-py",
         "boto",
         "deepdiff>=3.3.0",
