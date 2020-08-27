@@ -1132,12 +1132,7 @@ SELECT
         pretty_printer = pprint.PrettyPrinter(indent=4)
 
         for schema_item in schema:
-            skip = False
-            for fndi in fieldsnot4diff:
-                if schema_item.name == fndi:
-                    skip = True
-                    break
-            if skip:
+            if schema_item.name  in fieldsnot4diff:
                 continue
             if schema_item.mode != 'REPEATED':
                 if schema_item.field_type == 'STRING':
@@ -1247,13 +1242,11 @@ SELECT
                 update_only = False
             else:
                 update_only = True
-            for fndi in hint_fields:
-                if schema_item.name == fndi:
-                    if hint_mutable_fields:
-                        update_only = True
-                    else:
-                        update_only = False
-                    break
+            if schema_item.name in hint_fields:
+                if hint_mutable_fields:
+                    update_only = True
+                else:
+                    update_only = False
             if update_only:
                 fields_update_only.append(fieldprefix + schema_item.name)
             else:
