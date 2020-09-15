@@ -207,6 +207,7 @@ def main(argv):
                                                    table_view_filter=FLAGS.table_or_views_to_copy,
                                                    table_or_views_to_exclude=FLAGS.table_or_views_to_exclude,
                                                    latest_date=latest_date,
+                                                   copy_access=FLAGS.copy_access,
                                                    days_before_latest_day=FLAGS.days_before_latest_day,
                                                    day_partition_deep_check=FLAGS.do_day_partition_deep_check,
                                                    analysis_project=FLAGS.analysis_project,
