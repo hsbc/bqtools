@@ -48,6 +48,28 @@ WHERE
   FROM
     `{0}.{1}.{2}`)"""
 
+OPTHEADVIEW = """#standardSQL
+WITH
+  latest_partition AS (
+  SELECT
+    *,
+    _PARTITIONTIME AS _ptDate
+  FROM
+    `{0}.{1}.{2}`
+  WHERE
+    _PARTITIONTIME >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {3} DAY))
+SELECT
+  * except(_ptDate)
+FROM
+  latest_partition
+WHERE
+  _ptDate = (
+  SELECT
+    MAX( _ptDate)
+  FROM
+    latest_partition)
+"""
+
 _ROOT = os.path.abspath(os.path.dirname(__file__))
 
 LEGACY_SQL_PDCTABLEREGEXP = r"\[([a-z0-9\-]+?:[a-zA-Z0-9_]+?)\.[a-zA-Z0-9_]+?\]"
@@ -1444,7 +1466,7 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
 
 
 def create_default_bq_resources(template, basename, project, dataset, location, hint_fields=None,
-                                hint_mutable_fields=True):
+                                hint_mutable_fields=True,optheaddays=None):
     """
 
     :param template: a template json object to create a big query schema for
@@ -1479,6 +1501,12 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
                            create_schema(template),
                            hint_fields=hint_fields,
                            hint_mutable_fields=hint_mutable_fields)
+
+    head_view_format = HEADVIEW
+    # if a max days look back is given use it to optimise bytes in the head view
+    if optheaddays is not None:
+        head_view_format = OPTHEADVIEW
+
     table = {
         "type": "VIEW",
         "tableReference": {
@@ -1487,7 +1515,7 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
             "tableId": "{}head".format(basename)
         },
         "view": {
-            "query": HEADVIEW.format(project, dataset, basename),
+            "query": head_view_format.format(project, dataset, basename,optheaddays),
             "useLegacySql": False
 
         }
@@ -2505,9 +2533,11 @@ class DefaultBQSyncDriver(object):
         If though a schema type notsupported by AVRO fall back to jsonnl and gzip
         """
         dst_encryption_configuration = None
-        if dsttable is None:
+        if dsttable is None and srctable.encryption_configuration is not None:
             dst_encryption_configuration = self.calculate_target_cmek_config(
                 srctable.encryption_configuration)
+        else:
+            dst_encryption_configuration = None
 
         return ExportImportType(srctable, dsttable, dst_encryption_configuration)
 
@@ -2754,7 +2784,7 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
     def calculate_target_cmek_config(self, encryption_config):
         assert isinstance(encryption_config,
-                          bigquery.EncryptionConfiguration), \
+                          bigquery.EncryptionConfiguration) or self.destination_dataset_impl.default_encryption_configuration is not None, \
             " To recaclculate a new encryption " \
             "config the original config has to be passed in and be of class " \
             "bigquery.EncryptionConfig"
