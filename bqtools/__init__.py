@@ -2784,13 +2784,15 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
     def calculate_target_cmek_config(self, encryption_config):
         assert isinstance(encryption_config,
-                          bigquery.EncryptionConfiguration) or self.destination_dataset_impl.default_encryption_configuration is not None, \
+                          bigquery.EncryptionConfiguration) or (getattr(self.destination_dataset_impl, "default_encryption_configuration", None) is not None \
+            and self.destination_dataset_impl.default_encryption_configuration is not None), \
             " To recaclculate a new encryption " \
             "config the original config has to be passed in and be of class " \
             "bigquery.EncryptionConfig"
 
         # if destination dataset has default kms key already, just use the same
-        if self.destination_dataset_impl.default_encryption_configuration is not None:
+        if (getattr(self.destination_dataset_impl, "default_encryption_configuration", None) is not None \
+            and self.destination_dataset_impl.default_encryption_configuration is not None):
             return self.destination_dataset_impl.default_encryption_configuration
 
         # if a global key or same region we are good to go
@@ -3520,7 +3522,8 @@ def create_and_copy_table(copy_driver, table_name):
         destination_table.description = srctable.description
         destination_table.friendly_name = srctable.friendly_name
         destination_table.labels = srctable.labels
-        destination_table.partitioning_type = srctable.partitioning_type
+        if srctable.partitioning_type is not None:
+            destination_table.partitioning_type = srctable.partitioning_type
         if srctable.partition_expiration is not None:
             destination_table.partition_expiration = srctable.partition_expiration
         destination_table.expires = srctable.expires
@@ -3601,7 +3604,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
     # if different table types thats not good need to sort
     # drop and recreate this handles TABLE->MODEL and MODEL->TABLE
-    if dsttable.table_type != srctable.table_type:
+    if dsttable.table_type != srctable.table_type\
+            or srctable.partitioning_type is None and dsttable.partitioning_type is not None \
+            or srctable.partitioning_type != dsttable.partitioning_type:
         copy_driver.get_logger().warning(
             "Change in table_type source {0}.{1}.{tablename} is type {2} and destination {3}.{"
             "4}.{tablename} is type {5}".format(
