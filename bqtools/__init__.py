@@ -1734,6 +1734,22 @@ class ViewCompiler(object):
             repattern = STANDARD_SQL_PDCTABLEREGEXP
             no_auth_view = "{}.{}".format(dataset.project, dataset.dataset_id)
 
+        # we unnest everything to get to underlying authorised views
+        # needed
+        with self._lock:
+            for i in self.view_depth_optimiser:
+                # relaces a table or view name with sql
+                if not standard_sql:
+                    compiled_sql = compiled_sql.replace(
+                        "[" + i + "]",
+                        "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
+                            'unnested'] + ")")
+                else:
+                    compiled_sql = compiled_sql.replace(
+                        "`" + i.replace(':', '.') + "`",
+                        "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
+                            'unnested'] + ")")
+
         # strip off comments before analysing queries for tables used in the query and remove
         # newlines
         # to avoid false positives
@@ -1750,20 +1766,9 @@ class ViewCompiler(object):
                 })
                 unnest = False
 
-        if unnest:
-            with self._lock:
-                for i in self.view_depth_optimiser:
-                    # relaces a table or view name with sql
-                    if not standard_sql:
-                        compiled_sql = compiled_sql.replace(
-                            "[" + i + "]",
-                            "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
-                                'unnested'] + ")")
-                    else:
-                        compiled_sql = compiled_sql.replace(
-                            "`" + i.replace(':', '.') + "`",
-                            "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
-                                'unnested'] + ")")
+        # and we put back original if we want to hide logic
+        if not unnest:
+            compiled_sql = sql
 
         # look to keep queriesbelow maximumsize
         if len(prefix + compiled_sql) > 256000:
