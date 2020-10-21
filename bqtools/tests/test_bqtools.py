@@ -2626,6 +2626,23 @@ ON
         datasetin = MockDataset("a","a")
         datasetav2 = MockDataset("b","c")
 
+        """
+        graphviz  http://www.webgraphviz.com/
+        to visualize what this does
+        digraph G {
+          "a.b.z"
+          "a.b.x"
+          "a.c.x" -> "a.b.x"
+          "a.c.x2"-> "a.b.z"
+          "a.c.x2"-> "a.b.x"
+          "b.c.x3" -> "a.b.z" 
+          "b.c.x3" -> "a.c.x2" 
+          "a.c.x4" -> "a.b.z"
+          "a.c.x4" -> "a.c.x"
+          "a.c.x4" -> "b.c.x3"
+        }
+        """
+
 
         compiler = bqtools.ViewCompiler()
         # tranche 0 a.b.z
