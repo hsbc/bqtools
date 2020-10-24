@@ -1753,8 +1753,9 @@ class ViewCompiler(object):
         # strip off comments before analysing queries for tables used in the query and remove
         # newlines
         # to avoid false positives
-        for project_dataset in re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
-                                                            sql).replace("\n", " ")):
+        # use set to get unique values
+        for project_dataset in set(re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
+                                                            compiled_sql).replace("\n", " "))):
             # if is a table in same dataset nothing to authorise
             if project_dataset != no_auth_view:
                 project_auth, dataset_auth = project_dataset.split(splitprojectdataset)
