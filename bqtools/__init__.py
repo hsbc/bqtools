@@ -314,7 +314,16 @@ class BQQueryError(BQTError):
     CUSTOM_ERROR_MESSAGE = 'GCP API Error: unable to processquery {0} from GCP:\n{1}'
 
     def __init__(self, query, desc, e):
-        super(ApiExecutionError, self).__init__(
+        super(BQQueryError, self).__init__(
+            self.CUSTOM_ERROR_MESSAGE.format(query, e))
+
+
+class BQHittingQueryGenerationQuotaLimit(BQTError):
+    """Error for Query generation error."""
+    CUSTOM_ERROR_MESSAGE = 'BQTools code generation error {0}'
+
+    def __init__(self, query, desc, e):
+        super(BQHittingQueryGenerationQuotaLimit, self).__init__(
             self.CUSTOM_ERROR_MESSAGE.format(query, e))
 
 
@@ -1149,6 +1158,11 @@ SELECT
         for schema_item in schema:
             if schema_item.name in fieldsnot4diff:
                 continue
+            # field names can only be up o 128 characters long
+            if len(fieldprefix + schema_item.name) > 127:
+                raise BQHittingQueryGenerationQuotaLimit(
+                    "Field alias is over 128 bytes {} aborting code generation".format(
+                        fieldprefix + schema_item.name))
             if schema_item.mode != 'REPEATED':
                 if schema_item.field_type == 'STRING':
                     basefield = ',\n    ifnull({}.{},"None") as `{}`'.format(
@@ -1269,62 +1283,72 @@ SELECT
             basedata['select'] = basedata['select'] + basefield
         return
 
-    recurse_diff_base(schema, fieldprefix, curtablealias)
-    allfields = fields4diff + fields_update_only
-    basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
-    joinfields = ""
-    if len(fields4diff) > 0 and len(fields_update_only) > 0:
-        joinfields = "\n   UNION ALL\n"
-    auditchangequery = AUDITCHANGESELECT.format(
-        mutatedimmutablefields="\n     UNION ALL".join(
-            [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
-             fields4diff]),
-        mutablefieldchanges="\n    UNION ALL".join(
-            [TEMPLATEMUTATEDFIELD.format(fieldname=field) for field in
-             fields_update_only]),
-        beforeorafterfields=",\n".join([TEMPLATEBEFOREORAFTER.format(fieldname=field) for field in
-                                        allfields]),
-        basechangeselect=basechangeselect,
-        immutablefieldjoin="AND ".join(
-            [TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field) for field in
-             fields4diff]),
-        avoidlastpredicate=AVOIDLASTSETINCROSSJOIN.format(time_expr=time_expr, project=project,
-                                                          dataset=dataset, table=table),
-        joinfields=joinfields
-    )
+    try:
+        recurse_diff_base(schema, fieldprefix, curtablealias)
+        allfields = fields4diff + fields_update_only
+        basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
+        joinfields = ""
+        if len(fields4diff) > 0 and len(fields_update_only) > 0:
+            joinfields = "\n   UNION ALL\n"
+        auditchangequery = AUDITCHANGESELECT.format(
+            mutatedimmutablefields="\n     UNION ALL".join(
+                [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
+                 fields4diff]),
+            mutablefieldchanges="\n    UNION ALL".join(
+                [TEMPLATEMUTATEDFIELD.format(fieldname=field) for field in
+                 fields_update_only]),
+            beforeorafterfields=",\n".join(
+                [TEMPLATEBEFOREORAFTER.format(fieldname=field) for field in
+                 allfields]),
+            basechangeselect=basechangeselect,
+            immutablefieldjoin="AND ".join(
+                [TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field) for field in
+                 fields4diff]),
+            avoidlastpredicate=AVOIDLASTSETINCROSSJOIN.format(time_expr=time_expr, project=project,
+                                                              dataset=dataset, table=table),
+            joinfields=joinfields
+        )
 
-    views.append({"name": basediffview, "query": basechangeselect,
-                  "description": "View used as basis for diffview:" + description})
-    views.append({"name": "{}diff".format(table), "query": auditchangequery,
-                  "description": "View calculates what has changed at what time:" + description})
+        if len(basechangeselect) > 256 * 1024:
+            raise BQHittingQueryGenerationQuotaLimit(
+                "Query {} is over 256kb".format(basechangeselect))
+        views.append({"name": basediffview, "query": basechangeselect,
+                      "description": "View used as basis for diffview:" + description})
+        if len(auditchangequery) > 256 * 1024:
+            raise BQHittingQueryGenerationQuotaLimit(
+                "Query {} is over 256kb".format(auditchangequery))
+        views.append({"name": "{}diff".format(table), "query": auditchangequery,
+                      "description": "View calculates what has changed at what time:" +
+                                     description})
 
-    refbasediffview = "{}.{}.{}".format(project, dataset, basediffview)
+        refbasediffview = "{}.{}.{}".format(project, dataset, basediffview)
 
-    # Now fields4 diff has field sto compare fieldsnot4diff appear in select but are not compared.
-    # basic logic is like below
-    #
-    # select action (a case statement but "Added","Deleted","Sames")
-    # origfield,
-    # lastfield,
-    # if origfield != lastfield diff = 1 else diff = 0
-    # from diffbaseview as orig with select of orig timestamp
-    # from diffbaseview as later with select of later timestamp
-    # This template logic is then changed for each interval to actually generate concrete views
+        # Now fields4 diff has field sto compare fieldsnot4diff appear in select but are not
+        # compared.
+        # basic logic is like below
+        #
+        # select action (a case statement but "Added","Deleted","Sames")
+        # origfield,
+        # lastfield,
+        # if origfield != lastfield diff = 1 else diff = 0
+        # from diffbaseview as orig with select of orig timestamp
+        # from diffbaseview as later with select of later timestamp
+        # This template logic is then changed for each interval to actually generate concrete views
 
-    mutatedimmutablefields = ""
-    mutablefieldchanges = ""
-    beforeorafterfields = ""
-    basechangeselect = ""
-    immutablefieldjoin = ""
+        mutatedimmutablefields = ""
+        mutablefieldchanges = ""
+        beforeorafterfields = ""
+        basechangeselect = ""
+        immutablefieldjoin = ""
 
-    diffviewselectclause = """#standardSQL
+        diffviewselectclause = """#standardSQL
 SELECT
     o.scantime as origscantime,
     l.scantime as laterscantime,"""
-    diffieldclause = ""
-    diffcaseclause = ""
-    diffwhereclause = ""
-    diffviewfromclause = """
+        diffieldclause = ""
+        diffcaseclause = ""
+        diffwhereclause = ""
+        diffviewfromclause = """
   FROM (SELECT
      *
   FROM
@@ -1357,63 +1381,81 @@ FULL OUTER JOIN (
 ON
 """.format(refbasediffview, time_expr, project, dataset, table)
 
-    for f4i in fields4diff:
-        diffieldclause = diffieldclause + \
-                         ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
-                         "when o.{} = l.{} " \
-                         "then 0 else 1 end as diff{}".format(
-                             f4i, f4i, f4i, f4i, f4i, f4i, f4i)
-        if diffcaseclause == "":
-            diffcaseclause = """
+        for f4i in fields4diff:
+            diffieldclause = diffieldclause + \
+                             ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
+                             "when o.{} = l.{} " \
+                             "then 0 else 1 end as diff{}".format(
+                                 f4i, f4i, f4i, f4i, f4i, f4i, f4i)
+            if diffcaseclause == "":
+                diffcaseclause = """
     CASE
     WHEN o.{} IS NULL THEN 'Added'
     WHEN l.{} IS NULL THEN 'Deleted'
     WHEN o.{} = l.{} """.format(f4i, f4i, f4i, f4i)
-        else:
+            else:
+                diffcaseclause = diffcaseclause + "AND o.{} = l.{} ".format(f4i, f4i)
+
+            if diffwhereclause == "":
+                diffwhereclause = "    l.{} = o.{}".format(f4i, f4i)
+            else:
+                diffwhereclause = diffwhereclause + "\n    AND l.{}=o.{}".format(f4i, f4i)
+
+        for f4i in fields_update_only:
+            diffieldclause = diffieldclause + \
+                             ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
+                             "" \
+                             "when o.{} = l.{} " \
+                             "then 0 else 1 end as diff{}".format(
+                                 f4i, f4i, f4i, f4i, f4i, f4i, f4i)
             diffcaseclause = diffcaseclause + "AND o.{} = l.{} ".format(f4i, f4i)
-        if diffwhereclause == "":
-            diffwhereclause = "    l.{} = o.{}".format(f4i, f4i)
-        else:
-            diffwhereclause = diffwhereclause + "\n    AND l.{}=o.{}".format(f4i, f4i)
 
-    for f4i in fields_update_only:
-        diffieldclause = diffieldclause + \
-                         ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
-                         "" \
-                         "when o.{} = l.{} " \
-                         "then 0 else 1 end as diff{}".format(
-                             f4i, f4i, f4i, f4i, f4i, f4i, f4i)
-        diffcaseclause = diffcaseclause + "AND o.{} = l.{} ".format(f4i, f4i)
-
-    diffcaseclause = diffcaseclause + """THEN 'Same'
+        diffcaseclause = diffcaseclause + """THEN 'Same'
     ELSE 'Updated'
   END AS action"""
 
-    for intervali in intervals:
-        for keyi in intervali:
-            viewname = table + "diff" + keyi
-            viewdescription = "Diff of {} of underlying table {} description: {}".format(
-                keyi,
-                table,
-                description)
-            views.append({"name": viewname,
-                          "query": diffviewselectclause + diffcaseclause + diffieldclause +
-                                   diffviewfromclause.replace(
-                                       "%interval%", intervali[keyi]) + diffwhereclause,
-                          "description": viewdescription})
+        for intervali in intervals:
+            for keyi in intervali:
+                view_name = table + "diff" + keyi
+                view_description = "Diff of {} of underlying table {} description: {}".format(
+                    keyi,
+                    table,
+                    description)
+                diff_query = diffviewselectclause + \
+                             diffcaseclause + \
+                             diffieldclause + \
+                             diffviewfromclause.replace("%interval%", intervali[keyi]) + \
+                             diffwhereclause
 
-    ## look for id in top level fields if exists create first seen and last seen views
-    for i in schema:
-        if i.name == "id":
-            fsv = FSLST.format(project, dataset, table, "firstSeenTime", time_expr)
-            fsd = FSLSTDT.format("first", project, dataset, table)
-            lsv = FSLST.format(project, dataset, table, "lastSeenTime", time_expr)
-            lsd = FSLSTDT.format("last", project, dataset, table)
-            views.append({"name": table + "fs",
-                          "query": fsv, "description": fsd})
-            views.append({"name": table + "ls",
-                          "query": lsv, "description": lsd})
-            break
+            if len(diff_query) > 256 * 1024:
+                raise BQHittingQueryGenerationQuotaLimit(
+                    "Query {} is over 256kb".format(diff_query))
+
+            views.append({"name": view_name,
+                          "query": diff_query,
+                          "description": view_description})
+
+        ## look for id in top level fields if exists create first seen and last seen views
+        for i in schema:
+            if i.name == "id":
+                fsv = FSLST.format(project, dataset, table, "firstSeenTime", time_expr)
+                fsd = FSLSTDT.format("first", project, dataset, table)
+                lsv = FSLST.format(project, dataset, table, "lastSeenTime", time_expr)
+                lsd = FSLSTDT.format("last", project, dataset, table)
+
+                if len(fsv) > 256 * 1024:
+                    raise BQHittingQueryGenerationQuotaLimit("Query {} is over 256kb".format(fsv))
+
+                views.append({"name": table + "fs",
+                              "query": fsv, "description": fsd})
+                if len(lsv) > 256 * 1024:
+                    raise BQHittingQueryGenerationQuotaLimit("Query {} is over 256kb".format(lsv))
+                views.append({"name": table + "ls",
+                              "query": lsv, "description": lsd})
+                break
+
+    except BQHittingQueryGenerationQuotaLimit as e:
+        pass
 
     return views
 
@@ -1696,7 +1738,7 @@ class ViewCompiler(object):
         standard_sql = True
         # standard sql limit 1Mb
         # https://cloud.google.com/bigquery/quotas
-        max_query_size = 1024 * 1024
+        max_query_size = 256 * 1024
         compiled_sql = sql
         prefix = ""
 
@@ -2093,6 +2135,8 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(src_bucket.location,
                                                   source_dataset_impl.location), "Source bucket " \
                                                                                  "location is not " \
+                                                                                 "" \
+                                                                                 "" \
                                                                                  "" \
                                                                                  "" \
                                                                                  "" \
