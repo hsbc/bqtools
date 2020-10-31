@@ -1694,12 +1694,16 @@ class ViewCompiler(object):
             sql = self.render(sql)
 
         standard_sql = True
+        # standard sql limit 1Mb
+        # https://cloud.google.com/bigquery/quotas
+        max_query_size = 1024 * 1024
         compiled_sql = sql
         prefix = ""
 
         if sql.strip().lower().find("#standardsql") == 0:
             prefix = "#standardSQL\n"
         else:
+            max_query_size = 256 * 1024
             standard_sql = False
             prefix = "#legacySQL\n"
 
@@ -1768,7 +1772,7 @@ class ViewCompiler(object):
             compiled_sql = sql
 
         # look to keep queriesbelow maximumsize
-        if len(prefix + compiled_sql) > 256000:
+        if len(prefix + compiled_sql) > max_query_size:
             # strip out comment
             if standard_sql:
                 prefix = "#standardSQL\n"
@@ -1776,7 +1780,7 @@ class ViewCompiler(object):
                 prefix = "#legacySQL\n"
             # if still too big strip out other comments
             # and extra space
-            if len(prefix + compiled_sql) > 256000:
+            if len(prefix + compiled_sql) > max_query_size:
                 nsql = ''
                 for line in compiled_sql.split("\n"):
                     # if not a comment
@@ -1787,8 +1791,8 @@ class ViewCompiler(object):
                 compiled_sql = nsql
 
                 # if still too big go back to original sql stripped
-                if len(prefix + compiled_sql) > 256000:
-                    if len(sql) > 256000:
+                if len(prefix + compiled_sql) > max_query_size:
+                    if len(sql) > max_query_size:
                         nsql = ''
                         for line in sql.split("\n"):
                             trimline = line.strip()
