@@ -3607,17 +3607,18 @@ ON
             actual = vi['query'].splitlines(1)
 
             diff = difflib.unified_diff(expected, actual)
+            diffstr = ''.join(diff)
 
-            print(''.join(diff))
+            print(diffstr)
 
             self.assertEqual(len(vi['query']), len(vexpected[vi['name']]['query']),
                              "Query len for view {} is not equal to what is expected\n:{}:\n:{"
-                             "}:".format(
+                             "}: diff{}".format(
                                  vi['name'],
                                  vi['query'],
                                  vexpected[
                                      vi['name']][
-                                         'query']))
+                                         'query'],diffstr))
             self.assertEqual(vi['query'], vexpected[vi['name']]['query'],
                              "Query for view {} is not equal to what is expected\n:{}:\n:{"
                              "}:".format(
