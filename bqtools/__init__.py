@@ -420,7 +420,7 @@ def get_json_struct(jsonobj, template=None):
 def clean_json_for_bq(anobject):
     """
 
-    :param object to be converted to big query json compatible format:
+    :param anobject: to be converted to big query json compatible format:
     :return: cleaned object
     """
     newobj = {}
@@ -552,8 +552,6 @@ def dataset_exists(client, dataset_reference):
         return True
     except NotFound:
         return False
-    except exceptions.NotFound:
-        return False
 
 
 def table_exists(client, table_reference):
@@ -574,8 +572,6 @@ def table_exists(client, table_reference):
         client.get_table(table_reference)
         return True
     except NotFound:
-        return False
-    except exceptions.NotFound:
         return False
 
 
@@ -793,7 +789,7 @@ def gen_template_dict(schema):
         elif schema_item.field_type == 'DATE':
             value = date.today()
         elif schema_item.field_type == 'TIME':
-            value = datetime.time()
+            value = datetime.utcnow().time()
         elif schema_item.field_type == 'BYTES':
             value = b'\x00'
         else:
@@ -936,14 +932,11 @@ def do_bare_type_list(adict, key, detail, logger=None):
     "foo":[{"detail":1},{"detail":2},{"detail":3}]
 
     Args:
-        self: The gscanner object instance
         adict: The dictionary the key of the list object is in. This object is modified so mutated.
         key: The key name of the list if it does not exist this does nothing. if the item at the
         key is not a list it
         does nothing if length of list is 0 this does nothing
         detail: The name of the field in new sub dictionary of each object
-        logerror: boolean if true and list objects are already a dictionary will log trace and
-        key that ha dthe issue
 
 
     Returns:
@@ -1154,7 +1147,7 @@ SELECT
         pretty_printer = pprint.PrettyPrinter(indent=4)
 
         for schema_item in schema:
-            if schema_item.name  in fieldsnot4diff:
+            if schema_item.name in fieldsnot4diff:
                 continue
             if schema_item.mode != 'REPEATED':
                 if schema_item.field_type == 'STRING':
@@ -1188,7 +1181,7 @@ SELECT
                         fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'TIMESTAMP':
                     basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{' \
-                    '}`'.format(
+                                '}`'.format(
                         curtablealias, schema_item.name,
                         fieldprefix + schema_item.name)
                 elif schema_item.field_type == 'TIME':
@@ -1466,7 +1459,7 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
 
 
 def create_default_bq_resources(template, basename, project, dataset, location, hint_fields=None,
-                                hint_mutable_fields=True,optheaddays=None):
+                                hint_mutable_fields=True, optheaddays=None):
     """
 
     :param template: a template json object to create a big query schema for
@@ -1515,7 +1508,7 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
             "tableId": "{}head".format(basename)
         },
         "view": {
-            "query": head_view_format.format(project, dataset, basename,optheaddays),
+            "query": head_view_format.format(project, dataset, basename, optheaddays),
             "useLegacySql": False
 
         }
@@ -1540,7 +1533,9 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
 
 
 class ViewCompiler(object):
-    def __init__(self,render_dictionary = {}):
+    def __init__(self, render_dictionary=None):
+        if render_dictionary is None:
+            render_dictionary = {}
         self.view_depth_optimiser = {}
         self._add_auth_view = {}
         self._views = {}
@@ -1552,13 +1547,12 @@ class ViewCompiler(object):
         return self._render_dictionary
 
     @render_dictionary.setter
-    def render_dictionary(self,render_dictionary):
+    def render_dictionary(self, render_dictionary):
         self._render_dictionary = render_dictionary
 
-    def render(self,raw_sql):
+    def render(self, raw_sql):
         template_for_render = Template(raw_sql)
         return template_for_render.render(self.render_dictionary)
-
 
     def add_view_to_process(self, dataset, name, sql, unnest=True, description=None):
 
@@ -1595,7 +1589,8 @@ class ViewCompiler(object):
         for tranche in self.view_tranche:
             for view in self.view_in_tranche(tranche):
                 view["sql"] = self.compile(view["dataset"], view["name"], view["sql"],
-                                           unnest=view["unnest"], description=view["description"],rendered=True)
+                                           unnest=view["unnest"], description=view["description"],
+                                           rendered=True)
 
     @property
     def view_tranche(self):
@@ -1687,12 +1682,13 @@ class ViewCompiler(object):
 
         return current_access_entries
 
-    def compile(self, dataset, name, sql, unnest=True, description=None,rendered=False):
+    def compile(self, dataset, name, sql, unnest=True, description=None, rendered=False):
 
         # if already done don't do again
         key = dataset.project + ":" + dataset.dataset_id + "." + name
         if key in self.view_depth_optimiser:
-            return self.view_depth_optimiser[key]["prefix"] + self.view_depth_optimiser[key]["unnested"]
+            return self.view_depth_optimiser[key]["prefix"] + self.view_depth_optimiser[key][
+                "unnested"]
 
         if not rendered:
             sql = self.render(sql)
@@ -1755,7 +1751,7 @@ class ViewCompiler(object):
         # to avoid false positives
         # use set to get unique values
         for project_dataset in set(re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
-                                                            compiled_sql).replace("\n", " "))):
+                                                                compiled_sql).replace("\n", " "))):
             # if is a table in same dataset nothing to authorise
             if project_dataset != no_auth_view:
                 project_auth, dataset_auth = project_dataset.split(splitprojectdataset)
@@ -1794,7 +1790,7 @@ class ViewCompiler(object):
                 if len(prefix + compiled_sql) > 256000:
                     if len(sql) > 256000:
                         nsql = ''
-                        for line in origsql.split("\n"):
+                        for line in sql.split("\n"):
                             trimline = line.strip()
                             # if not a comment
                             if trimline[:1] != "#":
@@ -1808,7 +1804,7 @@ class ViewCompiler(object):
             self.view_depth_optimiser[key] = {
                 "raw": sql,
                 "unnested": compiled_sql,
-                "prefix":prefix}
+                "prefix": prefix}
 
         return prefix + compiled_sql
 
@@ -1893,10 +1889,11 @@ class ExportImportType(object):
         """
         assert isinstance(srctable,
                           bigquery.Table), "Export Import Type MUST be constructed with a " \
-                          "bigquery.Table object"
+                                           "bigquery.Table object"
         assert dsttable is None or isinstance(dsttable,
                                               bigquery.Table), "Export Import dsttabl Type MUST " \
-                                              "be constructed with a bigquery.Table object or None"
+                                                               "be constructed with a " \
+                                                               "bigquery.Table object or None"
 
         if dsttable is None:
             self.__table = srctable
@@ -1975,11 +1972,11 @@ class DefaultBQSyncDriver(object):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_types=["TABLE", "VIEW", "ROUTINE", "MODEL"],
+                 copy_types=None,
                  check_depth=-1,
                  copy_access=True,
-                 table_view_filter=[".*"],
-                 table_or_views_to_exclude=[],
+                 table_view_filter=None,
+                 table_or_views_to_exclude=None,
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
@@ -1999,6 +1996,13 @@ class DefaultBQSyncDriver(object):
         :param copy_data: Copy data or just do schema
         :param copy_types: Copy object types i.e. TABLE,VIEW,ROUTINE,MODEL
         """
+
+        if copy_types is None:
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
+        if table_view_filter is None:
+            table_view_filter = [".*"]
+        if table_or_views_to_exclude is None:
+            table_or_views_to_exclude = []
         if dstproject is None:
             dstproject = srcproject
 
@@ -2085,6 +2089,8 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(src_bucket.location,
                                                   source_dataset_impl.location), "Source bucket " \
                                                                                  "location is not " \
+                                                                                 "" \
+                                                                                 "" \
                                                                                  "" \
                                                                                  "" \
                                                                                  "" \
@@ -2369,7 +2375,7 @@ class DefaultBQSyncDriver(object):
         """
         if isinstance(job, bigquery.QueryJob):
             if job.cache_hit:
-                self.increment_cache_hits
+                self.increment_cache_hits()
             self.increment_total_bytes_billed(job.total_bytes_billed)
             self.increment_total_bytes_processed(job.total_bytes_processed)
 
@@ -2514,7 +2520,7 @@ class DefaultBQSyncDriver(object):
         usefule for proxy handlng but should be handled by sub-classes default is do nothing
         :return:
         """
-        self._http
+        return self._http
 
     @property
     def destination_client(self):
@@ -2625,9 +2631,9 @@ class DefaultBQSyncDriver(object):
                 if field.mode != "REPEATED":
                     if self.check_depth >= 0 or \
                             (self.check_depth >= -1 and (
-                                    re.search("update.*time", field.name.lower()) or \
-                                    re.search("modifi.*time", field.name.lower()) or \
-                                    re.search("version", field.name.lower()) or \
+                                    re.search("update.*time", field.name.lower()) or
+                                    re.search("modifi.*time", field.name.lower()) or
+                                    re.search("version", field.name.lower()) or
                                     re.search("creat.*time", field.name.lower()))):
 
                         if field.field_type == "STRING":
@@ -2653,14 +2659,14 @@ class DefaultBQSyncDriver(object):
                         SSCHEMA = list(field.fields)
                         expression_list.extend(add_data_check(SSCHEMA, prefix=prefix, depth=depth))
                 else:
-                    if field.field_type != "RECORD" and (self.check_depth >= 0 or \
+                    if field.field_type != "RECORD" and (self.check_depth >= 0 or
                                                          (self.check_depth >= -1 and (
                                                                  re.search("update.*time",
-                                                                           field.name.lower()) or \
+                                                                           field.name.lower()) or
                                                                  re.search("modifi.*time",
-                                                                           field.name.lower()) or \
+                                                                           field.name.lower()) or
                                                                  re.search("version",
-                                                                           field.name.lower()) or \
+                                                                           field.name.lower()) or
                                                                  re.search("creat.*time",
                                                                            field.name.lower())))):
                         # add the unnestof repeated base type can use own field name
@@ -2790,15 +2796,19 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
     def calculate_target_cmek_config(self, encryption_config):
         assert isinstance(encryption_config,
-                          bigquery.EncryptionConfiguration) or (getattr(self.destination_dataset_impl, "default_encryption_configuration", None) is not None \
-            and self.destination_dataset_impl.default_encryption_configuration is not None), \
+                          bigquery.EncryptionConfiguration) or (
+                       getattr(self.destination_dataset_impl,
+                               "default_encryption_configuration", None) is not None
+                       and self.destination_dataset_impl.default_encryption_configuration is
+                       not None), \
             " To recaclculate a new encryption " \
             "config the original config has to be passed in and be of class " \
             "bigquery.EncryptionConfig"
 
         # if destination dataset has default kms key already, just use the same
-        if (getattr(self.destination_dataset_impl, "default_encryption_configuration", None) is not None \
-            and self.destination_dataset_impl.default_encryption_configuration is not None):
+        if (getattr(self.destination_dataset_impl, "default_encryption_configuration",
+                    None) is not None
+                and self.destination_dataset_impl.default_encryption_configuration is not None):
             return self.destination_dataset_impl.default_encryption_configuration
 
         # if a global key or same region we are good to go
@@ -2950,18 +2960,28 @@ class MultiBQSyncCoordinator(object):
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_types=["TABLE", "VIEW", "ROUTINE", "MODEL"],
+                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL"),
                  check_depth=-1,
                  copy_access=True,
-                 table_view_filter=[".*"],
-                 table_or_views_to_exclude=[],
+                 table_view_filter=(".*"),
+                 table_or_views_to_exclude=None,
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
                  analysis_project=None,
                  cloud_logging_and_monitoring=False,
-                 src_ref_project_datasets=[],
-                 dst_ref_project_datasets=[]):
+                 src_ref_project_datasets=None,
+                 dst_ref_project_datasets=()):
+        if copy_types is None:
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
+        if table_view_filter is None:
+            table_view_filter = [".*"]
+        if table_or_views_to_exclude is None:
+            table_or_views_to_exclude = []
+        if src_ref_project_datasets is None:
+            src_ref_project_datasets = []
+        if dst_ref_project_datasets is None:
+            dst_ref_project_datasets = []
         assert len(srcproject_and_dataset_list) == len(
             dstproject_and_dataset_list), "Source and destination lists must be same length"
         assert len(
@@ -3259,8 +3279,8 @@ class MultiBQSyncCoordinator(object):
     def sync_monitor_thread(self, stop_event):
         """
         Main background thread driver loop for copying
-        :param copy_driver: Basis of copy
-        :param q: The work queue tasks are put in
+        :param self: Basis of copy
+        :param stop_event: The wevent to stop thread
         :return: None
         """
 
@@ -3418,12 +3438,12 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_types=["TABLE", "VIEW", "ROUTINE", "MODEL"],
+                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL"),
                  check_depth=-1,
                  copy_access=True,
                  coordinator=None,
-                 table_view_filter=[".*"],
-                 table_or_views_to_exclude=[],
+                 table_view_filter=(".*"),
+                 table_or_views_to_exclude=(),
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
@@ -3610,7 +3630,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
     # if different table types thats not good need to sort
     # drop and recreate this handles TABLE->MODEL and MODEL->TABLE
-    if dsttable.table_type != srctable.table_type\
+    if dsttable.table_type != srctable.table_type \
             or srctable.partitioning_type is None and dsttable.partitioning_type is not None \
             or srctable.partitioning_type != dsttable.partitioning_type:
         copy_driver.get_logger().warning(
@@ -3622,7 +3642,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 copy_driver.destination_project,
                 copy_driver.destination_dataset,
                 dsttable.table_type,
-                table_name=table_name))
+                tablename=table_name))
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
         return
@@ -3664,7 +3684,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         changes = 0
 
         field_names_found = {}
-
+        match = True
         for schema_item in input["oldchema"]:
             match = False
             for tgt_schema_item in input["newschema"]:
@@ -3806,8 +3826,10 @@ def update_table_cmek_via_copy(client,
     """
     being asked to update a day partition tables cmek copy it within dataset
     recreate and copy back
-    :param table_to_update:
-    :param encryption_configuration:
+    :param client: Big query client
+    :param srctable:Table to update
+    :param encryption_configuration: target encryption config
+    :param logger:logging to use
     :return:
     """
 
@@ -4305,7 +4327,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
             if export_import_type.encryption_configuration is not None:
                 # no calc encryption MUST exists and MUSt be set in destination format
                 job_config.destination_encryption_configuration = \
-                export_import_type.encryption_configuration
+                    export_import_type.encryption_configuration
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
@@ -4417,6 +4439,7 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
     while len(jobs) > 0:
         didnothing = True
         for job in jobs:
+            # hmm not sure how it can ever be None
             if job is not None:
                 if job.done():
                     didnothing = False
@@ -4454,17 +4477,18 @@ def wait_for_queue(q, desc=None, sleepTime=0.1, logger=None):
     :param q: The q to wiat for
     :return:
     """
+    qsize = 0
     while q.qsize() > 0:
         qsize = q.qsize()
         if qsize > 0:
-            if logger is None and desc is None:
+            if logger is not None and desc is not None:
                 logger.info("Waiting for {} tasks {} to start".format(qsize, desc))
             sleep(sleepTime)
 
-    if logger is None and desc is None:
+    if logger is not None and desc is not None:
         logger.info("Waiting for tasks {} to complete".format(qsize, desc))
     q.join()
-    if logger is None and desc is None:
+    if logger is not None and desc is not None:
         logger.info("All tasks {} now complete".format(qsize, desc))
 
 
@@ -4494,7 +4518,7 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
     """
     Create a routine based on source routine
     :param copy_driver:
-    :param routine:
+    :param routine_name:
     :param routine_input:
     :return:
     """
