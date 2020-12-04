@@ -36,7 +36,7 @@ setuptools.setup(
         "datetime<5.0",
         "google-cloud-bigquery<3.0",
         "google-cloud-storage<2.0",
-        "google-cloud-logging<2.0,
+        "google-cloud-logging<2.0",
         "absl-py<1.0",
         "boto<3.0",
         "deepdiff>=3.3.0,<6.0",
