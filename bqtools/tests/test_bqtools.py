@@ -9,16 +9,19 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import copy
+import datetime
 import difflib
 import json
 import logging
 import pprint
 import unittest
 
+import pytz
 from deepdiff import DeepDiff
 from google.cloud import bigquery, storage, exceptions
 
 import bqtools
+
 
 class MockDataset:
     def __init__(self,project,dataset):
@@ -2877,7 +2880,7 @@ where 1=0""")
             "table_filter_regexp": ['platinum_genomes_deepvariant_variants_20180823'],
             "max_last_days": None
         })
-        # test_source_configs = []
+        test_source_configs = []
         test_destination_datasets_list = []
         for src_destination in test_source_configs:
             tests = []
@@ -3719,6 +3722,73 @@ ON
         depth = bqtools.calc_field_depth(yamonster)
         self.assertEqual(depth, 10, "measured field depth should be 10 is {}".format(depth))
 
+    def test_run_query(self):
+        client = bigquery.client.Client()
+        query = """
+SELECT word, word_count
+FROM `bigquery-public-data.samples.shakespeare`
+WHERE corpus = @corpus
+AND word_count >= @min_word_count
+ORDER BY word_count DESC;
+                """
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="romeo and juliet",
+                                        params={"corpus": "romeoandjuliet",
+                                                "min_word_count": 250},
+                                        location="US"):
+            dict(row)
+        query = "SELECT @struct_value AS s;"
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="struct",
+                                        params={"struct_value": {"x": 1, "y": "foo"}},
+                                        location="US"):
+            dict(row)
+        query = "SELECT TIMESTAMP_ADD(@ts_value, INTERVAL 1 HOUR);"
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="datetime",
+                                        params={"ts_value": datetime.datetime(2016, 12, 7, 8, 0,
+                                                                              tzinfo=pytz.UTC)},
+                                        location="US"):
+            dict(row)
+
+        query = """
+SELECT name, sum(number) as count
+FROM `bigquery-public-data.usa_names.usa_1910_2013`
+WHERE gender = @gender
+AND state IN UNNEST(@states)
+GROUP BY name
+ORDER BY count DESC
+LIMIT 10;
+        """
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="array",
+                                        params={"gender": "M",
+                                                "states": ["WA", "WI", "WV", "WY"]},
+                                        location="US"):
+            dict(row)
+        query = """
+SELECT * from unnest(@array_name)"""
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="array list",
+                                        params={"array_name": ["WA", "WI", "WV", "WY"]},
+                                        location="US"):
+            dict(row)
+        query = """
+SELECT * from unnest(@array_name)"""
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="array dict",
+                                        params={"array_name": [{"state": "WA"}, {"state": "WI"},
+                                                               {"state": "WV"}, {"state": "WY"}]},
+                                        location="US"):
+            dict(row)
+        query = """
+ SELECT * from unnest(?)"""
+        for row in bqtools.run_query(client, query, logging,
+                                        desctext="array dict positional",
+                                        params=[[{"state": "WA"}, {"state": "WI"},
+                                                 {"state": "WV"}, {"state": "WY"}]],
+                                        location="US"):
+            dict(row)
 
 def main(argv):
     unittest.main()

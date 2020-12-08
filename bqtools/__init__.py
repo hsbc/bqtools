@@ -14,6 +14,7 @@ from __future__ import unicode_literals
 
 import concurrent
 import copy
+import decimal
 import json
 import logging
 import os
@@ -1864,7 +1865,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
 
 
 def run_query(client, query, logger, desctext="", location=None, max_results=10000,
-              callback_on_complete=None, labels=None):
+              callback_on_complete=None, labels=None, params=None):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1876,7 +1877,68 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     if query.lower().find('#legacysql') == 0:
         use_legacy_sql = True
 
-    job_config = bigquery.QueryJobConfig()
+    def _get_parameter(name, argtype):
+        def _get_type(argtype):
+            ptype = None
+            if isinstance(argtype, six.string_types):
+                ptype = "STRING"
+            elif isinstance(argtype, int):
+                ptype = "INT64"
+            elif isinstance(argtype, float):
+                ptype = "FLOAT64"
+            elif isinstance(argtype, bool):
+                ptype = "BOOL"
+            elif isinstance(argtype, datetime):
+                ptype = "TIMESTAMP"
+            elif isinstance(argtype, date):
+                ptype = "DATE"
+            elif isinstance(argtype, bytes):
+                ptype = "BYTES"
+            elif isinstance(argtype, decimal.Decimal):
+                ptype = "NUMERIC"
+            else:
+                raise TypeError("Unrcognized type for qury paramter")
+            return ptype
+
+        if isinstance(argtype, list):
+            if argtype:
+                if isinstance(argtype[0],dict):
+                    struct_list = []
+                    for item in argtype:
+                        struct_list.append(_get_parameter(None,item))
+                    return bigquery.ArrayQueryParameter(name, "STRUCT", struct_list)
+                else:
+                    return bigquery.ArrayQueryParameter(name, _get_type(argtype[0]), argtype)
+            else:
+                return None
+
+        if isinstance(argtype,dict):
+            struct_param = []
+            for key in argtype:
+                struct_param.append(_get_parameter(key,argtype[key]))
+            return bigquery.StructQueryParameter(name, *struct_param)
+
+        return bigquery.ScalarQueryParameter(name, _get_type(argtype), argtype)
+
+    query_parameters = []
+    if params is not None:
+        # https://cloud.google.com/bigquery/docs/parameterized-queries#python
+        # named parameters
+        if isinstance(params, dict):
+            for key in params:
+                param = _get_parameter(key, params[key])
+                if param is not None:
+                    query_parameters.append(param)
+        # positional paramters
+        elif isinstance(params, list):
+            for p in params:
+                param = _get_parameter(None, p)
+                if param is not None:
+                    query_parameters.append(param)
+        else:
+            raise TypeError("Query parameter not a dict or a list")
+
+    job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
     job_config.maximum_billing_tier = 10
     job_config.use_legacy_sql = use_legacy_sql
     if labels is not None:
