@@ -4430,7 +4430,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
                 job_config.use_avro_logical_types = True
             job_config.source_format = export_import_type.source_format
             # compress trade compute for network bandwidth
-            job_config.compression = export_import_type.compression_format
+            # job_config.compression = export_import_type.compression_format
             job_config.schema = export_import_type.schema
 
             # this is required but nee dto sort patching of cmek first
