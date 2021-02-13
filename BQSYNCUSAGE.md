@@ -78,10 +78,9 @@ partitioned tables even if these indicate no data changes have occured.
 *analysis_project* - Default is None meaning the destination project is used for all query costs. If you need query 
 charges to be the source or another project set this argument to the project to be charged.
 
-*query_cmek* - Default is None. This parameter defines the CMEK key touse for the queries bqsync runs. If 
-                    not specified bqsync attempts to auto detect by using first iterating 
-                    destinations datasets to see if a default kms key is set and then source 
-                    datasets. If none is find no kms key is used.
+*query_cmek* - Default is empty list. This parameter defines the CMEK key touse for the queries bqsync runs. If 
+not specified bqsync attempts to auto detect by using the source datasets CMEK key and destination 
+datasets default CMEK key.
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
