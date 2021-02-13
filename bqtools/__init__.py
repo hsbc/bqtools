@@ -4603,7 +4603,7 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
                     is not None and not x.state == 'DONE']
 
 
-def wait_for_queue(q, desc=None, sleepTime=0.1, logger=None):
+def wait_for_queue(q, desc=None, sleepTime=0.2, logger=None):
     """
     Wit for background queue to finish
     :param q: The q to wiat for
