@@ -1865,7 +1865,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
 
 
 def run_query(client, query, logger, desctext="", location=None, max_results=10000,
-              callback_on_complete=None, labels=None, params=None):
+              callback_on_complete=None, labels=None, params=None,query_cmek=None):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1941,6 +1941,8 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
     job_config.maximum_billing_tier = 10
     job_config.use_legacy_sql = use_legacy_sql
+    if query_cmek is not None:
+        job_config.destination_encryption_configuration = bigquery.EncryptionConfiguration(kms_key_name=query_cmek)
     if labels is not None:
         job_config.labels = labels
 
@@ -2088,7 +2090,8 @@ class DefaultBQSyncDriver(object):
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
-                 analysis_project=None):
+                 analysis_project=None,
+                 query_cmek=None):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done
@@ -2168,6 +2171,13 @@ class DefaultBQSyncDriver(object):
         # if cross region buckets need to exist to support copy and they need to be in same region
         source_dataset_impl = self.source_dataset_impl
         destination_dataset_impl = self.destination_dataset_impl
+        if query_cmek is None:
+            if destination_dataset_impl.default_encryption_configuration is not None:
+                query_cmek = destination_dataset_impl.default_encryption_configuration.kms_key_name
+            if query_cmek is None and source_dataset_impl.default_encryption_configuration is not None:
+                query_cmek = source_dataset_impl.default_encryption_configuration.kms_key_name
+
+        self._query_cmek = query_cmek
         self._same_region = source_dataset_impl.location == destination_dataset_impl.location
         self._source_location = source_dataset_impl.location
         self._destination_location = destination_dataset_impl.location
@@ -2316,6 +2326,10 @@ class DefaultBQSyncDriver(object):
     @property
     def routines_synced(self):
         return self.__routines_synced
+
+    @property
+    def query_cmek(self):
+        return self._query_cmek
 
     def increment_routines_synced(self):
         self.__routines_synced += 1
@@ -3081,7 +3095,8 @@ class MultiBQSyncCoordinator(object):
                  analysis_project=None,
                  cloud_logging_and_monitoring=False,
                  src_ref_project_datasets=None,
-                 dst_ref_project_datasets=()):
+                 dst_ref_project_datasets=(),
+                 query_cmek=None):
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
         if table_view_filter is None:
@@ -3133,7 +3148,8 @@ class MultiBQSyncCoordinator(object):
                                             latest_date=latest_date,
                                             days_before_latest_day=days_before_latest_day,
                                             day_partition_deep_check=day_partition_deep_check,
-                                            analysis_project=analysis_project)
+                                            analysis_project=analysis_project,
+                                            query_cmek=query_cmek)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -3557,7 +3573,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                  latest_date=None,
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
-                 analysis_project=None):
+                 analysis_project=None,
+                 query_cmek=None):
         DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
                                      srcbucket, dstbucket, remove_deleted_tables,
                                      copy_data,
@@ -3569,7 +3586,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      latest_date=latest_date,
                                      days_before_latest_day=days_before_latest_day,
                                      day_partition_deep_check=day_partition_deep_check,
-                                     analysis_project=analysis_project)
+                                     analysis_project=analysis_project,
+                                     query_cmek=query_cmek)
         self.__coordinater = coordinator
 
     @property
@@ -4061,7 +4079,8 @@ def copy_table_data(copy_driver,
                                          "List source data per partition",
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS)
+                                         labels=BQSYNCQUERYLABELS,
+                                         query_cmek=copy_driver.query_cmek)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -4072,7 +4091,8 @@ def copy_table_data(copy_driver,
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS)
+                                              labels=BQSYNCQUERYLABELS,
+                                              query_cmek=copy_driver.query_cmek)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -4183,7 +4203,8 @@ def copy_table_data(copy_driver,
                                          "List source data per partition",
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS)
+                                         labels=BQSYNCQUERYLABELS,
+                                         query_cmek=copy_driver.query_cmek)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -4194,7 +4215,8 @@ def copy_table_data(copy_driver,
                                               "List destination data per partition",
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS)
+                                              labels=BQSYNCQUERYLABELS,
+                                              query_cmek=copy_driver.query_cmek)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -4820,7 +4842,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                  copy_driver.get_logger(),
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
-                                 labels=BQSYNCQUERYLABELS)
+                                 labels=BQSYNCQUERYLABELS,
+                                 query_cmek=copy_driver.query_cmek)
     try:
         source_row = next(source_generator)
     except StopIteration:
@@ -4831,7 +4854,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                       "List destination tables",
                                       location=copy_driver.destination_location,
                                       callback_on_complete=copy_driver.update_job_stats,
-                                      labels=BQSYNCQUERYLABELS)
+                                      labels=BQSYNCQUERYLABELS,
+                                      query_cmek=copy_driver.query_cmek)
     try:
         destination_row = next(destination_generator)
     except StopIteration:
@@ -4895,7 +4919,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                  "List views in apply order",
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
-                                 labels=BQSYNCQUERYLABELS):
+                                 labels=BQSYNCQUERYLABELS,
+                                 query_cmek=copy_driver.query_cmek):
             view_or_routine_order.append(viewrow["table_name"])
 
         if "VIEW" in copy_driver.copy_types:
@@ -4911,7 +4936,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                          "List source views", copy_driver.get_logger(),
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS)
+                                         labels=BQSYNCQUERYLABELS,
+                                         query_cmek=copy_driver.query_cmek)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -4922,7 +4948,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                               "List destination views",
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS)
+                                              labels=BQSYNCQUERYLABELS,
+                                              query_cmek=copy_driver.query_cmek)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -4985,7 +5012,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                          "List source views", copy_driver.get_logger(),
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS)
+                                         labels=BQSYNCQUERYLABELS,
+                                         query_cmek=copy_driver.query_cmek)
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -4996,7 +5024,8 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                               "List destination views",
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS)
+                                              labels=BQSYNCQUERYLABELS,
+                                              query_cmek=copy_driver.query_cmek)
             try:
                 destination_row = next(destination_generator)
             except StopIteration:

@@ -108,6 +108,12 @@ flags.DEFINE_string('analysis_project', None,
 This is assumption as for example public datasets there would be no ability to run queries on the source. Setting this allows another project 
 i.e. the source or in fact any other to be the charged project.""")
 
+flags.DEFINE_string('query_cmek', None,
+                    """TThis parameter defines the CMEK key touse for the queries bqsync runs. If 
+not specified bqsync attempts to auto detect by using first iterating 
+destinations datasets to see if a default kms key is set and then source 
+datasets. If none is find no kms key is used.""")
+
 def main(argv):
     del argv  # Unused.
 
@@ -213,7 +219,8 @@ def main(argv):
                                                    analysis_project=FLAGS.analysis_project,
                                                    cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring,
                                                    src_ref_project_datasets=FLAGS.src_ref_project_datasets,
-                                                   dst_ref_project_datasets=FLAGS.dst_ref_project_datasets)
+                                                   dst_ref_project_datasets=FLAGS.dst_ref_project_datasets,
+                                                   query_cmek=FLAGS.query_cmek)
 
     multi_bq_copy.logger = logging
 
