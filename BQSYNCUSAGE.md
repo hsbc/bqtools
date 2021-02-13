@@ -69,11 +69,11 @@ lates_date. This lets you reduce the rows checked. Combining check_depth and thi
 against cost
 
 *latest_date* - defaults to None which means todays date. Expects a parsable date in YYYY-MM-DD format. Sets upper limit
- of days to compare for day partitoin tables
+ of days to compare for day partition tables
  
-*do_day_partition_deep_check* - Default False by default. Table bytes and last modification are checked only if bytes differ or the
-source table modification is after the destinations is a deeper check done. This forces if True to do deep checks on all day 
-partitioned tables.
+*do_day_partition_deep_check* - Default False by default. Table bytes and last modification time are normally checked checked only if bytes differ or the
+source table modification time  is after the destinations modification time is a deeper check done. This forces if True to do deep checks on all day 
+partitioned tables even if these indicate no data changes have occured.
 
 *analysis_project* - Default is None meaning the destination project is used for all query costs. If you need query 
 charges to be the source or another project set this argument to the project to be charged.
