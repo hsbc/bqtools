@@ -238,7 +238,7 @@ def main(argv):
             multi_bq_copy.models_failed_sync > 0:
         exitcode = -1
 
-    exit(exitcode)
+    sys.exit(exitcode)
 
 
 if __name__ == '__main__':
