@@ -585,7 +585,8 @@ def table_exists(client, table_reference):
         return False
 
 
-def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
+def create_schema(sobject, schema_depth=0, fname=None, dschema=None, path="$", tableId=None,
+                  policy_tag_callback=None):
     schema = []
     if dschema is None:
         dschema = {}
@@ -593,28 +594,44 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
 
     if fname is not None:
         fname = INVALIDBQFIELDCHARS.sub("_", fname)
+        path = "{}.{}".format(path, fname)
 
-    def _create_field(fname, sobject, mode='NULLABLE'):
+    def _default_policy_callback(tableid, path):
+        return None
+
+    if policy_tag_callback is None:
+        policy_tag_callback = _default_policy_callback
+
+    def _create_field(fname, sobject, mode='NULLABLE', tableid=None, path=None,
+                      policy_tag_callback=None):
         fieldschema = None
         if isinstance(sobject, bool):
-            fieldschema = bigquery.SchemaField(fname, 'BOOLEAN', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'BOOLEAN', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, six.integer_types):
-            fieldschema = bigquery.SchemaField(fname, 'INTEGER', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'INTEGER', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, float):
-            fieldschema = bigquery.SchemaField(fname, 'FLOAT', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'FLOAT', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         # start adtes and times at lowest levelof hierarchy
         # https://docs.python.org/3/library/datetime.html subclass
         # relationships
         elif isinstance(sobject, datetime):
-            fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, date):
-            fieldschema = bigquery.SchemaField(fname, 'DATE', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'DATE', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, dttime):
-            fieldschema = bigquery.SchemaField(fname, 'TIME', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'TIME', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, six.string_types):
-            fieldschema = bigquery.SchemaField(fname, 'STRING', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'STRING', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         elif isinstance(sobject, bytes):
-            fieldschema = bigquery.SchemaField(fname, 'BYTES', mode=mode)
+            fieldschema = bigquery.SchemaField(fname, 'BYTES', mode=mode,
+                                               policy_tags=policy_tag_callback(tableid, path))
         else:
             raise UnexpectedType(str(type(sobject)))
 
@@ -642,7 +659,8 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
             # lists must have dictionaries and not base types
             # if not a dictionary skip
             if (isinstance(sobject, dict) or isinstance(sobject, list)) and isinstance(i, dict):
-                tschema.extend(create_schema(i, dschema=pdschema))
+                tschema.extend(create_schema(i, dschema=pdschema, tableId=tableId, path=path + "[]",
+                                             policy_tag_callback=policy_tag_callback))
             else:
                 fieldschema = True
                 sampleobject = i
@@ -656,7 +674,9 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
                 # recordschema.fields = tuple(tschema)
                 schema.append(recordschema)
             else:
-                schema.append(_create_field(fname, sampleobject, mode="REPEATED"))
+                schema.append(_create_field(fname, sampleobject, mode="REPEATED", tableid=tableId,
+                                            path=path + "[]",
+                                            policy_tag_callback=policy_tag_callback))
         else:
             schema = tschema
 
@@ -671,7 +691,9 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
                 if j not in dschema:
                     dschema[j] = {}
                 if "simple" not in dschema[j]:
-                    fieldschema = create_schema(sobject[j], fname=j, dschema=dschema[j])
+                    fieldschema = create_schema(sobject[j], fname=j, dschema=dschema[j],
+                                                tableId=tableId, path=path,
+                                                policy_tag_callback=policy_tag_callback)
                     if fieldschema is not None:
                         if fname is not None:
                             tschema.extend(fieldschema)
@@ -698,14 +720,23 @@ def create_schema(sobject, schema_depth=0, fname=None, dschema=None):
                         fieldschema.mode = 'REPEATED'
                         mylist = sobject
                         head = mylist[0]
-                        fieldschema.fields = create_schema(head, schema_depth + 1)
+                        fieldschema.fields = create_schema(head, schema_depth + 1, tableId=tableId,
+                                                           path=path + "[]",
+                                                           policy_tag_callback=policy_tag_callback)
                     else:
-                        fieldschema = _create_field(fname, sobject, mode=REPEATED)
+                        fieldschema = _create_field(fname, sobject, mode=REPEATED, tableid=tableId,
+                                                    path=path + "[]",
+                                                    policy_tag_callback=policy_tag_callback)
             elif isinstance(sobject, dict):
                 fieldschema = bigquery.SchemaField(fname, 'RECORD')
-                fieldschema.fields = create_schema(sobject, schema_depth + 1)
+                fieldschema.fields = create_schema(sobject,
+                                                   schema_depth + 1,
+                                                   tableId = tableId,
+                                                   path = path,
+                                                   policy_tag_callback = policy_tag_callback)
             else:
-                fieldschema = _create_field(fname, sobject)
+                fieldschema = _create_field(fname, sobject, tableid=tableId, path=path,
+                                            policy_tag_callback=policy_tag_callback)
 
             if dschema is not None:
                 dschema["simple"] = True
@@ -1865,7 +1896,7 @@ def compute_region_equals_bqregion(compute_region, bq_region):
 
 
 def run_query(client, query, logger, desctext="", location=None, max_results=10000,
-              callback_on_complete=None, labels=None, params=None,query_cmek=None):
+              callback_on_complete=None, labels=None, params=None, query_cmek=None):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1902,20 +1933,20 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
 
         if isinstance(argtype, list):
             if argtype:
-                if isinstance(argtype[0],dict):
+                if isinstance(argtype[0], dict):
                     struct_list = []
                     for item in argtype:
-                        struct_list.append(_get_parameter(None,item))
+                        struct_list.append(_get_parameter(None, item))
                     return bigquery.ArrayQueryParameter(name, "STRUCT", struct_list)
                 else:
                     return bigquery.ArrayQueryParameter(name, _get_type(argtype[0]), argtype)
             else:
                 return None
 
-        if isinstance(argtype,dict):
+        if isinstance(argtype, dict):
             struct_param = []
             for key in argtype:
-                struct_param.append(_get_parameter(key,argtype[key]))
+                struct_param.append(_get_parameter(key, argtype[key]))
             return bigquery.StructQueryParameter(name, *struct_param)
 
         return bigquery.ScalarQueryParameter(name, _get_type(argtype), argtype)
@@ -1942,7 +1973,8 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     job_config.maximum_billing_tier = 10
     job_config.use_legacy_sql = use_legacy_sql
     if query_cmek is not None:
-        job_config.destination_encryption_configuration = bigquery.EncryptionConfiguration(kms_key_name=query_cmek)
+        job_config.destination_encryption_configuration = bigquery.EncryptionConfiguration(
+            kms_key_name=query_cmek)
     if labels is not None:
         job_config.labels = labels
 
@@ -2109,6 +2141,7 @@ class DefaultBQSyncDriver(object):
         """
         assert query_cmek is None or (isinstance(query_cmek, list) and len(
             query_cmek) == 2), "If cmek key is specified has to be a list and MUST be 2 keys with " \
+                               "" \
                                "1st key being source location key and destination key"
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
@@ -2176,11 +2209,13 @@ class DefaultBQSyncDriver(object):
         if query_cmek is None:
             query_cmek = []
             if destination_dataset_impl.default_encryption_configuration is not None:
-                query_cmek.append( destination_dataset_impl.default_encryption_configuration.kms_key_name)
+                query_cmek.append(
+                    destination_dataset_impl.default_encryption_configuration.kms_key_name)
             else:
                 query_cmek.append(None)
 
-            if query_cmek is None and source_dataset_impl.default_encryption_configuration is not None:
+            if query_cmek is None and source_dataset_impl.default_encryption_configuration is not\
+                    None:
                 query_cmek.append(source_dataset_impl.default_encryption_configuration.kms_key_name)
             else:
                 query_cmek.append(None)
@@ -2215,6 +2250,7 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(src_bucket.location,
                                                   source_dataset_impl.location), "Source bucket " \
                                                                                  "location is not " \
+                                                                                 "" \
                                                                                  "" \
                                                                                  "" \
                                                                                  "" \
