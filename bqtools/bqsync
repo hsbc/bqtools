@@ -114,6 +114,17 @@ not specified bqsync attempts to auto detect by using for source datasets the de
 for destination the destination datasets default kms key. The list if specified MUST be less than 
 2 long.""")
 
+flags.DEFINE_list('src_policy_tags', [],
+                    """This paarameter is a list of source policy tags and is used with the dst_policy_tags list to defines 
+a map between source and destination policy tags. if neither are set if copying within region the policy tags are copied.
+If across region policy tags are not copied. This list and the dst_policy_tags MUST be the same length.""")
+
+flags.DEFINE_list('dst_policy_tags', [],
+                    """This parameter is a list of destination policy tags and is used with the src_policy_tags list to defines 
+a map between source and destination policy tags. if neither are set if copying within region the policy tags are copied.
+If across region policy tags are not copied if a mapping is provided and the mapping exists the policy tag is updated. 
+This list and the dst_policy_tags MUST be the same length.""")
+
 def main(argv):
     del argv  # Unused.
 
@@ -126,6 +137,10 @@ def main(argv):
 
     assert len(FLAGS.table_or_views_to_copy) > 0, "table_or_view_to_copy MUST have at least " \
                                                   "1 item to filter on"
+
+    assert len(FLAGS.src_policy_tags) == len(FLAGS.src_policy_tags), "The list of soure "\
+                                                  "(src_policy_tags) and destinationation "\
+                                                  "tags(dst_policy_tags) MUSt be identical"
 
     assert FLAGS.days_before_latest_day is None or FLAGS.days_before_latest_day >= 0, \
                                            "Days before latest date has to be  0 or greater"
@@ -220,7 +235,9 @@ def main(argv):
                                                    cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring,
                                                    src_ref_project_datasets=FLAGS.src_ref_project_datasets,
                                                    dst_ref_project_datasets=FLAGS.dst_ref_project_datasets,
-                                                   query_cmek=FLAGS.query_cmek)
+                                                   query_cmek=FLAGS.query_cmek,
+                                                   src_policy_tags=FLAGS.src_policy_tags,
+                                                   dst_policy_tags=FLAGS.dst_policy_tags)
 
     multi_bq_copy.logger = logging
 
