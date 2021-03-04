@@ -585,7 +585,12 @@ def table_exists(client, table_reference):
         return False
 
 
-def create_schema(sobject, schema_depth=0, fname=None, dschema=None, path="$", tableId=None,
+def create_schema(sobject,
+                  schema_depth=0,
+                  fname=None,
+                  dschema=None,
+                  path="$",
+                  tableId=None,
                   policy_tag_callback=None):
     schema = []
     if dschema is None:
@@ -2123,7 +2128,9 @@ class DefaultBQSyncDriver(object):
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
                  analysis_project=None,
-                 query_cmek=None):
+                 query_cmek=None,
+                 src_policy_tags=[],
+                 dst_policy_tags=[]):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done
@@ -2224,6 +2231,8 @@ class DefaultBQSyncDriver(object):
         self._same_region = source_dataset_impl.location == destination_dataset_impl.location
         self._source_location = source_dataset_impl.location
         self._destination_location = destination_dataset_impl.location
+        self._src_policy_tags  = src_policy_tags
+        self._dst_policy_tags = dst_policy_tags
 
         # if not same region where are the buckets for copying
         if not self.same_region:
@@ -2264,6 +2273,66 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(dst_bucket.location,
                                                   destination_dataset_impl.location), \
                 "Destination bucket location is not same as destination dataset location"
+
+    def map_schema_policy_tags(self,schema):
+        """
+        A method that takes as input a big query schema iterates through the schema
+        and reads policy tags and maps them from src to destination.
+        :param schema: The schema to map
+        :return: schema the same schema but with policy tags updated
+        """
+        nschema = []
+        for field in schema:
+            if field.field_type == "RECORD":
+                tmp_field = field.to_api_repr()
+                tmp_field[fields] = [i.to_api_repr() for i in self.map_schema_policy_tags(fields.fields)]
+                field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
+            else:
+                _,field = self.map_policy_tag(field)
+            nschema.append(field)
+        return nschema
+
+    def map_policy_tag(self,field,dst_tgt=None):
+        """
+        Method that tages a policy tags and will remap
+        :param policy_tag: The policy tag to map
+        :return: The new policy tag
+        """
+        change=0
+        if field.policy_tags is not None:
+            field_api_repr = field.to_api_repr()
+            tags = field_api_repr["policyTags"]["names"]
+            ntag = []
+            for tag in tags:
+                new_tag = self.map_policy_tag_string(tag)
+                if new_tag is None:
+                    field_api_repr.pop("policyTags",None)
+                    break
+                ntag.append(new_tag)
+            if "policyTags" in field_api_repr:
+                field_api_repr["policyTags"]["names"] = ntag
+            field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+            if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
+                change = 1
+            return change,bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+
+        return change,field
+
+    def map_policy_tag_string(self,src_tag):
+        """
+        This method maps a source tag to a destination policy tag
+        :param src_tag: The starting table column tags
+        :return: The expected destination tags
+        """
+        # if same region and src has atag just simply reuse the tag
+        if self._same_region and not self._src_policy_tags:
+            return src_tag
+        try:
+            # look for the tag in the src destination map
+            return self._dst_policy_tags[self._src_policy_tags.index(src_tag)]
+        # if it doesnt return None as the tag
+        except ValueError:
+            return None
 
     def base_predicates(self, retpartition):
         actual_basepredicates = []
@@ -3140,7 +3209,9 @@ class MultiBQSyncCoordinator(object):
                  cloud_logging_and_monitoring=False,
                  src_ref_project_datasets=None,
                  dst_ref_project_datasets=(),
-                 query_cmek=None):
+                 query_cmek=None,
+                 src_policy_tags=[],
+                 dst_policy_tags=[]):
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
         if table_view_filter is None:
@@ -3193,7 +3264,9 @@ class MultiBQSyncCoordinator(object):
                                             days_before_latest_day=days_before_latest_day,
                                             day_partition_deep_check=day_partition_deep_check,
                                             analysis_project=analysis_project,
-                                            query_cmek=query_cmek)
+                                            query_cmek=query_cmek,
+                                            src_policy_tags=src_policy_tags,
+                                            dst_policy_tags=dst_policy_tags)
             self.__copy_drivers.append(copy_driver)
 
     @property
@@ -3618,7 +3691,9 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                  days_before_latest_day=None,
                  day_partition_deep_check=False,
                  analysis_project=None,
-                 query_cmek=None):
+                 query_cmek=None,
+                 src_policy_tags=[],
+                 dst_policy_tags=[]):
         DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
                                      srcbucket, dstbucket, remove_deleted_tables,
                                      copy_data,
@@ -3631,7 +3706,9 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      days_before_latest_day=days_before_latest_day,
                                      day_partition_deep_check=day_partition_deep_check,
                                      analysis_project=analysis_project,
-                                     query_cmek=query_cmek)
+                                     query_cmek=query_cmek,
+                                     src_policy_tags=src_policy_tags,
+                                     dst_policy_tags=dst_policy_tags)
         self.__coordinater = coordinator
 
     @property
@@ -3713,6 +3790,7 @@ def create_and_copy_table(copy_driver, table_name):
                 copy_driver.increment_tables_failed_sync()
     else:
         NEW_SCHEMA = list(srctable.schema)
+        NEW_SCHEMA = copy_driver.map_schema_policy_tags(NEW_SCHEMA)
         export_import_type = copy_driver.export_import_format_supported(srctable)
         destination_table_ref = copy_driver.destination_client.dataset(
             copy_driver.destination_dataset).table(table_name)
@@ -3873,6 +3951,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                     if tgt_schema_item.description != schema_item.description:
                         changes += 1
                     if tgt_schema_item.field_type != "RECORD":
+                        tag_change,tgt_schema_item = copy_driver.map_policy_tag(tgt_schema_item,schema_item)
+                        if tag_change:
+                            changes += 1
                         working_schema.append(tgt_schema_item)
                     else:
                         # cannot change mode for record either repeated or not
@@ -3898,7 +3979,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             tmp_work["fields"] = newfields
                             working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
                         else:
-                            working_schema.append(tgt_schema_item)
+                            tmp_work = tgt_schema_item.to_api_repr()
+                            tmp_work["fields"] = [i.to_api_repr() for i in output['workingchema']]
+                            working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
                         if "deleteandrecreate" in output and output["deleteandrecreate"]:
                             input["deleteandrecreate"] = output["deleteandrecreate"]
                             return input
@@ -3913,7 +3996,8 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         # add any new structures
         for tgt_schema_item in input["newschema"]:
             if tgt_schema_item.name not in field_names_found:
-                working_schema.append(tgt_schema_item)
+                _,new_field = copy_driver.map_policy_tag(tgt_schema_item)
+                working_schema.append(new_field)
                 changes += 1
 
         if len(working_schema) < len(input["newschema"]):
