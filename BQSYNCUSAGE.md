@@ -20,7 +20,9 @@ basic usage is as follows
     --latest_date=2019-12-30 \
     --do_day_partition_deep_check=True \
     --analysis_project=project3 \
-    --query_cmek=None
+    --query_cmek=None \
+    --src_policy_tags= \
+    --dst_policy_tags=
  
 Arguments
  
@@ -81,6 +83,14 @@ charges to be the source or another project set this argument to the project to 
 *query_cmek* - Default is empty list. This parameter defines the CMEK key touse for the queries bqsync runs. If 
 not specified bqsync attempts to auto detect by using the source datasets CMEK key and destination 
 datasets default CMEK key.
+
+*src_policy_tags* - A comma separated list of source policy tags this is used with the dst_policy_tags argument to map
+policy tags across regions the first source policy tag maps to the first destination policy tags and so on. The src_policy_tags
+and dst_policy_tags MUST be the same length. If no mapping is provided policy tags are stripped.
+
+*dst_policy_tags* - A comma separated list of destination policy tags this is used with the src_policy_tags argument to map
+policy tags across regions the first source policy tag maps to the first destination policy tags and so on. The src_policy_tags
+and dst_policy_tags MUST be the same length. If no mapping is provided policy tags are stripped.
  
 bqsync attempts to optimise synchronisation by comparing row numbers, bytes and last modified times for non
 partitioned tables. 
