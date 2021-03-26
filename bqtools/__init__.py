@@ -3752,7 +3752,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
         return view_definition
 
-    def discovery_update_table(self,table_api_rep,logging):
+    def discovery_update_table(self, table_api_rep, logging):
         if self._cache is None:
             with self._lock:
                 if self._cache is None:
@@ -3765,7 +3765,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
                                         tableid=table_api_rep["tableReference"]["tableId"],
-                                        body=table_api_repr)
+                                        body=table_api_rep)
         # TODO: More exception handling we will see this return to a fault barrier but rate limit
         # should be handled
         req.execute()
