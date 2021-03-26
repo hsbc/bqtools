@@ -3764,7 +3764,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
 
         req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
-                                        tableid=table_api_rep["tableReference"]["tableId"],
+                                        tableId=table_api_rep["tableReference"]["tableId"],
                                         body=table_api_rep)
         # TODO: More exception handling we will see this return to a fault barrier but rate limit
         # should be handled
