@@ -4208,7 +4208,7 @@ def copy_table_data(copy_driver,
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
                                          labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek)
+                                         query_cmek=copy_driver.query_cmek[0])
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -4220,7 +4220,7 @@ def copy_table_data(copy_driver,
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
                                               labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek)
+                                              query_cmek=copy_driver.query_cmek[1])
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
