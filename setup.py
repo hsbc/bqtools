@@ -40,6 +40,7 @@ setuptools.setup(
         "absl-py<1.0",
         "boto<3.0",
         "deepdiff>=3.3.0,<6.0",
+        "google-api-python-client>=2.0.0,<3.0"
         'futures; python_version == "2.7"'
     ],
     classifiers=[
