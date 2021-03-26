@@ -3766,6 +3766,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
                                         tableid=table_api_rep["tableReference"]["tableid"],
                                         body=table_api_repr)
+        # TODO: More exception handling we will see this return to a fault barrier but rate limit
+        # should be handled
         req.execute()
 
     def real_create_access_view(self, entity_id):
