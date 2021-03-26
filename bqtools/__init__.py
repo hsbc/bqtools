@@ -3690,7 +3690,7 @@ class MemoryCache(Cache):
         try:
             json.loads(content)
         except:
-            self._logging.getLogger().warning(
+            self._logging.get_logger().warning(
                 u"Invalid json document for url:{} not caching".format(url))
             return
         self._CACHE[url] = content
@@ -3752,11 +3752,11 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
         return view_definition
 
-    def discovery_update_table(self,table_api_rep):
+    def discovery_update_table(self,table_api_rep,logging):
         if self._cache is None:
             with self._lock:
                 if self._cache is None:
-                    self._cache = MemoryCache()
+                    self._cache = MemoryCache(logging)
 
 
         bqservice = discovery.build(
@@ -4062,7 +4062,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 if dsttable.clustering_fields != srctable.clustering_fields:
                     dsttable.clustering_fields = srctable.clustering_fields
                     table_api_rep = dsttable.to_api_repr()
-                    copy_driver.discovery_update_table(table_api_rep)
+                    copy_driver.discovery_update_table(table_api_rep,copy_driver)
                 else:
                     copy_driver.destination_client.update_table(dsttable,
                                                             fields)
