@@ -4062,6 +4062,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 if dsttable.clustering_fields != srctable.clustering_fields:
                     dsttable.clustering_fields = srctable.clustering_fields
                     table_api_rep = dsttable.to_api_repr()
+                    fields.append("clustering")
                     copy_driver.discovery_update_table(table_api_rep,copy_driver)
                 else:
                     copy_driver.destination_client.update_table(dsttable,
