@@ -5027,7 +5027,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             except StopIteration:
                 destination_ended = True
 
-    wait_for_queue(schema_q, "Table schemas sychronization", 0.1, copy_driver.get_logger())
+    wait_for_queue(schema_q, "Table schemas sychronization", 0.3, copy_driver.get_logger())
 
     if "VIEW" in copy_driver.copy_types or "ROUTINE" in copy_driver.copy_types:
 
@@ -5217,10 +5217,10 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 else:
                     patch_destination_view(copy_driver, view, views_to_apply[view])
 
-        wait_for_queue(schema_q, "View/Routine schema synchronization", 0.1,
+        wait_for_queue(schema_q, "View/Routine schema synchronization", 0.3,
                        copy_driver.get_logger())
 
-    wait_for_queue(copy_q, "Table copying", 0.1, copy_driver.get_logger())
+    wait_for_queue(copy_q, "Table copying", 0.3, copy_driver.get_logger())
 
     # stop all the background threads
     stop_event.set()
