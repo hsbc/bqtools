@@ -31,6 +31,8 @@ import requests
 # handle python 2 and 3 versions of this
 import six
 from google.cloud import bigquery, exceptions, storage
+from googleapiclient import discovery
+from googleapiclient.discovery_cache.base import Cache
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 from six.moves import queue
 
@@ -3676,6 +3678,22 @@ class MultiBQSyncCoordinator(object):
                 "[{}:{}.".format(dst_proj, dst_dataset))
         return view_definition
 
+class MemoryCache(Cache):
+    def __init__(self, logging):
+        self._CACHE = {}
+        self._logging = logging
+
+    def get(self, url):
+        return self._CACHE.get(url)
+
+    def set(self, url, content):
+        try:
+            json.loads(content)
+        except:
+            self._logging.getLogger().warning(
+                u"Invalid json document for url:{} not caching".format(url))
+            return
+        self._CACHE[url] = content
 
 class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
@@ -3710,6 +3728,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                      src_policy_tags=src_policy_tags,
                                      dst_policy_tags=dst_policy_tags)
         self.__coordinater = coordinator
+        self._cache = None
+        self._lock = threading.RLock()
 
     @property
     def coordinater(self):
@@ -3731,6 +3751,22 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
             r'[{}.{}.'.format(self.source_project, self.source_dataset),
             "[{}:{}.".format(self.destination_project, self.destination_dataset))
         return view_definition
+
+    def discovery_update_table(self,table_api_rep):
+        if self._cache is None:
+            with self._lock:
+                if self._cache is None:
+                    self._cache = MemoryCache()
+
+
+        bqservice = discovery.build(
+                    'bigquery', 'v2', cache=self._cache)
+
+        req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectid"],
+                                        datasetId=table_api_rep["tableReference"]["datasetId"],
+                                        tableid=table_api_rep["tableReference"]["tableid"],
+                                        body=table_api_repr)
+        req.execute()
 
     def real_create_access_view(self, entity_id):
         """
@@ -3925,9 +3961,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     if dsttable.expires != srctable.expires:
         dsttable.expires = srctable.expires
         fields.append("expires")
-    if dsttable.clustering_fields != srctable.clustering_fields:
-        dsttable.clustering_fields = srctable.clustering_fields
-        fields.append("clustering")
+
 
     # if fields added lengths will differ
     # as initial copy used original these will be same order
@@ -4023,7 +4057,12 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         # and update the table
         if len(fields) > 0:
             try:
-                copy_driver.destination_client.update_table(dsttable,
+                if dsttable.clustering_fields != srctable.clustering_fields:
+                    dsttable.clustering_fields = srctable.clustering_fields
+                    table_api_rep = dsttable.to_api_repr()
+                    copy_driver.discovery_update_table(table_api_rep)
+                else:
+                    copy_driver.destination_client.update_table(dsttable,
                                                             fields)
             except exceptions.BadRequest as e:
                 if "encryption_configuration" in fields and \
