@@ -3762,7 +3762,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         bqservice = discovery.build(
                     'bigquery', 'v2', cache=self._cache)
 
-        req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectid"],
+        req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
                                         tableid=table_api_rep["tableReference"]["tableid"],
                                         body=table_api_repr)
