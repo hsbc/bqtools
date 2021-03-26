@@ -2285,7 +2285,7 @@ class DefaultBQSyncDriver(object):
         for field in schema:
             if field.field_type == "RECORD":
                 tmp_field = field.to_api_repr()
-                tmp_field[fields] = [i.to_api_repr() for i in self.map_schema_policy_tags(fields.fields)]
+                tmp_field["fields"] = [i.to_api_repr() for i in self.map_schema_policy_tags(field.fields)]
                 field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
             else:
                 _,field = self.map_policy_tag(field)
