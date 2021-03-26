@@ -3925,6 +3925,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     if dsttable.expires != srctable.expires:
         dsttable.expires = srctable.expires
         fields.append("expires")
+    if dsttable.clustering_fields != srctable.clustering_fields:
+        dsttable.clustering_fields = srctable.clustering_fields
+        fields.append("clustering")
 
     # if fields added lengths will differ
     # as initial copy used original these will be same order
