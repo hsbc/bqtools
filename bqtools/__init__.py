@@ -3678,22 +3678,6 @@ class MultiBQSyncCoordinator(object):
                 "[{}:{}.".format(dst_proj, dst_dataset))
         return view_definition
 
-class MemoryCache(Cache):
-    def __init__(self, logging):
-        self._CACHE = {}
-        self._logging = logging
-
-    def get(self, url):
-        return self._CACHE.get(url)
-
-    def set(self, url, content):
-        try:
-            json.loads(content)
-        except:
-            self._logging.get_logger().warning(
-                u"Invalid json document for url:{} not caching".format(url))
-            return
-        self._CACHE[url] = content
 
 class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
@@ -3753,14 +3737,8 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         return view_definition
 
     def discovery_update_table(self, table_api_rep, logging):
-        if self._cache is None:
-            with self._lock:
-                if self._cache is None:
-                    self._cache = MemoryCache(logging)
-
-
         bqservice = discovery.build(
-                    'bigquery', 'v2', cache=self._cache)
+                    'bigquery', 'v2')
 
         req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
