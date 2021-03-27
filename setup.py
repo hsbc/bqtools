@@ -16,7 +16,7 @@ with open("README.md", "r", encoding='utf-8') as fh:
 
 setuptools.setup(
     name='bqtools-json',
-    version='0.4.103',
+    version='0.4.104',
     author="Mike Moore",
     author_email="z_z_zebra@yahoo.com",
     description="A Big Query json utility package",
@@ -40,7 +40,8 @@ setuptools.setup(
         "absl-py<1.0",
         "boto<3.0",
         "deepdiff>=3.3.0,<6.0",
-        "google-api-python-client>=2.0.0,<3.0"
+        "google-api-python-client>=2.0.0,<3.0",
+        "grpcio>=1.29.0",
         'futures; python_version == "2.7"'
     ],
     classifiers=[
