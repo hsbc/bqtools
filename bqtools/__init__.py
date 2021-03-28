@@ -3983,7 +3983,8 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
                         output = compare_and_merge_schema_fields(
                             {"oldchema": list(schema_item.fields),
-                             "newschema": list(tgt_schema_item.fields)})
+                             "newschema": list(tgt_schema_item.fields),
+                             "changes": 0})
                         changes += output["changes"]
                         # if changes then need to create a new schema with new fields
                         # field is immutable so convert to api rep
@@ -4024,7 +4025,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         input["changes"] = changes
         return input
 
-    output = compare_and_merge_schema_fields({"oldchema": OLD_SCHEMA, "newschema": NEW_SCHEMA})
+    output = compare_and_merge_schema_fields({"oldchema": OLD_SCHEMA,
+                                              "newschema": NEW_SCHEMA,
+                                              "changes": 0})
     if "deleteandrecreate" in output:
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
