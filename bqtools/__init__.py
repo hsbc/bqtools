@@ -139,8 +139,15 @@ FROM
 ORDER BY
   1"""
 
+# map of partitioning types to decorator format for from time
+PARTITIONING_BY_TIME = {
+        "DAY": "%Y%m%d",
+        "YEAR": "%Y",
+        "MONTH": "%Y%m",
+        "HOUR": "%Y%m%d%H"
+    }
 TCMPDAYPARTITION = """SELECT
-  FORMAT_TIMESTAMP("%Y%m%d", {partitiontime}) AS partitionName,
+  FORMAT_TIMESTAMP("{strftime}",{partitiontime}) AS partitionName,
   COUNT(*) AS rowNum{extrafunctions}
 FROM
   `{project}.{dataset}.{table_name}` as zzz{extrajoinandpredicates}
@@ -2194,7 +2201,7 @@ class DefaultBQSyncDriver(object):
 
         if days_before_latest_day is not None:
             if latest_date is None:
-                end_date = "TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(),DAY)"
+                end_date = "TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(),DAY),INTERVAL 1 DAY)"
             else:
                 end_date = "TIMESTAMP('{}')".format(latest_date.strftime("%Y-%m-%d"))
             self.__base_predicates.append(
@@ -4074,7 +4081,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         # this should be feasible with an in region copy
         if "encryption_configuration" in fields and \
                 dsttable.num_rows != 0 and \
-                (dsttable.partitioning_type == "DAY" or
+                (dsttable.partitioning_type in PARTITIONING_BY_TIME or
                  dsttable.encryption_configuration is None):  # going from none to some needs to
             # happen via a copy
             update_table_cmek_via_copy(copy_driver.destination_client,
@@ -4196,19 +4203,22 @@ def copy_table_data(copy_driver,
 
     src_query = None
     dst_query = None
-    if partitioning_type == "DAY":
+
+    if partitioning_type in PARTITIONING_BY_TIME:
         bqclient = copy_driver.source_client
         srctable_ref = bqclient.dataset(copy_driver.source_dataset).table(table_name)
         srctable = bqclient.get_table(srctable_ref)
         partitiontime, extrafields, extrajoinandpredicates = copy_driver.extra_dp_compare_functions(
             srctable)
-        src_query = TCMPDAYPARTITION.format(partitiontime=partitiontime,
+        src_query = TCMPDAYPARTITION.format(strftime=PARTITIONING_BY_TIME[partitioning_type],
+                                            partitiontime=partitiontime,
                                             project=copy_driver.source_project,
                                             dataset=copy_driver.source_dataset,
                                             extrafunctions=extrafields,
                                             extrajoinandpredicates=extrajoinandpredicates,
                                             table_name=table_name)
-        dst_query = TCMPDAYPARTITION.format(partitiontime=partitiontime,
+        dst_query = TCMPDAYPARTITION.format(strftime=PARTITIONING_BY_TIME[partitioning_type],
+                                            partitiontime=partitiontime,
                                             project=copy_driver.destination_project,
                                             dataset=copy_driver.destination_dataset,
                                             extrafunctions=extrafields,
@@ -4218,10 +4228,10 @@ def copy_table_data(copy_driver,
     # if same region now just do a table copy
     if copy_driver.same_region:
         jobs = []
-        if partitioning_type != "DAY" or (
-                partitioning_type == "DAY" and dst_rows == 0 and
+        if partitioning_type not in PARTITIONING_BY_TIME or (
+                partitioning_type in PARTITIONING_BY_TIME and dst_rows == 0 and
                 len(copy_driver.comparison_predicates(table_name)) == 0) or (
-                partitioning_type == "DAY" and src_rows <= 5000 and
+                partitioning_type in PARTITIONING_BY_TIME and src_rows <= 5000 and
                 len(copy_driver.comparison_predicates(table_name)) == 0):
             jobs.append(in_region_copy(copy_driver, table_name))
         else:
@@ -4346,7 +4356,7 @@ def copy_table_data(copy_driver,
     # copy object and
     # load
     else:
-        if partitioning_type != "DAY":
+        if partitioning_type not in PARTITIONING_BY_TIME:
             cross_region_copy(copy_driver, table_name, export_import_format)
         else:
             source_ended = False
