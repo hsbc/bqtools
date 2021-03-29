@@ -11,7 +11,7 @@ basic usage is as follows
     --dst_ref_project_datasets=[project1.dataset8,project2.dataset9] \
     --src_bucket=bucket_name --dst_bucket=another_bucket_name \
     --copy_data=True \
-    --copy_views=True \
+    --copy_types=TABLE,VIEW,ROUTINES,MATERIALIZEDVIEW \
     --remove_deleted_tables=True \
     --check_depth=-1 \
     --table_or_views_to_copy=.* \
@@ -48,7 +48,7 @@ match the region of the target datasets.
  
 *copy_data* - Default is True bqsync will copy data if set to False will only copy schemas
  
-*copy_types* - Default is TABLE,VIEW,ROUTINE,MODEL bqsync will attempt to adjust views/routines/models (i.e. change projects and dataset
+*copy_types* - Default is TABLE,VIEW,ROUTINE,MATERIALIZEDVIEW bqsync will attempt to adjust views/routines/materialized views  (i.e. change projects and dataset
 names in the views/models,routines) such they work in the new region. If views cannot be created it will skip the view/model/routine
 and move to the next logging an error. If item is not in list those objects are skipped
  

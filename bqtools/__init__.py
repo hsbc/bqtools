@@ -92,6 +92,15 @@ WHERE
 ORDER BY
   1"""
 
+DSMATERIALIZED_VIEWLISTQUERY = """SELECT
+  table_name
+FROM
+  `{}.{}.INFORMATION_SCHEMA.TABLES`
+WHERE
+  table_type = "MATERIALIZED VIEW"
+ORDER BY
+  1"""
+
 # get views in creation time order
 # idea behind this is views can only be created in order
 # so in theory the date order is the right order.
@@ -2160,7 +2169,7 @@ class DefaultBQSyncDriver(object):
                                "" \
                                "1st key being source location key and destination key"
         if copy_types is None:
-            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
         if table_view_filter is None:
             table_view_filter = [".*"]
         if table_or_views_to_exclude is None:
@@ -2307,23 +2316,31 @@ class DefaultBQSyncDriver(object):
         :param policy_tag: The policy tag to map
         :return: The new policy tag
         """
-        change=0
-        if field.policy_tags is not None:
-            field_api_repr = field.to_api_repr()
-            tags = field_api_repr["policyTags"]["names"]
-            ntag = []
-            for tag in tags:
-                new_tag = self.map_policy_tag_string(tag)
-                if new_tag is None:
-                    field_api_repr.pop("policyTags",None)
-                    break
-                ntag.append(new_tag)
-            if "policyTags" in field_api_repr:
-                field_api_repr["policyTags"]["names"] = ntag
-            field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
-            if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
-                change = 1
-            return change,bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+        change = 0
+        if field.field_type == "RECORD":
+            schema = self.map_schema_policy_tags(field.fields)
+            if field.fields != schema:
+                change=1
+            tmp_field = field.to_api_repr()
+            tmp_field["fields"] = [i.to_api_repr() for i in schema]
+            field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
+        else:
+            if field.policy_tags is not None:
+                field_api_repr = field.to_api_repr()
+                tags = field_api_repr["policyTags"]["names"]
+                ntag = []
+                for tag in tags:
+                    new_tag = self.map_policy_tag_string(tag)
+                    if new_tag is None:
+                        field_api_repr.pop("policyTags",None)
+                        break
+                    ntag.append(new_tag)
+                if "policyTags" in field_api_repr:
+                    field_api_repr["policyTags"]["names"] = ntag
+                field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+                if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
+                    change = 1
+                return change,bigquery.schema.SchemaField.from_api_repr(field_api_repr)
 
         return change,field
 
@@ -2385,6 +2402,7 @@ class DefaultBQSyncDriver(object):
         self.__bytes_avoided = 0
         self.__rows_avoided = 0
         self.__tables_synced = 0
+        self.__materialized_views_synced = 0
         self.__views_synced = 0
         self.__routines_synced = 0
         self.__routines_failed_sync = 0
@@ -2671,6 +2689,9 @@ class DefaultBQSyncDriver(object):
 
     def increment_tables_synced(self):
         self.__tables_synced += 1
+
+    def increment_materialized_views_synced(self):
+        self.__materialized_views_synced += 1
 
     def increment_views_synced(self):
         self.__views_synced += 1
@@ -3206,7 +3227,7 @@ class MultiBQSyncCoordinator(object):
     def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL"),
+                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
                  check_depth=-1,
                  copy_access=True,
                  table_view_filter=(".*"),
@@ -3222,7 +3243,7 @@ class MultiBQSyncCoordinator(object):
                  src_policy_tags=[],
                  dst_policy_tags=[]):
         if copy_types is None:
-            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL"]
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL","MATERIALIZEDVIEW"]
         if table_view_filter is None:
             table_view_filter = [".*"]
         if table_or_views_to_exclude is None:
@@ -3690,7 +3711,7 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
                  srcbucket=None, dstbucket=None, remove_deleted_tables=True,
                  copy_data=True,
-                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL"),
+                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
                  check_depth=-1,
                  copy_access=True,
                  coordinator=None,
@@ -3782,6 +3803,79 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
                                                                         use_standard_sql)
         return view_defintion
 
+
+def compare_create_materialized_view(copy_driver, table_name, comparison_required):
+    """
+    Compare a specific materialized view and create if needs copying.
+
+    :param copy_driver: Driver that holds source, destination details
+    :param table_name: Name of teh materialized view
+    :param comparison_required: if true then destination exists if false does not
+    :return:
+    """
+    assert isinstance(copy_driver,
+                      DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
+                                            "Driver"
+
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable = copy_driver.source_client.get_table(srctable_ref)
+    copy_mv = False
+
+    if comparison_required:
+        dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
+            table_name)
+        dsttable = copy_driver.destination_client.get_table(dsttable_ref)
+        if srctable.mview_enable_refresh != dsttable.mview_enable_refresh or \
+            srctable.mview_query != dsttable.mview_query or \
+            srctable.mview_refresh_interval != dsttable.mview_refresh_interval or \
+            srctable.friendly_name != dsttable.friendly_name or \
+            srctable.partitioning_type != dsttable.partitioning_type or \
+            srctable.time_partitioning != dsttable.time_partitioning or \
+            srctable.partition_expiration != dsttable.partition_expiration or\
+            srctable.labels != dsttable.labels or\
+            srctable.clustering_fields != dsttable.clustering_fields:
+            copy_driver.destination_client.delete_table(dsttable)
+            copy_mv = True
+    else:
+        copy_mv = True
+    if copy_mv:
+        dsttable_ref = copy_driver.destination_client.dataset(
+            copy_driver.destination_dataset).table(
+            table_name)
+        dsttable = bigquery.Table(dsttable_ref)
+        dsttable.mview_enable_refresh = srctable.mview_enable_refresh
+        dsttable.mview_refresh_interval = srctable.mview_refresh_interval
+        dsttable.friendly_name = srctable.friendly_name
+        dsttable.labels = srctable.labels
+        dsttable.clustering_fields = srctable.clustering_fields
+        if srctable.partitioning_type is not None:
+            dsttable.partitioning_type = srctable.partitioning_type
+        if srctable.time_partitioning is not None:
+            dsttable.time_partitioning = srctable.time_partitioning
+        if srctable.partition_expiration is not None:
+            dsttable.partition_expiration = srctable.partition_expiration
+
+        # update references
+        dsttable.mview_query = copy_driver.update_source_view_definition(
+                            srctable.mview_query, True)
+
+        # update cmek
+        encryption_config = srctable.encryption_configuration
+
+        # encryption configs can be location specific
+        if encryption_config is not None:
+            dsttable.encryption_config = \
+                copy_driver.calculate_target_cmek_config(encryption_config)
+
+        copy_driver.logger.info(
+            "Copying materialized view {}.{}.{} to {}.{}.{}".format(
+                copy_driver.source_project,
+                copy_driver.source_dataset,
+                table_name,
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name))
+        copy_driver.destination_client.create_table(dsttable)
 
 def create_and_copy_table(copy_driver, table_name):
     """
@@ -3896,7 +3990,13 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     :return:
     """
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
-    srctable = copy_driver.source_client.get_table(srctable_ref)
+    try:
+        srctable = copy_driver.source_client.get_table(srctable_ref)
+    except exceptions.NotFound:
+        copy_driver.get_logger().warning("Table {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
+                                                                                                                                   copy_driver.source_dataset,
+                                                                                                                                   table_name))
+        return
     dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
         table_name)
     dsttable = copy_driver.source_client.get_table(dsttable_ref)
@@ -4009,6 +4109,8 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
                         if "deleteandrecreate" in output and output["deleteandrecreate"]:
                             input["deleteandrecreate"] = output["deleteandrecreate"]
+                            input["changes"] = changes
+                            input["workingchema"] = working_schema
                             return input
 
                     break
@@ -5064,6 +5166,79 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 destination_ended = True
 
     wait_for_queue(schema_q, "Table schemas sychronization", 0.3, copy_driver.get_logger())
+
+    if "MATERIALIZEDVIEW" in copy_driver.copy_types:
+        source_query = DSMATERIALIZED_VIEWLISTQUERY.format(copy_driver.source_project,
+                                               copy_driver.source_dataset)
+        destination_query = DSMATERIALIZED_VIEWLISTQUERY.format(copy_driver.destination_project,
+                                                    copy_driver.destination_dataset)
+
+        source_ended = False
+        destination_ended = False
+
+        source_generator = run_query(copy_driver.query_client, source_query, "List source tables",
+                                     copy_driver.get_logger(),
+                                     location=copy_driver.source_location,
+                                     callback_on_complete=copy_driver.update_job_stats,
+                                     labels=BQSYNCQUERYLABELS,
+                                     query_cmek=copy_driver.query_cmek[0])
+        try:
+            source_row = next(source_generator)
+        except StopIteration:
+            source_ended = True
+
+        destination_generator = run_query(copy_driver.query_client, destination_query,
+                                          copy_driver.get_logger(),
+                                          "List destination tables",
+                                          location=copy_driver.destination_location,
+                                          callback_on_complete=copy_driver.update_job_stats,
+                                          labels=BQSYNCQUERYLABELS,
+                                          query_cmek=copy_driver.query_cmek[1])
+        try:
+            destination_row = next(destination_generator)
+        except StopIteration:
+            destination_ended = True
+
+        while not (source_ended and destination_ended):
+            if not destination_ended and not source_ended and destination_row["table_name"] == \
+                    source_row["table_name"]:
+                if copy_driver.istableincluded(source_row["table_name"]):
+                    copy_driver.increment_materialized_views_synced()
+                    schema_q.put(
+                        (0, BQSyncTask(compare_create_materialized_view,
+                                       [copy_driver, source_row["table_name"],True])))
+                try:
+                    source_row = next(source_generator)
+                except StopIteration:
+                    source_ended = True
+                try:
+                    destination_row = next(destination_generator)
+                except StopIteration:
+                    destination_ended = True
+
+            elif (destination_ended and not source_ended) or (
+                    not source_ended and source_row["table_name"] < destination_row["table_name"]):
+                if copy_driver.istableincluded(source_row["table_name"]):
+                    copy_driver.increment_materialized_views_synced()
+                    schema_q.put(
+                        (0, BQSyncTask(compare_create_materialized_view,
+                                       [copy_driver, source_row["table_name"],False])))
+                try:
+                    source_row = next(source_generator)
+                except StopIteration:
+                    source_ended = True
+
+            elif (source_ended and not destination_ended) or (
+                    not destination_ended and source_row["table_name"] > destination_row[
+                "table_name"]):
+                copy_driver.increment_tables_synced()
+                remove_deleted_destination_table(copy_driver, destination_row["table_name"])
+                try:
+                    destination_row = next(destination_generator)
+                except StopIteration:
+                    destination_ended = True
+
+        wait_for_queue(schema_q, "Materialized view sychronization", 0.3, copy_driver.get_logger())
 
     if "VIEW" in copy_driver.copy_types or "ROUTINE" in copy_driver.copy_types:
 
