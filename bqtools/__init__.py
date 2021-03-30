@@ -3818,7 +3818,13 @@ def compare_create_materialized_view(copy_driver, table_name, comparison_require
                                             "Driver"
 
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
-    srctable = copy_driver.source_client.get_table(srctable_ref)
+    try:
+        srctable = copy_driver.source_client.get_table(srctable_ref)
+    except exceptions.NotFound:
+        copy_driver.get_logger().warning("Materialized view {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
+                                                                                                                                   copy_driver.source_dataset,
+                                                                                                                                   table_name))
+        return
     copy_mv = False
 
     if comparison_required:
@@ -3999,7 +4005,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         return
     dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
         table_name)
-    dsttable = copy_driver.source_client.get_table(dsttable_ref)
+    dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
     # if different table types thats not good need to sort
     # drop and recreate this handles TABLE->MODEL and MODEL->TABLE
@@ -4170,7 +4176,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 copy_driver.increment_tables_failed_sync()
                 raise
 
-            dsttable = copy_driver.source_client.get_table(dsttable_ref)
+            dsttable = copy_driver.destination_client.get_table(dsttable_ref)
             copy_driver.get_logger().info(
                 "Patched table {}.{}.{} {}".format(copy_driver.destination_project,
                                                    copy_driver.destination_dataset,
@@ -4191,7 +4197,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                                        copy_driver.calculate_target_cmek_config(
                                            srctable.encryption_configuration),
                                        copy_driver.get_logger())
-            dsttable = copy_driver.source_client.get_table(dsttable_ref)
+            dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
         if dsttable.num_rows != srctable.num_rows or \
                 dsttable.num_bytes != srctable.num_bytes or \
@@ -4747,7 +4753,10 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
                 for blob_num in range(blob_uris):
                     ablobname = blobname.replace("*", "{:012d}".format(blob_num))
                     dst_blob = storage.blob.Blob(ablobname, dst_bucket)
-                    dst_blob.delete()
+                    try:
+                        dst_blob.delete()
+                    except exceptions.NotFound:
+                        copy_driver.get_logger().error("Not found gs://{}/{} when deleting".format(copy_driver.destination_bucket,ablobname))
 
         callbackobj = {job.job_id: delete_blob}
         wait_for_jobs([job], copy_driver.get_logger(),
@@ -4960,7 +4969,13 @@ def create_destination_view(copy_driver, table_name, view_input):
     """
 
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
-    srctable = copy_driver.source_client.get_table(srctable_ref)
+    try:
+        srctable = copy_driver.source_client.get_table(srctable_ref)
+    except exceptions.NotFound:
+        copy_driver.get_logger().warning("View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
+                                                                                                                                   copy_driver.source_dataset,
+                                                                                                                                   table_name))
+        return
 
     use_legacy_sql = True
     if view_input["use_standard_sql"] == "YES":
@@ -5008,10 +5023,16 @@ def patch_destination_view(copy_driver, table_name, view_input):
     :return:
     """
     srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
-    srctable = copy_driver.source_client.get_table(srctable_ref)
+    try:
+        srctable = copy_driver.source_client.get_table(srctable_ref)
+    except exceptions.NotFound:
+        copy_driver.get_logger().warning("View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
+                                                                                                                                   copy_driver.source_dataset,
+                                                                                                                                   table_name))
+        return
     dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
         table_name)
-    dsttable = copy_driver.source_client.get_table(dsttable_ref)
+    dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
     use_legacy_sql = True
     if view_input["use_standard_sql"] == "YES":
