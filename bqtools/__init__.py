@@ -3766,7 +3766,9 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
 
     def discovery_update_table(self, table_api_rep, logging):
         bqservice = discovery.build(
-                    'bigquery', 'v2',static_discovery=False)
+            'bigquery', 
+            'v2',
+            static_discovery=False)
 
         req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
                                         datasetId=table_api_rep["tableReference"]["datasetId"],
