@@ -32,7 +32,6 @@ import requests
 import six
 from google.cloud import bigquery, exceptions, storage
 from googleapiclient import discovery
-from googleapiclient.discovery_cache.base import Cache
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 from six.moves import queue
 
@@ -150,11 +149,13 @@ ORDER BY
 
 # map of partitioning types to decorator format for from time
 PARTITIONING_BY_TIME = {
-        "DAY": "%Y%m%d",
-        "YEAR": "%Y",
+        "DAY":   "%Y%m%d",
+        "YEAR":  "%Y",
         "MONTH": "%Y%m",
-        "HOUR": "%Y%m%d%H"
+        "HOUR":  "%Y%m%d%H"
     }
+
+
 TCMPDAYPARTITION = """SELECT
   FORMAT_TIMESTAMP("{strftime}",{partitiontime}) AS partitionName,
   COUNT(*) AS rowNum{extrafunctions}
@@ -2168,6 +2169,7 @@ class DefaultBQSyncDriver(object):
             query_cmek) == 2), "If cmek key is specified has to be a list and MUST be 2 keys with " \
                                "" \
                                "1st key being source location key and destination key"
+        self._sessionid = datetime.utcnow().isoformat().replace(":", "-")
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
         if table_view_filter is None:
@@ -2291,6 +2293,14 @@ class DefaultBQSyncDriver(object):
             assert compute_region_equals_bqregion(dst_bucket.location,
                                                   destination_dataset_impl.location), \
                 "Destination bucket location is not same as destination dataset location"
+
+    @property
+    def session_id(self):
+        """
+        This method returns the uniue identifier for this copy session
+        :return: The copy drivers session
+        """
+        return self._sessionid
 
     def map_schema_policy_tags(self,schema):
         """
@@ -4533,6 +4543,10 @@ def copy_table_data(copy_driver,
                                     destination_row[key]))
                             break
                     if diff:
+                        partition_path = "TABLE_ID={table_name}/PT={partition_name}".format(
+                            table_name=table_name,
+                            partition_name=source_row[
+                                "partitionName"])
                         copy_driver.copy_q.put(
                             (-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
                                                                    [copy_driver,
@@ -4540,7 +4554,8 @@ def copy_table_data(copy_driver,
                                                                         table_name,
                                                                         source_row[
                                                                             "partitionName"]),
-                                                                    export_import_format])))
+                                                                    export_import_format,
+                                                                    partition_path])))
                     else:
                         copy_driver.add_rows_avoided(source_row["rowNum"])
                     try:
@@ -4566,6 +4581,9 @@ def copy_table_data(copy_driver,
                             table_name,
                             source_row[
                                 "partitionName"]))
+                    partition_path = "TABLE_ID={table_name}/PT={partition_name}".format(table_name=table_name,
+                                                                                        partition_name=source_row[
+                                                                                           "partitionName"])
                     copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
                                                                                   [copy_driver,
                                                                                    "{}${}".format(
@@ -4573,7 +4591,8 @@ def copy_table_data(copy_driver,
                                                                                        source_row[
                                                                                            "partitionName"],
                                                                                    ),
-                                                                                   export_import_format])))
+                                                                                   export_import_format,
+                                                                                   partition_path])))
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -4589,7 +4608,7 @@ def copy_table_data(copy_driver,
                         destination_ended = True
 
 
-def cross_region_copy(copy_driver, table_name, export_import_type):
+def cross_region_copy(copy_driver, table_name, export_import_type, partition_path=None):
     """
     Copy data acoss region each table is
     Extracted out to avro file to cloud storage src
@@ -4600,13 +4619,21 @@ def cross_region_copy(copy_driver, table_name, export_import_type):
     :return:
     """
 
+    if partition_path is None:
+        partition_path="TABLE_ID={table_name}".format(table_name=table_name)
     bqclient = copy_driver.source_client
-    blobname = "{}-{}-{}-{}-{}*.avro".format(table_name, copy_driver.source_project,
-                                             copy_driver.source_dataset,
-                                             copy_driver.destination_project,
-                                             copy_driver.destination_dataset)
-    src_uri = "gs://{}/{}".format(copy_driver.source_bucket, blobname)
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
+    blobname = "SESSION_ID={session_id}/PROJECT_ID={source_project}/DATASET_ID={source_dataset}/{partition_path}/data*".format(
+        session_id=copy_driver.session_id,
+        source_project=copy_driver.source_project,
+        source_dataset=copy_driver.source_dataset,
+        partition_path=partition_path
+    )
+    # blobname = "{}-{}-{}-{}-{}*.avro".format(table_name, copy_driver.source_project,
+    #                                          copy_driver.source_dataset,
+    #                                          copy_driver.destination_project,
+    #                                          copy_driver.destination_dataset)
+    src_uri = "gs://{}/{}".format(copy_driver.source_bucket, blobname)
     job_config = bigquery.ExtractJobConfig()
     # using logical types expads clumn types supported
     # but has no DATETIME support
