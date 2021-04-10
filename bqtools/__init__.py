@@ -36,7 +36,7 @@ from google.cloud import bigquery, exceptions, storage
 from googleapiclient import discovery
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 from six.moves import queue
-from _version import __version__
+from ._version import __version__
 
 
 # import logging
