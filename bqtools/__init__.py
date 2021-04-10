@@ -179,7 +179,7 @@ MAPBQREGION2KMSREGION = {
 }
 
 BQSYNCQUERYLABELS = {
-    "bqsyncversion": "bqyncv".format(__version__.replace(".","_"))
+    "bqsyncversion": "bqync-{}".format(__version__.replace(".","_"))
 }
 
 # some template SQL statements to work out audit changes
