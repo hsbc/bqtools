@@ -7,10 +7,12 @@ Schemas can be defined in json and provides means to create such structures by r
 json structures.
 
 """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
+
 
 import concurrent
 import copy
@@ -34,6 +36,8 @@ from google.cloud import bigquery, exceptions, storage
 from googleapiclient import discovery
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 from six.moves import queue
+from _version import __version__
+
 
 # import logging
 
@@ -175,7 +179,7 @@ MAPBQREGION2KMSREGION = {
 }
 
 BQSYNCQUERYLABELS = {
-    "bqsyncversion": "bqyncv0_4"
+    "bqsyncversion": "bqyncv".format(__version__.replace(".","_"))
 }
 
 # some template SQL statements to work out audit changes
