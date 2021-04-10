@@ -5,7 +5,7 @@ datasets are also in the same region. The source region and destination region M
  
 basic usage is as follows
  
-    bqsync--src_project_datasets=[project1.dataset1,project1.dataset2,project2.dataset3] \
+    bqsync --[no]version --src_project_datasets=[project1.dataset1,project1.dataset2,project2.dataset3] \
     --dst_project_datasset=[project1.dataset4,project2.dataset5,project3.dataset6] \
     --src_ref_project_datasets=[project1.dataset6,project1.dataset7] \
     --dst_ref_project_datasets=[project1.dataset8,project2.dataset9] \
@@ -25,7 +25,8 @@ basic usage is as follows
     --dst_policy_tags=
  
 Arguments
- 
+
+*version* - bqsync will print version it is 
 *src_project_datasets* - A comma separated list of projects and datasets to copy to the destination
 projects and datasets. Each item in list is project followed by a period '.' and then the dataset.
 The list in this argument **MUST** contain same number as in the *dst_project_dataset* argument.

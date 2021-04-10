@@ -20,6 +20,8 @@ import bqtools
 
 FLAGS = flags.FLAGS
 
+flags.DEFINE_bool('version',False,"Display installed version of bqsync")
+
 flags.DEFINE_list('src_project_datasets', [],
                     """A comma separated list of projects and datasets to copy to the destination 
 projects and datasets. Each item in list is project followed by a period '.' and then the dataset. 
@@ -154,6 +156,9 @@ def main(argv):
         assert type in ["TABLE","VIEW","ROUTINE","MATERIALIZEDVIEW"], "copy_types list items must be one of TABLE, VIEW,MATERIALIZEDVIEW or ROUTINE"
 
     latest_date = None
+
+    if FLAGS.version:
+        print("Version:{}".format(bqtools.__version__))
     if FLAGS.latest_date is not None:
         date_format = '%Y-%m-%d'
         try:
