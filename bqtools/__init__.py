@@ -2071,17 +2071,39 @@ class ExportImportType(object):
             self._dst_encryption_configuration = dst_encryption_configuration
 
         # detect if any GEOGRAPHY or DATETIME fields
-        def _detect_non_avro_types(schema):
+        def _detect_non_avro_and_parquet_types(schema):
             for field in schema:
                 if field.field_type == 'GEOGRAPHY' or field.field_type == "DATETIME":
                     return True
                 if field.field_type == "RECORD":
-                    if _detect_non_avro_types(list(field.fields)):
+                    if _detect_non_avro_and_parquet_types(list(field.fields)):
                         return True
             return False
 
+        # detect if any GEOGRAPHY or DATETIME fields
+        def _detect_non_parquet_types(schema):
+            for field in schema:
+                # https://cloud.google.com/bigquery/docs/exporting-data#parquet_export_details
+                if field.field_type == "DATETIME" or field.field_type == "TIME":
+                    return True
+                # parquet only support repeated base types
+                if field.field_type == "RECORD":
+                    if field.mode == "REPEATED":
+                        return True
+                    if _detect_non_parquet_types(list(field.fields)):
+                        return True
+            return False
+
+        # go columnar compression over row as generally better
+        # as we always process whole rows actually not worth it but we
+        # had fun working out whats needed to support parquet
+        # we have wish list of sync with hive schema which could be parquet
+        # so let me figure out limitations of this
+        # self.__destination_format = bigquery.job.DestinationFormat.PARQUET
+        # but if thats impossible
+        # if _detect_non_parquet_types(list(srctable.schema)):
         self.__destination_format = bigquery.job.DestinationFormat.AVRO
-        if _detect_non_avro_types(list(srctable.schema)):
+        if _detect_non_avro_and_parquet_types(list(srctable.schema)):
             self.__destination_format = bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
 
     @property
@@ -2101,10 +2123,23 @@ class ExportImportType(object):
         # only support the exports that are possible
         if self.destination_format == bigquery.job.DestinationFormat.AVRO:
             return bigquery.job.SourceFormat.AVRO
+        if self.destination_format == bigquery.job.DestinationFormat.PARQUET:
+            return bigquery.job.SourceFormat.PARQUET
         if self.destination_format == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON:
             return bigquery.job.SourceFormat.NEWLINE_DELIMITED_JSON
         if self.destination_format == bigquery.job.DestinationFormat.CSV:
             return bigquery.job.SourceFormat.CSV
+
+    @property
+    def source_file_extension(self):
+        if self.destination_format == bigquery.job.DestinationFormat.AVRO:
+            return ".avro"
+        if self.destination_format == bigquery.job.DestinationFormat.PARQUET:
+            return ".parquet"
+        if self.destination_format == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON:
+            return ".jsonl"
+        if self.destination_format == bigquery.job.DestinationFormat.CSV:
+            return ".csv"
 
     @property
     def compression_format(self):
@@ -2114,6 +2149,8 @@ class ExportImportType(object):
         """
         if self.destination_format == bigquery.job.DestinationFormat.AVRO:
             return bigquery.job.Compression.DEFLATE
+        if self.destination_format == bigquery.job.DestinationFormat.PARQUET:
+            return bigquery.job.Compression.SNAPPY
         return bigquery.job.Compression.GZIP
 
     @property
@@ -4093,9 +4130,10 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                     if tgt_schema_item.description != schema_item.description:
                         changes += 1
                     if tgt_schema_item.field_type != "RECORD":
-                        tag_change,tgt_schema_item = copy_driver.map_policy_tag(tgt_schema_item,schema_item)
+                        tag_change,tgt_schema_item2 = copy_driver.map_policy_tag(tgt_schema_item,schema_item)
                         if tag_change:
                             changes += 1
+                            tgt_schema_item = tgt_schema_item2
                         working_schema.append(tgt_schema_item)
                     else:
                         # cannot change mode for record either repeated or not
@@ -4623,11 +4661,12 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
         partition_path="TABLE_ID={table_name}".format(table_name=table_name)
     bqclient = copy_driver.source_client
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
-    blobname = "SESSION_ID={session_id}/PROJECT_ID={source_project}/DATASET_ID={source_dataset}/{partition_path}/data*".format(
+    blobname = "SESSION_ID={session_id}/PROJECT_ID={source_project}/DATASET_ID={source_dataset}/{partition_path}/data*{extension}".format(
         session_id=copy_driver.session_id,
         source_project=copy_driver.source_project,
         source_dataset=copy_driver.source_dataset,
-        partition_path=partition_path
+        partition_path=partition_path,
+        extension=export_import_type.source_file_extension
     )
     # blobname = "{}-{}-{}-{}-{}*.avro".format(table_name, copy_driver.source_project,
     #                                          copy_driver.source_dataset,
