@@ -130,6 +130,10 @@ This list and the dst_policy_tags MUST be the same length.""")
 def main(argv):
     del argv  # Unused.
 
+    # always do this if asked as soon as possible
+    if FLAGS.version:
+        print("Version:{}".format(bqtools.__version__))
+
     # validate pre-conditions
     assert len(FLAGS.src_project_datasets) > 0, "Source project.dataset(s) must be set use " \
                                                    "--help for help"
@@ -157,8 +161,6 @@ def main(argv):
 
     latest_date = None
 
-    if FLAGS.version:
-        print("Version:{}".format(bqtools.__version__))
     if FLAGS.latest_date is not None:
         date_format = '%Y-%m-%d'
         try:
