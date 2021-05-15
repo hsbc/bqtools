@@ -4138,7 +4138,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                         if tag_change:
                             changes += 1
                             tgt_schema_item = tgt_schema_item2
-                        working_schema.append(tgt_schema_item)
+                        working_schema.append(tgt_schema_item2)
                     else:
                         # cannot change mode for record either repeated or not
                         if tgt_schema_item.mode != schema_item.mode:
@@ -4224,6 +4224,10 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             "done via table.copy job") != -1:
                     pass
                 else:
+                    copy_driver.get_logger().exception(
+                        "Bad Request when patching table {}.{}.{} {}".format(copy_driver.destination_project,
+                                                           copy_driver.destination_dataset,
+                                                           table_name, ",".join(fields)))
                     copy_driver.increment_tables_failed_sync()
                     raise
             except Exception as e:
