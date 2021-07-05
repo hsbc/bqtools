@@ -607,6 +607,13 @@ def table_exists(client, table_reference):
     except NotFound:
         return False
 
+def get_kms_key_name(kms_or_key_version):
+    # handle sept 2021 move to kms keys having versions and gradually
+    # ignore end part of version
+    # projects/methodical-bee-162815/locations/europe-west2/keyRings/cloudStorage/cryptoKeys/cloudStorage/cryptoKeyVersions/6
+    # so ignore /cryptoKeyVersions/6
+    # include though everything else
+    return re.findall('projects\/[^\/]+\/locations\/[^\/]+\/keyRings\/[^\/]+\/cryptoKeys\/[^\/]+',kms_or_key_version) [0]
 
 def create_schema(sobject,
                   schema_depth=0,
@@ -3132,10 +3139,12 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
         # if a global key or same region we are good to go
         if self.same_region or encryption_config.kms_key_name.find(
                 "/locations/global/") != -1:
-            return encryption_config
+            # strip off version if exists
+            return bigquery.EncryptionConfiguration(get_kms_key_name(encryption_config.kms_key_name))
 
         # if global key can still be used
-        parts = encryption_config.kms_key_name.split("/")
+        # if comparing table key get rid fo version
+        parts = get_kms_key_name(encryption_config.kms_key_name).split("/")
         parts[3] = MAPBQREGION2KMSREGION.get(self.destination_location,
                                              self.destination_location.lower())
 
