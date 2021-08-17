@@ -5210,12 +5210,13 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     source_ended = False
     destination_ended = False
 
-    source_generator = run_query(copy_driver.query_client, source_query, "List source tables",
+    source_generator = run_query(copy_driver.query_client, source_query,
                                  copy_driver.get_logger(),
+                                 "List source tables",
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
                                  labels=BQSYNCQUERYLABELS,
-                                 query_cmek=copy_driver.query_cmek[0])
+                                 query_cmek=copy_driver.query_cmek[1])
     try:
         source_row = next(source_generator)
     except StopIteration:
@@ -5227,7 +5228,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                       location=copy_driver.destination_location,
                                       callback_on_complete=copy_driver.update_job_stats,
                                       labels=BQSYNCQUERYLABELS,
-                                      query_cmek=copy_driver.query_cmek[1])
+                                      query_cmek=copy_driver.query_cmek[0])
     try:
         destination_row = next(destination_generator)
     except StopIteration:
@@ -5287,7 +5288,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                      location=copy_driver.source_location,
                                      callback_on_complete=copy_driver.update_job_stats,
                                      labels=BQSYNCQUERYLABELS,
-                                     query_cmek=copy_driver.query_cmek[0])
+                                     query_cmek=copy_driver.query_cmek[1])
         try:
             source_row = next(source_generator)
         except StopIteration:
@@ -5299,7 +5300,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                           location=copy_driver.destination_location,
                                           callback_on_complete=copy_driver.update_job_stats,
                                           labels=BQSYNCQUERYLABELS,
-                                          query_cmek=copy_driver.query_cmek[1])
+                                          query_cmek=copy_driver.query_cmek[0])
         try:
             destination_row = next(destination_generator)
         except StopIteration:
@@ -5365,7 +5366,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                  location=copy_driver.source_location,
                                  callback_on_complete=copy_driver.update_job_stats,
                                  labels=BQSYNCQUERYLABELS,
-                                 query_cmek=copy_driver.query_cmek[0]):
+                                 query_cmek=copy_driver.query_cmek[1]):
             view_or_routine_order.append(viewrow["table_name"])
 
         if "VIEW" in copy_driver.copy_types:
@@ -5382,7 +5383,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
                                          labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[0])
+                                         query_cmek=copy_driver.query_cmek[1])
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -5394,7 +5395,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
                                               labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[1])
+                                              query_cmek=copy_driver.query_cmek[0])
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
@@ -5458,7 +5459,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                          location=copy_driver.source_location,
                                          callback_on_complete=copy_driver.update_job_stats,
                                          labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[0])
+                                         query_cmek=copy_driver.query_cmek[1])
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -5470,7 +5471,7 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                                               location=copy_driver.destination_location,
                                               callback_on_complete=copy_driver.update_job_stats,
                                               labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[1])
+                                              query_cmek=copy_driver.query_cmek[0])
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
