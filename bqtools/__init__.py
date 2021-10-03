@@ -4005,11 +4005,47 @@ def create_and_copy_table(copy_driver, table_name):
                 copy_driver.calculate_target_cmek_config(encryption_config)
 
         # and create the table
-        try:
-            copy_driver.destination_client.create_table(destination_table)
-        except Exception:
-            copy_driver.increment_tables_failed_sync()
-            raise
+        retry = True
+        while retry:
+            try:
+                copy_driver.destination_client.create_table(destination_table)
+                retry = False
+            except exceptions.Conflict as e:
+                if str(e).lower().find("already exists") != -1:
+                    copy_driver.get_logger().exception(
+                        f"Got a conflict error when creating table "
+                        f"{copy_driver.destination_project}.{copy_driver.destination_dataset}."
+                        f"{table_name}  already exists could be a "
+                        "different type of object i.e. view checking")
+                    try:
+                        dest_object_ref = copy_driver.destination_client.dataset(
+                            copy_driver.destination_dataset).table(table_name)
+                        dest_object = copy_driver.destination_client.get_table(dest_object_ref)
+                        # if a view replace these with the table
+                        if dest_object.table_type in ["VIEW", "MATERIALIZED_VIEW"]:
+                            copy_driver.get_logger().info(
+                                f"Destination object {copy_driver.destination_project}."
+                                f"{copy_driver.destination_dataset}.{table_name} is a view type "
+                                f"object source is "
+                                "table deleting target and replacing with table")
+                            copy_driver.destination_client.delete_table(dest_object)
+                        else:
+                            copy_driver.increment_tables_failed_sync()
+                            copy_driver.get_logger().error(
+                                f"Attempting to copy a new table but table "
+                                f"{copy_driver.destination_project}."
+                                f"{copy_driver.destination_dataset}.{table_name} already exists "
+                                f"assuming "
+                                "race condition skipping")
+                            raise
+                    except Exception:
+                        raise
+                else:
+                    copy_driver.increment_tables_failed_sync()
+                    raise
+            except Exception:
+                copy_driver.increment_tables_failed_sync()
+                raise
 
         copy_driver.get_logger().info(
             "Created table {}.{}.{}".format(copy_driver.destination_project,
