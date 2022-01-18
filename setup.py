@@ -35,7 +35,6 @@ setuptools.setup(
     url="https://github.com/Mikemoore63/bqtools",
     packages=setuptools.find_packages(),
     test_suite='nose.collector',
-    use_2to3=True,
     tests_require=['nose'],
     include_package_data=True,
     license="MIT",
