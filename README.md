@@ -49,11 +49,11 @@ table["schema"]["fields"] = bqtools.get_bq_schema_from_json_repr(foo)
 
 ```
 
-Demonstrates some of power of tools via [bqsync](https://github.com/MikeMoore63/bqtools/blob/master/BQSYNCUSAGE.md) that is installed if you install via pip.
+Demonstrates some of power of tools via [bqsync](https://github.com/hsbc/bqtools/blob/master/BQSYNCUSAGE.md) that is installed if you install via pip.
 
     pip install bqtools-json
     
-Or you can find the source for this [here](https://github.com/MikeMoore63/bqtools/blob/master/bqtools/bqsync)
+Or you can find the source for this [here](https://github.com/hsbc/bqtools/blob/master/bqtools/bqsync)
     
 Also provides means to handle views across environments supports SQL views based upon Jinja templates. So you can "configure" views for different environments.
 
