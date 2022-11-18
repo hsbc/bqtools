@@ -1,0 +1,18 @@
+{
+  "array": [
+    {
+      "string3": "yet another string",
+      "integer3": 32
+    }
+  ],
+  "boolean": false,
+  "float": 36.3,
+  "integer": 0,
+  "record": {
+    "string2": "another string",
+    "integer2": 3,
+    "float": 3.1415926,
+    "boolean2": true
+  },
+  "string": "a string"
+}
