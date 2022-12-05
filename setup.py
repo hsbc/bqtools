@@ -37,7 +37,7 @@ setuptools.setup(
     test_suite='nose.collector',
     tests_require=['nose',
                    "deepdiff>=3.3.0,<6.0"],
-    include_package_data=True
+    include_package_data=True,
     scripts=['bqtools/bqsync'],
     install_requires=[
         "jinja2<3.0",
