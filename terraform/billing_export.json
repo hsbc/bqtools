@@ -1,0 +1,127 @@
+[
+      {
+        "mode": "NULLABLE",
+        "name": "billing_account_id",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "product",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "resource_type",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "start_time",
+        "type": "TIMESTAMP"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "end_time",
+        "type": "TIMESTAMP"
+      },
+      {
+        "fields": [
+          {
+            "mode": "NULLABLE",
+            "name": "id",
+            "type": "STRING"
+          },
+          {
+            "mode": "NULLABLE",
+            "name": "name",
+            "type": "STRING"
+          },
+          {
+            "fields": [
+              {
+                "mode": "NULLABLE",
+                "name": "key",
+                "type": "STRING"
+              },
+              {
+                "mode": "NULLABLE",
+                "name": "value",
+                "type": "STRING"
+              }
+            ],
+            "mode": "REPEATED",
+            "name": "labels",
+            "type": "RECORD"
+          }
+        ],
+        "mode": "NULLABLE",
+        "name": "project",
+        "type": "RECORD"
+      },
+      {
+        "fields": [
+          {
+            "mode": "NULLABLE",
+            "name": "key",
+            "type": "STRING"
+          },
+          {
+            "mode": "NULLABLE",
+            "name": "value",
+            "type": "STRING"
+          }
+        ],
+        "mode": "REPEATED",
+        "name": "labels",
+        "type": "RECORD"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "cost",
+        "type": "FLOAT"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "currency",
+        "type": "STRING"
+      },
+      {
+        "mode": "NULLABLE",
+        "name": "currency_conversion_rate",
+        "type": "FLOAT"
+      },
+      {
+        "fields": [
+          {
+            "mode": "NULLABLE",
+            "name": "amount",
+            "type": "FLOAT"
+          },
+          {
+            "mode": "NULLABLE",
+            "name": "unit",
+            "type": "STRING"
+          }
+        ],
+        "mode": "NULLABLE",
+        "name": "usage",
+        "type": "RECORD"
+      },
+      {
+        "fields": [
+          {
+            "mode": "NULLABLE",
+            "name": "name",
+            "type": "STRING"
+          },
+          {
+            "mode": "NULLABLE",
+            "name": "amount",
+            "type": "FLOAT"
+          }
+        ],
+        "mode": "REPEATED",
+        "name": "credits",
+        "type": "RECORD"
+      }
+    ]
