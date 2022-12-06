@@ -1,3 +1,6 @@
+1.0.4 December 6th 2022
+- Loosen grpcio dependency to correct constraint
+
 1.0.3 December 5th 2022
 - Update and move to hsbc repo and update CHANGELOG to be accurate update LICENSE from MIT to Apache 2
 
