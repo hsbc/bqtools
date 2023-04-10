@@ -1,3 +1,9 @@
+1.0.5 April 10th 2023
+- Adjust jinja dependency so will allow Jina2 version3
+- Fix issue with routine copying failing
+- Fix issue with partial rather than full dataset names
+- Copy scalar functions prior to views which often reference these
+
 1.0.4 December 6th 2022
 - Loosen grpcio dependency to correct constraint
 

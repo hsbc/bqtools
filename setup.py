@@ -40,9 +40,8 @@ setuptools.setup(
     include_package_data=True,
     scripts=['bqtools/bqsync'],
     install_requires=[
-        "jinja2<3.0",
+        "jinja2>=2.0,<4.0",
         "google-cloud<1.0",
-        "datetime<5.0",
         "google-cloud-bigquery>=2.6.0,<3.0",
         "google-cloud-storage>=1.0.0,<3.0",
         "google-cloud-logging>=3.0,<4.0",
