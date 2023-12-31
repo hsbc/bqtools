@@ -16,7 +16,7 @@ from absl import app
 from absl import flags
 from google.cloud.logging.handlers import CloudLoggingHandler
 
-from src import bqtools
+import bqtools
 
 FLAGS = flags.FLAGS
 
@@ -359,3 +359,9 @@ def main(argv):
 
 if __name__ == "__main__":
     app.run(main)
+
+class mod_call:
+    def __call__(self):
+        return app.run(main)
+
+sys.modules[__name__] = mod_call()
