@@ -360,8 +360,10 @@ def main(argv):
 if __name__ == "__main__":
     app.run(main)
 
+
 class mod_call:
     def __call__(self):
         return app.run(main)
+
 
 sys.modules[__name__] = mod_call()
