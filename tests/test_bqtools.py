@@ -17,6 +17,7 @@ import pprint
 import sys
 import unittest
 
+import google.auth.exceptions
 import pytz
 from deepdiff import DeepDiff
 from google.cloud import bigquery, storage, exceptions
@@ -3049,7 +3050,16 @@ where 1=0""",
         logging.basicConfig(level=logging.INFO)
 
         # get target datasets ready uses app default credentials
-        bqclient = bigquery.Client()
+        have_credentials = False
+        try:
+            bqclient = bigquery.Client()
+            have_credentials = True
+        except google.auth.exceptions.DefaultCredentialsError:
+            pass
+
+        if not have_credentials:
+            return
+
         stclient = storage.Client()
 
         # will use default project and public datsets for testing
@@ -3066,7 +3076,8 @@ where 1=0""",
         # bucket names will be created if they do not exist of
         # bqsynctest_<projectid>_<region>
         # eac  bucket will have a 1 day lifecycle added
-        # source will be picked with various source attribute types, partitioning and clustering strategy
+        # source will be picked with various source attribute types, partitioning and clustering
+        # strategy
         # success is tables are copied no errors in extract, load or copy
         # not tale numbers may vary
         # at end the test datasets will be deleted the buckets will remain
@@ -3102,11 +3113,11 @@ where 1=0""",
             for rule in rules:
                 if isinstance(rule, dict):
                     if (
-                        "condition" in rule
-                        and "age" in rule["condition"]
-                        and rule["condition"]["age"] == 1
-                        and "isLive" in rule["condition"]
-                        and rule["condition"]["isLive"]
+                            "condition" in rule
+                            and "age" in rule["condition"]
+                            and rule["condition"]["age"] == 1
+                            and "isLive" in rule["condition"]
+                            and rule["condition"]["isLive"]
                     ):
                         found1daydeletrule = True
                 nrules.append(rule)
@@ -3160,7 +3171,8 @@ where 1=0""",
         # not using a specific partition column name so  just ingest time
         test_source_configs.append(
             {
-                "description": "a dataset with a day partitioned table with  clustering not using a specific partition column name so  just ingest time",
+                "description": "a dataset with a day partitioned table with  clustering not using "
+                               "a specific partition column name so  just ingest time",
                 "dataset_name": "new_york_subway",
                 "table_filter_regexp": ["geo_nyc_borough_boundaries"],
                 "max_last_days": 365,
@@ -3169,7 +3181,8 @@ where 1=0""",
         # a dataset with view referencing it self to demo simple view copying
         test_source_configs.append(
             {
-                "description": "a dataset with view referencing it self to demo simple view copying",
+                "description": "a dataset with view referencing it self to demo simple view "
+                               "copying",
                 "dataset_name": "noaa_goes16",
                 "table_filter_regexp": [".*"],
                 "max_last_days": 365,
@@ -3210,7 +3223,8 @@ where 1=0""",
         # https://issuetracker.google.com/issues/35905894 will fail until resolved
         test_source_configs.append(
             {
-                "description": "a dataset with a day partitioned table with clustering using a specific partition column name so not just ingest time",
+                "description": "a dataset with a day partitioned table with clustering using a "
+                               "specific partition column name so not just ingest time",
                 "dataset_name": "human_genome_variants",
                 "table_filter_regexp": [
                     "platinum_genomes_deepvariant_variants_20180823"
@@ -3264,7 +3278,8 @@ where 1=0""",
             src_destination["tests"] = tests
 
         logging.info(
-            "Checking daatsets for bqsync tests exist in right regions and if exist empty them i.e. delete and recreate them..."
+            "Checking daatsets for bqsync tests exist in right regions and if exist empty them "
+            "i.e. delete and recreate them..."
         )
         for datasetname in test_destination_datasets_list:
             dataset_ref = bqclient.dataset(datasetname)
@@ -3423,8 +3438,7 @@ LEFT JOIN UNNEST(tabob.array) as A2
         FROM
           `foo.ar.bob`)) AS xxrownumbering
     ON
-      _PARTITIONTIME = xxrownumbering.scantime
-    """,
+      _PARTITIONTIME = xxrownumbering.scantime""",
                 "description": "View used as basis for diffview:A test schema",
             },
             "bobdiff": {
@@ -3807,7 +3821,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of week of underlying table bob description: A "
-                "test schema",
+                               "test schema",
             },
             "bobdiffmonth": {
                 "query": """#standardSQL
@@ -3895,7 +3909,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of month of underlying table bob description: A "
-                "test schema",
+                               "test schema",
             },
             "bobdifffortnight": {
                 "query": """#standardSQL
@@ -3983,7 +3997,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of fortnight of underlying table bob "
-                "description: A test schema",
+                               "description: A test schema",
             },
         }
         for vi in views:
@@ -4143,45 +4157,52 @@ ON
         )
 
     def test_run_query(self):
-        client = bigquery.client.Client()
-        query = """
+        have_credentials = False
+        try:
+            client = bigquery.client.Client()
+            have_credentials = True
+        except google.auth.exceptions.DefaultCredentialsError:
+            pass
+
+        if have_credentials:
+            query = """
 SELECT word, word_count
 FROM `bigquery-public-data.samples.shakespeare`
 WHERE corpus = @corpus
 AND word_count >= @min_word_count
 ORDER BY word_count DESC;
                 """
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="romeo and juliet",
-            params={"corpus": "romeoandjuliet", "min_word_count": 250},
-            location="US",
-        ):
-            dict(row)
-        query = "SELECT @struct_value AS s;"
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="struct",
-            params={"struct_value": {"x": 1, "y": "foo"}},
-            location="US",
-        ):
-            dict(row)
-        query = "SELECT TIMESTAMP_ADD(@ts_value, INTERVAL 1 HOUR);"
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="datetime",
-            params={"ts_value": datetime.datetime(2016, 12, 7, 8, 0, tzinfo=pytz.UTC)},
-            location="US",
-        ):
-            dict(row)
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="romeo and juliet",
+                    params={"corpus": "romeoandjuliet", "min_word_count": 250},
+                    location="US",
+            ):
+                dict(row)
+            query = "SELECT @struct_value AS s;"
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="struct",
+                    params={"struct_value": {"x": 1, "y": "foo"}},
+                    location="US",
+            ):
+                dict(row)
+            query = "SELECT TIMESTAMP_ADD(@ts_value, INTERVAL 1 HOUR);"
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="datetime",
+                    params={"ts_value": datetime.datetime(2016, 12, 7, 8, 0, tzinfo=pytz.UTC)},
+                    location="US",
+            ):
+                dict(row)
 
-        query = """
+            query = """
 SELECT name, sum(number) as count
 FROM `bigquery-public-data.usa_names.usa_1910_2013`
 WHERE gender = @gender
@@ -4190,57 +4211,57 @@ GROUP BY name
 ORDER BY count DESC
 LIMIT 10;
         """
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="array",
-            params={"gender": "M", "states": ["WA", "WI", "WV", "WY"]},
-            location="US",
-        ):
-            dict(row)
-        query = """
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="array",
+                    params={"gender": "M", "states": ["WA", "WI", "WV", "WY"]},
+                    location="US",
+            ):
+                dict(row)
+            query = """
 SELECT * from unnest(@array_name)"""
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="array list",
-            params={"array_name": ["WA", "WI", "WV", "WY"]},
-            location="US",
-        ):
-            dict(row)
-        query = """
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="array list",
+                    params={"array_name": ["WA", "WI", "WV", "WY"]},
+                    location="US",
+            ):
+                dict(row)
+            query = """
 SELECT * from unnest(@array_name)"""
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="array dict",
-            params={
-                "array_name": [
-                    {"state": "WA"},
-                    {"state": "WI"},
-                    {"state": "WV"},
-                    {"state": "WY"},
-                ]
-            },
-            location="US",
-        ):
-            dict(row)
-        query = """
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="array dict",
+                    params={
+                        "array_name": [
+                            {"state": "WA"},
+                            {"state": "WI"},
+                            {"state": "WV"},
+                            {"state": "WY"},
+                        ]
+                    },
+                    location="US",
+            ):
+                dict(row)
+            query = """
  SELECT * from unnest(?)"""
-        for row in bqtools.run_query(
-            client,
-            query,
-            logging,
-            desctext="array dict positional",
-            params=[
-                [{"state": "WA"}, {"state": "WI"}, {"state": "WV"}, {"state": "WY"}]
-            ],
-            location="US",
-        ):
-            dict(row)
+            for row in bqtools.run_query(
+                    client,
+                    query,
+                    logging,
+                    desctext="array dict positional",
+                    params=[
+                        [{"state": "WA"}, {"state": "WI"}, {"state": "WV"}, {"state": "WY"}]
+                    ],
+                    location="US",
+            ):
+                dict(row)
 
 
 def main(argv):
