@@ -13,10 +13,10 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
 
-
-import concurrent
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import decimal
+import importlib.metadata
 import json
 import logging
 import os
@@ -24,6 +24,7 @@ import pprint
 import random
 import re
 import threading
+import traceback
 import warnings
 from datetime import datetime, date, timedelta, time as dttime
 from io import open
@@ -35,8 +36,9 @@ import six
 from google.cloud import bigquery, exceptions, storage
 from googleapiclient import discovery
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
-from six.moves import queue
-from ._version import __version__
+import queue
+
+__version__ = importlib.metadata.version("bqtools-json")
 
 
 # import logging
@@ -83,7 +85,7 @@ LEGACY_SQL_PDCTABLEREGEXP = r"\[([a-z0-9\-]+?:[a-zA-Z0-9_]+?)\.[a-zA-Z0-9_]+?\]"
 LEGACY_SQL_PDTCTABLEREGEXP = r"\[([a-z0-9\-]+?:[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+?)?\]"
 STANDARD_SQL_PDCTABLEREGEXP = r"\`([a-z0-9\-]+?\.[a-zA-Z0-9_]+?)\.[a-zA-Z0-9_]+?\`"
 STANDARD_SQL_PDTCTABLEREGEXP = r"\`([a-z0-9\-]+?\.[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+?)?\`"
-SQL_COMMENT_REGEXP = r'(--.*)|(((/\*)+?[\w\W]+?(\*/)+))'
+SQL_COMMENT_REGEXP = r"(--.*)|(((/\*)+?[\w\W]+?(\*/)+))"
 
 # get a list of tables for a given dataset in table name
 # sorted by name so can be compared with anpther list
@@ -167,11 +169,11 @@ ORDER BY
 
 # map of partitioning types to decorator format for from time
 PARTITIONING_BY_TIME = {
-        "DAY":   "%Y%m%d",
-        "YEAR":  "%Y",
-        "MONTH": "%Y%m",
-        "HOUR":  "%Y%m%d%H"
-    }
+    "DAY": "%Y%m%d",
+    "YEAR": "%Y",
+    "MONTH": "%Y%m",
+    "HOUR": "%Y%m%d%H",
+}
 
 
 TCMPDAYPARTITION = """SELECT
@@ -188,13 +190,9 @@ ORDER BY
 # if no mapping just lower cases the dataset region and it will match is assumption
 # when copying between regions the kms name is assumed the same bar the region
 # keys are not compared in idffs and patching is feasible after the fact
-MAPBQREGION2KMSREGION = {
-    "EU": "europe"
-}
+MAPBQREGION2KMSREGION = {"EU": "europe"}
 
-BQSYNCQUERYLABELS = {
-    "bqsyncversion": "{}".format(__version__.replace(".","_"))
-}
+BQSYNCQUERYLABELS = {"bqsyncversion": "{}".format(__version__.replace(".", "_"))}
 
 # some template SQL statements to work out audit changes
 AUDITCHANGESELECT = """#standardSQL
@@ -274,9 +272,7 @@ AVOIDLASTSETINCROSSJOIN = """
 
 
 class BQJsonEncoder(json.JSONEncoder):
-    """ Class to implement encoding for date times, dates and timedelta
-
-    """
+    """Class to implement encoding for date times, dates and timedelta"""
 
     def default(self, obj):
         """
@@ -301,68 +297,81 @@ class BQTError(Exception):
 class InconsistentJSONStructure(BQTError):
     """Error for inconsistent structures"""
 
-    CUSTOM_ERROR_MESSAGE = 'The json structure passed has inconsistent types for the same key ' \
-                           '{0} and thus cannot be ' \
-                           'made into a BQ schema or valid json new line for loading onto big ' \
-                           'query\n{1} type ' \
-                           'previously {2}'
+    CUSTOM_ERROR_MESSAGE = (
+        "The json structure passed has inconsistent types for the same key "
+        "{0} and thus cannot be "
+        "made into a BQ schema or valid json new line for loading onto big "
+        "query\n{1} type "
+        "previously {2}"
+    )
 
     def __init__(self, resource_name, e, ttype):
         super(InconsistentJSONStructure, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e, ttype))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name, e, ttype)
+        )
 
 
 class NotADictionary(BQTError):
-    CUSTOM_ERROR_MESSAGE = 'The json structure passed is not a dictionary\n{1}'
+    CUSTOM_ERROR_MESSAGE = "The json structure passed is not a dictionary\n{1}"
 
     def __init__(self, resource_name):
         super(NotADictionary, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name)
+        )
 
 
 class UnexpectedType(BQTError):
-    CUSTOM_ERROR_MESSAGE = 'The object type of \n{1} is nota type that bqutils knows how to handle'
+    CUSTOM_ERROR_MESSAGE = (
+        "The object type of \n{1} is nota type that bqutils knows how to handle"
+    )
 
     def __init__(self, resource_name):
         super(UnexpectedType, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name)
+        )
 
 
 class UnexpectedDict(BQTError):
-    CUSTOM_ERROR_MESSAGE = 'The object is a dict and shoulld not be \n{0}'
+    CUSTOM_ERROR_MESSAGE = "The object is a dict and shoulld not be \n{0}"
 
     def __init__(self, resource_name):
         super(UnexpectedDict, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(resource_name))
+            self.CUSTOM_ERROR_MESSAGE.format(resource_name)
+        )
 
 
 class SchemaMutationError(BQTError):
     """Error for API executions."""
 
-    CUSTOM_ERROR_MESSAGE = 'Schema Mutation Error: unable to mutate object path {0} on keyi {1} ' \
-                           'object {2}'
+    CUSTOM_ERROR_MESSAGE = (
+        "Schema Mutation Error: unable to mutate object path {0} on keyi {1} "
+        "object {2}"
+    )
 
     def __init__(self, objtomatch, keyi, path):
         super(SchemaMutationError, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(objtomatch, keyi, path))
+            self.CUSTOM_ERROR_MESSAGE.format(objtomatch, keyi, path)
+        )
 
 
 class BQQueryError(BQTError):
     """Error for Query execution error."""
-    CUSTOM_ERROR_MESSAGE = 'GCP API Error: unable to processquery {0} from GCP:\n{1}'
+
+    CUSTOM_ERROR_MESSAGE = "GCP API Error: unable to processquery {0} from GCP {1}:\n{2}"
 
     def __init__(self, query, desc, e):
-        super(BQQueryError, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(query, e))
+        super(BQQueryError, self).__init__(self.CUSTOM_ERROR_MESSAGE.format(query, desc, e))
 
 
 class BQHittingQueryGenerationQuotaLimit(BQTError):
     """Error for Query generation error."""
-    CUSTOM_ERROR_MESSAGE = 'BQTools code generation error {0}'
+
+    CUSTOM_ERROR_MESSAGE = "BQTools code generation error {0}\n{1}\n{2}"
 
     def __init__(self, query, desc, e):
         super(BQHittingQueryGenerationQuotaLimit, self).__init__(
-            self.CUSTOM_ERROR_MESSAGE.format(query, e))
+            self.CUSTOM_ERROR_MESSAGE.format(query, desc, e)
+        )
 
 
 class BQSyncTask(object):
@@ -412,7 +421,7 @@ def get_json_struct(jsonobj, template=None):
                 value = ""
             elif isinstance(jsonobj[key], six.text_type):
                 value = ""
-            elif isinstance(jsonobj[key], int) or isinstance(jsonobj[key], long):
+            elif isinstance(jsonobj[key], int):
                 value = 0
             elif isinstance(jsonobj[key], float):
                 value = 0.0
@@ -447,20 +456,32 @@ def get_json_struct(jsonobj, template=None):
                                 new_value.append({"value": vali})
                             jsonobj[key] = new_value
                         for list_item in jsonobj[key]:
-                            template[newkey][0] = get_json_struct(list_item, template[newkey][0])
+                            template[newkey][0] = get_json_struct(
+                                list_item, template[newkey][0]
+                            )
             else:
                 # work out best way to loosen types with worst case change to string
                 newtype = ""
-                if isinstance(jsonobj[key], float) and isinstance(template[newkey], int):
+                if isinstance(jsonobj[key], float) and isinstance(
+                    template[newkey], int
+                ):
                     newtype = 0.0
-                elif isinstance(jsonobj[key], datetime) and isinstance(template[newkey], date):
+                elif isinstance(jsonobj[key], datetime) and isinstance(
+                    template[newkey], date
+                ):
                     newtype = jsonobj[key]
-                if not (isinstance(jsonobj[key], dict) or isinstance(jsonobj[key], list)) and not (
-                        isinstance(template[newkey], list) or isinstance(template[newkey], dict)):
+                if not (
+                    isinstance(jsonobj[key], dict) or isinstance(jsonobj[key], list)
+                ) and not (
+                    isinstance(template[newkey], list)
+                    or isinstance(template[newkey], dict)
+                ):
                     template[newkey] = newtype
                 else:
                     # this is so different type cannot be loosened
-                    raise InconsistentJSONStructure(key, str(jsonobj[key]), str(template[newkey]))
+                    raise InconsistentJSONStructure(
+                        key, str(jsonobj[key]), str(template[newkey])
+                    )
     return template
 
 
@@ -556,9 +577,9 @@ def generate_create_schema(resourcelist, file_handle):
     :return: nothing
     """
     jinjaenv = Environment(
-        loader=FileSystemLoader(os.path.join(_ROOT, 'templates')),
-        autoescape=select_autoescape(['html', 'xml']),
-        extensions=['jinja2.ext.do', 'jinja2.ext.loopcontrols']
+        loader=FileSystemLoader(os.path.join(_ROOT, "templates")),
+        autoescape=select_autoescape(["html", "xml"]),
+        extensions=["jinja2.ext.do", "jinja2.ext.loopcontrols"],
     )
     objtemplate = jinjaenv.get_template("bqschema.in")
     output = objtemplate.render(resourcelist=resourcelist)
@@ -576,7 +597,7 @@ def generate_create_schema_file(filename, resourcelist):
     :param resourcelist: list of resources to genereate code for
     :return:nothing
     """
-    with open(filename, mode='w+', encoding="utf-8") as file_handle:
+    with open(filename, mode="w+", encoding="utf-8") as file_handle:
         generate_create_schema(resourcelist, file_handle)
 
 
@@ -621,25 +642,32 @@ def table_exists(client, table_reference):
     except NotFound:
         return False
 
+
 def get_kms_key_name(kms_or_key_version):
     # handle sept 2021 move to kms keys having versions and gradually
     # ignore end part of version
     # projects/methodical-bee-162815/locations/europe-west2/keyRings/cloudStorage/cryptoKeys/cloudStorage/cryptoKeyVersions/6
     # so ignore /cryptoKeyVersions/6
     # include though everything else
-    return re.findall('projects\/[^\/]+\/locations\/[^\/]+\/keyRings\/[^\/]+\/cryptoKeys\/[^\/]+',kms_or_key_version) [0]
+    return re.findall(
+        "projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+",
+        kms_or_key_version,
+    )[0]
 
-def create_schema(sobject,
-                  schema_depth=0,
-                  fname=None,
-                  dschema=None,
-                  path="$",
-                  tableId=None,
-                  policy_tag_callback=None):
+
+def create_schema(
+    sobject,
+    schema_depth=0,
+    fname=None,
+    dschema=None,
+    path="$",
+    tableId=None,
+    policy_tag_callback=None,
+):
     schema = []
     if dschema is None:
         dschema = {}
-    dummyfield = bigquery.SchemaField('xxxDummySchemaAsNoneDefinedxxx', 'STRING')
+    dummyfield = bigquery.SchemaField("xxxDummySchemaAsNoneDefinedxxx", "STRING")
 
     if fname is not None:
         fname = INVALIDBQFIELDCHARS.sub("_", fname)
@@ -651,36 +679,68 @@ def create_schema(sobject,
     if policy_tag_callback is None:
         policy_tag_callback = _default_policy_callback
 
-    def _create_field(fname, sobject, mode='NULLABLE', tableid=None, path=None,
-                      policy_tag_callback=None):
+    def _create_field(
+        fname,
+        sobject,
+        mode="NULLABLE",
+        tableid=None,
+        path=None,
+        policy_tag_callback=None,
+    ):
         fieldschema = None
         if isinstance(sobject, bool):
-            fieldschema = bigquery.SchemaField(fname, 'BOOLEAN', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "BOOLEAN",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         elif isinstance(sobject, six.integer_types):
-            fieldschema = bigquery.SchemaField(fname, 'INTEGER', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "INTEGER",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         elif isinstance(sobject, float):
-            fieldschema = bigquery.SchemaField(fname, 'FLOAT', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "FLOAT",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         # start adtes and times at lowest levelof hierarchy
         # https://docs.python.org/3/library/datetime.html subclass
         # relationships
         elif isinstance(sobject, datetime):
-            fieldschema = bigquery.SchemaField(fname, 'TIMESTAMP', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "TIMESTAMP",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         elif isinstance(sobject, date):
-            fieldschema = bigquery.SchemaField(fname, 'DATE', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname, "DATE", mode=mode, policy_tags=policy_tag_callback(tableid, path)
+            )
         elif isinstance(sobject, dttime):
-            fieldschema = bigquery.SchemaField(fname, 'TIME', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname, "TIME", mode=mode, policy_tags=policy_tag_callback(tableid, path)
+            )
         elif isinstance(sobject, six.string_types):
-            fieldschema = bigquery.SchemaField(fname, 'STRING', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "STRING",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         elif isinstance(sobject, bytes):
-            fieldschema = bigquery.SchemaField(fname, 'BYTES', mode=mode,
-                                               policy_tags=policy_tag_callback(tableid, path))
+            fieldschema = bigquery.SchemaField(
+                fname,
+                "BYTES",
+                mode=mode,
+                policy_tags=policy_tag_callback(tableid, path),
+            )
         else:
             raise UnexpectedType(str(type(sobject)))
 
@@ -707,9 +767,18 @@ def create_schema(sobject,
         for i in sobject:
             # lists must have dictionaries and not base types
             # if not a dictionary skip
-            if (isinstance(sobject, dict) or isinstance(sobject, list)) and isinstance(i, dict):
-                tschema.extend(create_schema(i, dschema=pdschema, tableId=tableId, path=path + "[]",
-                                             policy_tag_callback=policy_tag_callback))
+            if (isinstance(sobject, dict) or isinstance(sobject, list)) and isinstance(
+                i, dict
+            ):
+                tschema.extend(
+                    create_schema(
+                        i,
+                        dschema=pdschema,
+                        tableId=tableId,
+                        path=path + "[]",
+                        policy_tag_callback=policy_tag_callback,
+                    )
+                )
             else:
                 fieldschema = True
                 sampleobject = i
@@ -718,17 +787,24 @@ def create_schema(sobject,
             tschema.append(dummyfield)
         if fname is not None:
             if not fieldschema:
-                recordschema = bigquery.SchemaField(fname, 'RECORD', mode='REPEATED',
-                                                    fields=tschema)
+                recordschema = bigquery.SchemaField(
+                    fname, "RECORD", mode="REPEATED", fields=tschema
+                )
                 # recordschema.fields = tuple(tschema)
                 schema.append(recordschema)
             else:
-                schema.append(_create_field(fname, sampleobject, mode="REPEATED", tableid=tableId,
-                                            path=path + "[]",
-                                            policy_tag_callback=policy_tag_callback))
+                schema.append(
+                    _create_field(
+                        fname,
+                        sampleobject,
+                        mode="REPEATED",
+                        tableid=tableId,
+                        path=path + "[]",
+                        policy_tag_callback=policy_tag_callback,
+                    )
+                )
         else:
             schema = tschema
-
 
     elif isinstance(sobject, dict):
         tschema = []
@@ -736,13 +812,18 @@ def create_schema(sobject,
         #    recordschema = bigquery.SchemaField(fname, 'RECORD')
         #    recordschema.fields = tschema
         if len(sobject) > 0:
-            for j in sobject:
+            for j in sorted(sobject):
                 if j not in dschema:
                     dschema[j] = {}
                 if "simple" not in dschema[j]:
-                    fieldschema = create_schema(sobject[j], fname=j, dschema=dschema[j],
-                                                tableId=tableId, path=path,
-                                                policy_tag_callback=policy_tag_callback)
+                    fieldschema = create_schema(
+                        sobject[j],
+                        fname=j,
+                        dschema=dschema[j],
+                        tableId=tableId,
+                        path=path,
+                        policy_tag_callback=policy_tag_callback,
+                    )
                     if fieldschema is not None:
                         if fname is not None:
                             tschema.extend(fieldschema)
@@ -755,9 +836,8 @@ def create_schema(sobject,
                 schema.append(dummyfield)
 
         if fname is not None:
-            recordschema = bigquery.SchemaField(fname, 'RECORD', fields=tschema)
+            recordschema = bigquery.SchemaField(fname, "RECORD", fields=tschema)
             schema = [recordschema]
-
 
     else:
         fieldschema = None
@@ -765,35 +845,51 @@ def create_schema(sobject,
             if isinstance(sobject, list):
                 if len(sobject) > 0:
                     if isinstance(sobject[0], dict):
-                        fieldschema = bigquery.SchemaField(fname, 'RECORD')
-                        fieldschema.mode = 'REPEATED'
+                        fieldschema = bigquery.SchemaField(fname, "RECORD")
+                        fieldschema.mode = "REPEATED"
                         mylist = sobject
                         head = mylist[0]
-                        fieldschema.fields = create_schema(head, schema_depth + 1, tableId=tableId,
-                                                           path=path + "[]",
-                                                           policy_tag_callback=policy_tag_callback)
+                        fieldschema.fields = create_schema(
+                            head,
+                            schema_depth + 1,
+                            tableId=tableId,
+                            path=path + "[]",
+                            policy_tag_callback=policy_tag_callback,
+                        )
                     else:
-                        fieldschema = _create_field(fname, sobject, mode=REPEATED, tableid=tableId,
-                                                    path=path + "[]",
-                                                    policy_tag_callback=policy_tag_callback)
+                        fieldschema = _create_field(
+                            fname,
+                            sobject,
+                            mode="REPEATED",
+                            tableid=tableId,
+                            path=path + "[]",
+                            policy_tag_callback=policy_tag_callback,
+                        )
             elif isinstance(sobject, dict):
-                fieldschema = bigquery.SchemaField(fname, 'RECORD')
-                fieldschema.fields = create_schema(sobject,
-                                                   schema_depth + 1,
-                                                   tableId = tableId,
-                                                   path = path,
-                                                   policy_tag_callback = policy_tag_callback)
+                fieldschema = bigquery.SchemaField(fname, "RECORD")
+                fieldschema.fields = create_schema(
+                    sobject,
+                    schema_depth + 1,
+                    tableId=tableId,
+                    path=path,
+                    policy_tag_callback=policy_tag_callback,
+                )
             else:
-                fieldschema = _create_field(fname, sobject, tableid=tableId, path=path,
-                                            policy_tag_callback=policy_tag_callback)
+                fieldschema = _create_field(
+                    fname,
+                    sobject,
+                    tableid=tableId,
+                    path=path,
+                    policy_tag_callback=policy_tag_callback,
+                )
 
             if dschema is not None:
                 dschema["simple"] = True
-            return ([fieldschema])
+            return [fieldschema]
         else:
-            return ([])
+            return []
 
-    return (schema)
+    return schema
 
 
 # convert a dict and with a schema object to assict convert dict into tuple
@@ -810,9 +906,9 @@ def dict_plus_schema_2_tuple(data, schema):
         value = None
         if data is not None and schema_item.name in data:
             value = data[schema_item.name]
-        if schema_item.field_type == 'RECORD':
+        if schema_item.field_type == "RECORD":
             ttuple = []
-            if schema_item.mode != 'REPEATED' or value is None:
+            if schema_item.mode != "REPEATED" or value is None:
                 value = [value]
             for value_item in value:
                 value = dict_plus_schema_2_tuple(value_item, schema_item.fields)
@@ -833,15 +929,15 @@ def tuple_plus_schema_2_dict(data, schema):
     """
     rdata = {}
     for schema_item, value in zip(schema, data):
-        if schema_item.field_type == 'RECORD':
+        if schema_item.field_type == "RECORD":
             ldata = []
-            if schema_item.mode == 'REPEATED':
+            if schema_item.mode == "REPEATED":
                 llist = value
             else:
                 llist = [value]
             for list_item in llist:
                 ldata.append(tuple_plus_schema_2_dict(list_item, schema_item.fields))
-            if schema_item.mode == 'REPEATED':
+            if schema_item.mode == "REPEATED":
                 value = ldata
             else:
                 value = ldata[0]
@@ -860,46 +956,48 @@ def gen_template_dict(schema):
     rdata = {}
     for schema_item in schema:
         value = None
-        if schema_item.field_type == 'RECORD':
+        if schema_item.field_type == "RECORD":
             tvalue = gen_template_dict(schema_item.fields)
-            if schema_item.mode == 'REPEATED':
+            if schema_item.mode == "REPEATED":
                 value = [tvalue]
             else:
                 value = tvalue
-        elif schema_item.field_type == 'INTEGER':
+        elif schema_item.field_type == "INTEGER":
             value = 0
-        elif schema_item.field_type == 'BOOLEAN':
+        elif schema_item.field_type == "BOOLEAN":
             value = False
-        elif schema_item.field_type == 'FLOAT':
+        elif schema_item.field_type == "FLOAT":
             value = 0.0
-        elif schema_item.field_type == 'STRING':
+        elif schema_item.field_type == "STRING":
             value = ""
-        elif schema_item.field_type == 'TIMESTAMP':
+        elif schema_item.field_type == "TIMESTAMP":
             value = datetime.utcnow()
-        elif schema_item.field_type == 'DATE':
+        elif schema_item.field_type == "DATE":
             value = date.today()
-        elif schema_item.field_type == 'TIME':
+        elif schema_item.field_type == "TIME":
             value = datetime.utcnow().time()
-        elif schema_item.field_type == 'BYTES':
-            value = b'\x00'
+        elif schema_item.field_type == "BYTES":
+            value = b"\x00"
         else:
-            raise UnexpectedType(str(type(sobject)))
+            raise UnexpectedType(str(type(schema_item)))
         rdata[schema_item.name] = value
 
     return rdata
 
 
 def to_dict(schema):
-    field_member = {"name": schema.name,
-                    "type": schema.field_type,
-                    "description": schema.description,
-                    "mode": schema.mode,
-                    "fields": None}
+    field_member = {
+        "name": schema.name,
+        "type": schema.field_type,
+        "description": schema.description,
+        "mode": schema.mode,
+        "fields": None,
+    }
     if schema.fields is not None:
         fields_to_append = []
-        for field_item in schema.fields:
+        for field_item in sorted(schema.fields, key=lambda x : x.name):
             fields_to_append.append(to_dict(field_item))
-        field_member['fields'] = fields_to_append
+        field_member["fields"] = fields_to_append
     return field_member
 
 
@@ -907,8 +1005,8 @@ def calc_field_depth(fieldlist, depth=0):
     max_depth = depth
     recursive_depth = depth
     for i in fieldlist:
-        if 'fields' in i:
-            recursive_depth = calc_field_depth(i['fields'], depth + 1)
+        if "fields" in i:
+            recursive_depth = calc_field_depth(i["fields"], depth + 1)
             if recursive_depth > max_depth:
                 max_depth = recursive_depth
     return max_depth
@@ -919,14 +1017,13 @@ def trunc_field_depth(fieldlist, maxdepth, depth=0):
     if depth <= maxdepth:
         for i in fieldlist:
             new_field.append(i)
-            if 'fields' in i:
+            if "fields" in i:
                 if depth == maxdepth:
                     # json.JSONEncoder().encode(fieldlist)
-                    i['type'] = 'STRING'
-                    i.pop('fields', None)
+                    i["type"] = "STRING"
+                    i.pop("fields", None)
                 else:
-                    i['fields'] = trunc_field_depth(
-                        i['fields'], maxdepth, depth + 1)
+                    i["fields"] = trunc_field_depth(i["fields"], maxdepth, depth + 1)
 
     return new_field
 
@@ -937,7 +1034,7 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
 
     for keyi in objtomatch:
         # Create schema does this adjustment so we need to do same in actual object
-        thekey = INVALIDBQFIELDCHARS.sub('_', keyi)
+        thekey = INVALIDBQFIELDCHARS.sub("_", keyi)
         # Work out if object keys have invalid values and n
         if thekey != keyi:
             poplist[keyi] = thekey
@@ -958,17 +1055,20 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
         do_bare_type_list(objtomatch, keyi, "value")
         for schema_item in schema:
             if thekey == schema_item.name:
-                if schema_item.field_type == 'RECORD':
-                    if schema_item.mode == 'REPEATED':
+                if schema_item.field_type == "RECORD":
+                    if schema_item.mode == "REPEATED":
                         subevolve = evolved
                         for listi in objtomatch[keyi]:
                             # TODO hack to modify fields as .fields is immutable since version
                             #  0.28 and later but not
                             #  in docs!!
                             schema_item._fields = list(schema_item.fields)
-                            tsubevolve = match_and_addtoschema(listi, schema_item.fields,
-                                                               evolved=evolved,
-                                                               path=path + "." + thekey)
+                            tsubevolve = match_and_addtoschema(
+                                listi,
+                                schema_item.fields,
+                                evolved=evolved,
+                                path=path + "." + thekey,
+                            )
                             if not subevolve and tsubevolve:
                                 subevolve = tsubevolve
                         evolved = subevolve
@@ -977,8 +1077,9 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
                         #  and later but not in
                         #  docs!!
                         schema_item._fields = list(schema_item.fields)
-                        evolved = match_and_addtoschema(objtomatch[keyi], schema_item.fields,
-                                                        evolved=evolved)
+                        evolved = match_and_addtoschema(
+                            objtomatch[keyi], schema_item.fields, evolved=evolved
+                        )
                 matchstruct = True
                 break
         if matchstruct:
@@ -988,16 +1089,17 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
         # append to the schema list
         try:
             toadd = create_schema(objtomatch[keyi], fname=keyi)
-        except Exception as an_exception:
+        except Exception:
             raise SchemaMutationError(str(objtomatch), keyi, path)
 
         if toadd is not None:
             schema.extend(toadd)
             if logger is not None:
                 logger.warning(
-                    "Evolved path = {}, struct={}".format(path + "." + thekey,
-                                                          pretty_printer.pformat(
-                                                              objtomatch[keyi])))
+                    "Evolved path = {}, struct={}".format(
+                        path + "." + thekey, pretty_printer.pformat(objtomatch[keyi])
+                    )
+                )
             evolved = True
 
     # If values of keys did need changing change them
@@ -1049,14 +1151,14 @@ def do_bare_type_list(adict, key, detail, logger=None):
                         tbsflat = "\n".join(map(str, tbs))
                         logger.error(
                             "Bare list for key {} in dict {} expected a basic type not converting "
-                            "{}".format(
-                                key,
-                                str(adict),
-                                tbsflat))
-    except Exception as an_exception:
+                            "{}".format(key, str(adict), tbsflat)
+                        )
+    except Exception:
         raise UnexpectedDict(
-            "Bare list for key {} in dict {} expected a basic type not converting".format(key, str(
-                adict)))
+            "Bare list for key {} in dict {} expected a basic type not converting".format(
+                key, str(adict)
+            )
+        )
 
 
 def recurse_and_add_to_schema(schema, oschema):
@@ -1070,12 +1172,11 @@ def recurse_and_add_to_schema(schema, oschema):
         nschema = []
         # Look for
         for new_schema_item in wschema:
-            if output_schema_item['name'].lower() == new_schema_item.name.lower():
-                if output_schema_item['type'] == 'RECORD':
-                    rchanges, output_schema_item['fields'] = \
-                        recurse_and_add_to_schema(new_schema_item.fields,
-                                                  output_schema_item[
-                                                      'fields'])
+            if output_schema_item["name"].lower() == new_schema_item.name.lower():
+                if output_schema_item["type"] == "RECORD":
+                    rchanges, output_schema_item["fields"] = recurse_and_add_to_schema(
+                        new_schema_item.fields, output_schema_item["fields"]
+                    )
                     if rchanges and not changes:
                         changes = rchanges
             else:
@@ -1108,21 +1209,25 @@ JOIN (
     1) AS fls
 ON fls.id = ut.id AND fls.{3}  = {4}
 """
-FSLSTDT = "View that shows {} captured values of underlying table for object of a " \
-          "given non repeating key " \
-          "of 'id' {}.{}.{}"
+FSLSTDT = (
+    "View that shows {} captured values of underlying table for object of a "
+    "given non repeating key "
+    "of 'id' {}.{}.{}"
+)
 
 
-def gen_diff_views(project,
-                   dataset,
-                   table,
-                   schema,
-                   description="",
-                   intervals=None,
-                   hint_fields=None,
-                   hint_mutable_fields=True,
-                   time_expr=None,
-                   fieldsappend=None):
+def gen_diff_views(
+    project,
+    dataset,
+    table,
+    schema,
+    description="",
+    intervals=None,
+    hint_fields=None,
+    hint_mutable_fields=True,
+    time_expr=None,
+    fieldsappend=None,
+):
     """
 
     :param project: google project id of underlying table
@@ -1141,8 +1246,12 @@ def gen_diff_views(project,
     views = []
     fieldsnot4diff = []
     if intervals is None:
-        intervals = [{"day": "1 DAY"}, {"week": "7 DAY"}, {"month": "30 DAY"},
-                     {"fortnight": "14 DAY"}]
+        intervals = [
+            {"day": "1 DAY"},
+            {"week": "7 DAY"},
+            {"month": "30 DAY"},
+            {"fortnight": "14 DAY"},
+        ]
 
     if time_expr is None:
         time_expr = "_PARTITIONTIME"
@@ -1151,54 +1260,56 @@ def gen_diff_views(project,
         for fdiffi in fieldsappend:
             fieldsnot4diff.append(fdiffi)
     if hint_fields is None:
-        hint_fields = ['creationTime',
-                       'usage',
-                       'title',
-                       'description',
-                       'preferred',
-                       'documentationLink',
-                       'discoveryLink',
-                       'numLongTermBytes',
-                       'detailedStatus',
-                       'lifecycleState',
-                       'size',
-                       'md5Hash',
-                       'crc32c',
-                       'timeStorageClassUpdated',
-                       'deleted',
-                       'networkIP',
-                       'natIP',
-                       'changePasswordAtNextLogin',
-                       'status',
-                       'state',
-                       'substate',
-                       'stateStartTime',
-                       'metricValue',
-                       'requestedState',
-                       'statusMessage',
-                       'numWorkers',
-                       'currentStateTime',
-                       'currentState',
-                       'lastLoginTime',
-                       'lastViewedByMeDate',
-                       'modifiedByMeDate',
-                       'etag',
-                       'servingStatus',
-                       'lastUpdated',
-                       'updateTime',
-                       'lastModified',
-                       'lastModifiedTime',
-                       'timeStorageClassUpdated',
-                       'updated',
-                       'numRows',
-                       'numBytes',
-                       'numUsers',
-                       'isoCountryCodes',
-                       'countries',
-                       'uriDescription',
-                       'riskScore',
-                       'controlId',
-                       'resolutionDate']
+        hint_fields = [
+            "creationTime",
+            "usage",
+            "title",
+            "description",
+            "preferred",
+            "documentationLink",
+            "discoveryLink",
+            "numLongTermBytes",
+            "detailedStatus",
+            "lifecycleState",
+            "size",
+            "md5Hash",
+            "crc32c",
+            "timeStorageClassUpdated",
+            "deleted",
+            "networkIP",
+            "natIP",
+            "changePasswordAtNextLogin",
+            "status",
+            "state",
+            "substate",
+            "stateStartTime",
+            "metricValue",
+            "requestedState",
+            "statusMessage",
+            "numWorkers",
+            "currentStateTime",
+            "currentState",
+            "lastLoginTime",
+            "lastViewedByMeDate",
+            "modifiedByMeDate",
+            "etag",
+            "servingStatus",
+            "lastUpdated",
+            "updateTime",
+            "lastModified",
+            "lastModifiedTime",
+            "timeStorageClassUpdated",
+            "updated",
+            "numRows",
+            "numBytes",
+            "numUsers",
+            "isoCountryCodes",
+            "countries",
+            "uriDescription",
+            "riskScore",
+            "controlId",
+            "resolutionDate",
+        ]
 
     fqtablename = "{}.{}.{}".format(project, dataset, table)
     basediffview = table + "db"
@@ -1206,7 +1317,9 @@ def gen_diff_views(project,
     baseselectclause = """#standardSQL
 SELECT
     {} AS scantime,
-    xxrownumbering.partRowNumber""".format(time_expr)
+    xxrownumbering.partRowNumber""".format(
+        time_expr
+    )
     baseendselectclause = """
     JOIN (
       SELECT
@@ -1219,7 +1332,9 @@ SELECT
           `{project}.{dataset}.{table}`)) AS xxrownumbering
     ON
       {time_expr} = xxrownumbering.scantime
-    """.format(time_expr=time_expr, project=project, dataset=dataset, table=table)
+    """.format(
+        time_expr=time_expr, project=project, dataset=dataset, table=table
+    )
 
     curtablealias = "ta" + table
     fieldprefix = ""
@@ -1231,75 +1346,85 @@ SELECT
     fields_update_only = []
     aliasnum = 1
 
-    basedata = {"select": baseselectclause, "from": basefromclause, "aliasnum": aliasnum}
+    basedata = {
+        "select": baseselectclause,
+        "from": basefromclause,
+        "aliasnum": aliasnum,
+    }
 
     def recurse_diff_base(schema, fieldprefix, curtablealias):
-        pretty_printer = pprint.PrettyPrinter(indent=4)
+        # pretty_printer = pprint.PrettyPrinter(indent=4)
 
-        for schema_item in schema:
+        for schema_item in sorted(schema, key=lambda x : x.name):
             if schema_item.name in fieldsnot4diff:
                 continue
             # field names can only be up o 128 characters long
             if len(fieldprefix + schema_item.name) > 127:
                 raise BQHittingQueryGenerationQuotaLimit(
                     "Field alias is over 128 bytes {} aborting code generation".format(
-                        fieldprefix + schema_item.name))
-            if schema_item.mode != 'REPEATED':
-                if schema_item.field_type == 'STRING':
+                        fieldprefix + schema_item.name
+                    )
+                )
+            if schema_item.mode != "REPEATED":
+                if schema_item.field_type == "STRING":
                     basefield = ',\n    ifnull({}.{},"None") as `{}`'.format(
-                        curtablealias,
-                        schema_item.name,
-                        fieldprefix + schema_item.name)
-                elif schema_item.field_type == 'BOOLEAN':
-                    basefield = ',\n    ifnull({}.{},False) as `{}`'.format(curtablealias,
-                                                                            schema_item.name,
-                                                                            fieldprefix +
-                                                                            schema_item.name)
-                elif schema_item.field_type == 'INTEGER':
-                    basefield = ',\n    ifnull({}.{},0) as `{}`'.format(curtablealias,
-                                                                        schema_item.name,
-                                                                        fieldprefix +
-                                                                        schema_item.name)
-                elif schema_item.field_type == 'FLOAT':
-                    basefield = ',\n    ifnull({}.{},0.0) as `{}`'.format(curtablealias,
-                                                                          schema_item.name,
-                                                                          fieldprefix +
-                                                                          schema_item.name)
-                elif schema_item.field_type == 'DATE':
-                    basefield = ',\n    ifnull({}.{},DATE(1970,1,1)) as `{}`'.format(curtablealias,
-                                                                                     schema_item.name,
-                                                                                     fieldprefix +
-                                                                                     schema_item.name)
-                elif schema_item.field_type == 'DATETIME':
-                    basefield = ',\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`'.format(
-                        curtablealias, schema_item.name,
-                        fieldprefix + schema_item.name)
-                elif schema_item.field_type == 'TIMESTAMP':
-                    basefield = ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{' \
-                                '}`'.format(
-                        curtablealias, schema_item.name,
-                        fieldprefix + schema_item.name)
-                elif schema_item.field_type == 'TIME':
-                    basefield = ',\n    ifnull({}.{},TIME(0,0,0)) as `{}`'.format(curtablealias,
-                                                                                  schema_item.name,
-                                                                                  fieldprefix +
-                                                                                  schema_item.name)
-                elif schema_item.field_type == 'BYTES':
-                    basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(curtablealias,
-                                                                              schema_item.name,
-                                                                              fieldprefix +
-                                                                              schema_item.name)
-                elif schema_item.field_type == 'RECORD':
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "BOOLEAN":
+                    basefield = ",\n    ifnull({}.{},False) as `{}`".format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "INTEGER":
+                    basefield = ",\n    ifnull({}.{},0) as `{}`".format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "FLOAT":
+                    basefield = ",\n    ifnull({}.{},0.0) as `{}`".format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "DATE":
+                    basefield = ",\n    ifnull({}.{},DATE(1970,1,1)) as `{}`".format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "DATETIME":
+                    basefield = (
+                        ",\n    ifnull({}.{},DATETIME(1970,1,1,0,0,0)) as `{}`".format(
+                            curtablealias,
+                            schema_item.name,
+                            fieldprefix + schema_item.name,
+                        )
+                    )
+                elif schema_item.field_type == "TIMESTAMP":
+                    basefield = (
+                        ',\n    ifnull({}.{},TIMESTAMP("1970-01-01T00:00:00Z")) as `{'
+                        "}`".format(
+                            curtablealias,
+                            schema_item.name,
+                            fieldprefix + schema_item.name,
+                        )
+                    )
+                elif schema_item.field_type == "TIME":
+                    basefield = ",\n    ifnull({}.{},TIME(0,0,0)) as `{}`".format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "BYTES":
+                    basefield = ',\n    ifnull({}.{},b"\x00") as `{}`'.format(
+                        curtablealias, schema_item.name, fieldprefix + schema_item.name
+                    )
+                elif schema_item.field_type == "RECORD":
                     aliasstack.append(curtablealias)
                     fieldprefixstack.append(fieldprefix)
                     fieldprefix = fieldprefix + schema_item.name
-                    if schema_item.mode == 'REPEATED':
+                    if schema_item.mode == "REPEATED":
                         oldalias = curtablealias
-                        curtablealias = "A{}".format(basedata['aliasnum'])
-                        basedata['aliasnum'] = basedata['aliasnum'] + 1
+                        curtablealias = "A{}".format(basedata["aliasnum"])
+                        basedata["aliasnum"] = basedata["aliasnum"] + 1
 
-                        basedata['from'] = basedata['from'] + "\nLEFT JOIN UNNEST({}) as {}".format(
-                            oldalias + "." + schema_item.name, curtablealias)
+                        basedata["from"] = basedata[
+                            "from"
+                        ] + "\nLEFT JOIN UNNEST({}) as {}".format(
+                            oldalias + "." + schema_item.name, curtablealias
+                        )
 
                     else:
                         curtablealias = curtablealias + "." + schema_item.name
@@ -1312,38 +1437,53 @@ SELECT
                 fieldprefixstack.append(fieldprefix)
                 fieldprefix = fieldprefix + schema_item.name
                 oldalias = curtablealias
-                curtablealias = "A{}".format(basedata['aliasnum'])
-                basedata['aliasnum'] = basedata['aliasnum'] + 1
-                basedata['from'] = basedata['from'] + "\nLEFT JOIN UNNEST({}) as {}".format(
-                    oldalias + "." + schema_item.name, curtablealias)
-                if schema_item.field_type == 'STRING':
+                curtablealias = "A{}".format(basedata["aliasnum"])
+                basedata["aliasnum"] = basedata["aliasnum"] + 1
+                basedata["from"] = basedata[
+                    "from"
+                ] + "\nLEFT JOIN UNNEST({}) as {}".format(
+                    oldalias + "." + schema_item.name, curtablealias
+                )
+                if schema_item.field_type == "STRING":
                     basefield = ',\n    ifnull({},"None") as {}'.format(
-                        curtablealias,
-                        fieldprefix)
-                elif schema_item.field_type == 'BOOLEAN':
-                    basefield = ',\n    ifnull({},False) as {}'.format(curtablealias, fieldprefix)
-                elif schema_item.field_type == 'INTEGER':
-                    basefield = ',\n    ifnull({},0) as {}'.format(curtablealias, fieldprefix)
-                elif schema_item.field_type == 'FLOAT':
-                    basefield = ',\n    ifnull({},0.0) as {}'.format(curtablealias, fieldprefix)
-                elif schema_item.field_type == 'DATE':
-                    basefield = ',\n    ifnull({},DATE(1970,1,1)) as {}'.format(curtablealias,
-                                                                                fieldprefix)
-                elif schema_item.field_type == 'DATETIME':
-                    basefield = ',\n    ifnull({},DATETIME(1970,1,1,0,0,0)) as {}'.format(
-                        curtablealias,
-                        fieldprefix)
-                elif schema_item.field_type == 'TIME':
-                    basefield = ',\n    ifnull({},TIME(0,0,0)) as {}'.format(curtablealias,
-                                                                             fieldprefix)
-                elif schema_item.field_type == 'BYTES':
-                    basefield = ',\n    ifnull({},b"\x00") as {}'.format(curtablealias, fieldprefix)
-                if schema_item.field_type == 'RECORD':
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "BOOLEAN":
+                    basefield = ",\n    ifnull({},False) as {}".format(
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "INTEGER":
+                    basefield = ",\n    ifnull({},0) as {}".format(
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "FLOAT":
+                    basefield = ",\n    ifnull({},0.0) as {}".format(
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "DATE":
+                    basefield = ",\n    ifnull({},DATE(1970,1,1)) as {}".format(
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "DATETIME":
+                    basefield = (
+                        ",\n    ifnull({},DATETIME(1970,1,1,0,0,0)) as {}".format(
+                            curtablealias, fieldprefix
+                        )
+                    )
+                elif schema_item.field_type == "TIME":
+                    basefield = ",\n    ifnull({},TIME(0,0,0)) as {}".format(
+                        curtablealias, fieldprefix
+                    )
+                elif schema_item.field_type == "BYTES":
+                    basefield = ',\n    ifnull({},b"\x00") as {}'.format(
+                        curtablealias, fieldprefix
+                    )
+                if schema_item.field_type == "RECORD":
                     recurse_diff_base(schema_item.fields, fieldprefix, curtablealias)
                 else:
                     # as an array has to be a diff not an update
                     fields4diff.append(fieldprefix)
-                    basedata['select'] = basedata['select'] + basefield
+                    basedata["select"] = basedata["select"] + basefield
                 curtablealias = aliasstack.pop()
                 fieldprefix = fieldprefixstack.pop()
                 continue
@@ -1361,46 +1501,68 @@ SELECT
                 fields_update_only.append(fieldprefix + schema_item.name)
             else:
                 fields4diff.append(fieldprefix + schema_item.name)
-            basedata['select'] = basedata['select'] + basefield
+            basedata["select"] = basedata["select"] + basefield
         return
 
     try:
         recurse_diff_base(schema, fieldprefix, curtablealias)
         allfields = fields4diff + fields_update_only
-        basechangeselect = basedata['select'] + basedata['from'] + baseendselectclause
+        basechangeselect = basedata["select"] + basedata["from"] + baseendselectclause
         joinfields = ""
         if len(fields4diff) > 0 and len(fields_update_only) > 0:
             joinfields = "\n   UNION ALL\n"
         auditchangequery = AUDITCHANGESELECT.format(
             mutatedimmutablefields="\n     UNION ALL".join(
-                [TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field) for field in
-                 fields4diff]),
+                [
+                    TEMPLATEMUTATEDIMMUTABLE.format(fieldname=field)
+                    for field in fields4diff
+                ]
+            ),
             mutablefieldchanges="\n    UNION ALL".join(
-                [TEMPLATEMUTATEDFIELD.format(fieldname=field) for field in
-                 fields_update_only]),
+                [
+                    TEMPLATEMUTATEDFIELD.format(fieldname=field)
+                    for field in fields_update_only
+                ]
+            ),
             beforeorafterfields=",\n".join(
-                [TEMPLATEBEFOREORAFTER.format(fieldname=field) for field in
-                 allfields]),
+                [TEMPLATEBEFOREORAFTER.format(fieldname=field) for field in allfields]
+            ),
             basechangeselect=basechangeselect,
             immutablefieldjoin="AND ".join(
-                [TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field) for field in
-                 fields4diff]),
-            avoidlastpredicate=AVOIDLASTSETINCROSSJOIN.format(time_expr=time_expr, project=project,
-                                                              dataset=dataset, table=table),
-            joinfields=joinfields
+                [
+                    TEMPLATEFORIMMUTABLEJOINFIELD.format(fieldname=field)
+                    for field in fields4diff
+                ]
+            ),
+            avoidlastpredicate=AVOIDLASTSETINCROSSJOIN.format(
+                time_expr=time_expr, project=project, dataset=dataset, table=table
+            ),
+            joinfields=joinfields,
         )
 
         if len(basechangeselect) > 256 * 1024:
             raise BQHittingQueryGenerationQuotaLimit(
-                "Query {} is over 256kb".format(basechangeselect))
-        views.append({"name": basediffview, "query": basechangeselect,
-                      "description": "View used as basis for diffview:" + description})
+                "Query {} is over 256kb".format(basechangeselect)
+            )
+        views.append(
+            {
+                "name": basediffview,
+                "query": basechangeselect,
+                "description": "View used as basis for diffview:" + description,
+            }
+        )
         if len(auditchangequery) > 256 * 1024:
             raise BQHittingQueryGenerationQuotaLimit(
-                "Query {} is over 256kb".format(auditchangequery))
-        views.append({"name": "{}diff".format(table), "query": auditchangequery,
-                      "description": "View calculates what has changed at what time:" +
-                                     description})
+                "Query {} is over 256kb".format(auditchangequery)
+            )
+        views.append(
+            {
+                "name": "{}diff".format(table),
+                "query": auditchangequery,
+                "description": "View calculates what has changed at what time:"
+                + description,
+            }
+        )
 
         refbasediffview = "{}.{}.{}".format(project, dataset, basediffview)
 
@@ -1416,11 +1578,11 @@ SELECT
         # from diffbaseview as later with select of later timestamp
         # This template logic is then changed for each interval to actually generate concrete views
 
-        mutatedimmutablefields = ""
-        mutablefieldchanges = ""
-        beforeorafterfields = ""
-        basechangeselect = ""
-        immutablefieldjoin = ""
+        # mutatedimmutablefields = ""
+        # mutablefieldchanges = ""
+        # beforeorafterfields = ""
+        # basechangeselect = ""
+        # immutablefieldjoin = ""
 
         diffviewselectclause = """#standardSQL
 SELECT
@@ -1460,63 +1622,82 @@ FULL OUTER JOIN (
     FROM
       `{2}.{3}.{4}` )) l
 ON
-""".format(refbasediffview, time_expr, project, dataset, table)
+""".format(
+            refbasediffview, time_expr, project, dataset, table
+        )
 
         for f4i in fields4diff:
-            diffieldclause = diffieldclause + \
-                             ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
-                             "when o.{} = l.{} " \
-                             "then 0 else 1 end as diff{}".format(
-                                 f4i, f4i, f4i, f4i, f4i, f4i, f4i)
+            diffieldclause = (
+                diffieldclause
+                + ",\n    o.{} as orig{},\n    l.{} as later{},\n    case "
+                "when o.{} = l.{} "
+                "then 0 else 1 end as diff{}".format(f4i, f4i, f4i, f4i, f4i, f4i, f4i)
+            )
             if diffcaseclause == "":
                 diffcaseclause = """
     CASE
     WHEN o.{} IS NULL THEN 'Added'
     WHEN l.{} IS NULL THEN 'Deleted'
-    WHEN o.{} = l.{} """.format(f4i, f4i, f4i, f4i)
+    WHEN o.{} = l.{} """.format(
+                    f4i, f4i, f4i, f4i
+                )
             else:
                 diffcaseclause = diffcaseclause + "AND o.{} = l.{} ".format(f4i, f4i)
 
             if diffwhereclause == "":
                 diffwhereclause = "    l.{} = o.{}".format(f4i, f4i)
             else:
-                diffwhereclause = diffwhereclause + "\n    AND l.{}=o.{}".format(f4i, f4i)
+                diffwhereclause = diffwhereclause + "\n    AND l.{}=o.{}".format(
+                    f4i, f4i
+                )
 
         for f4i in fields_update_only:
-            diffieldclause = diffieldclause + \
-                             ",\n    o.{} as orig{},\n    l.{} as later{},\n    case " \
-                             "" \
-                             "when o.{} = l.{} " \
-                             "then 0 else 1 end as diff{}".format(
-                                 f4i, f4i, f4i, f4i, f4i, f4i, f4i)
+            diffieldclause = (
+                diffieldclause
+                + ",\n    o.{} as orig{},\n    l.{} as later{},\n    case "
+                ""
+                "when o.{} = l.{} "
+                "then 0 else 1 end as diff{}".format(f4i, f4i, f4i, f4i, f4i, f4i, f4i)
+            )
             diffcaseclause = diffcaseclause + "AND o.{} = l.{} ".format(f4i, f4i)
 
-        diffcaseclause = diffcaseclause + """THEN 'Same'
+        diffcaseclause = (
+            diffcaseclause
+            + """THEN 'Same'
     ELSE 'Updated'
   END AS action"""
+        )
 
         for intervali in intervals:
             for keyi in intervali:
                 view_name = table + "diff" + keyi
-                view_description = "Diff of {} of underlying table {} description: {}".format(
-                    keyi,
-                    table,
-                    description)
-                diff_query = diffviewselectclause + \
-                             diffcaseclause + \
-                             diffieldclause + \
-                             diffviewfromclause.replace("%interval%", intervali[keyi]) + \
-                             diffwhereclause
+                view_description = (
+                    "Diff of {} of underlying table {} description: {}".format(
+                        keyi, table, description
+                    )
+                )
+                diff_query = (
+                    diffviewselectclause
+                    + diffcaseclause
+                    + diffieldclause
+                    + diffviewfromclause.replace("%interval%", intervali[keyi])
+                    + diffwhereclause
+                )
 
             if len(diff_query) > 256 * 1024:
                 raise BQHittingQueryGenerationQuotaLimit(
-                    "Query {} is over 256kb".format(diff_query))
+                    "Query {} is over 256kb".format(diff_query)
+                )
 
-            views.append({"name": view_name,
-                          "query": diff_query,
-                          "description": view_description})
+            views.append(
+                {
+                    "name": view_name,
+                    "query": diff_query,
+                    "description": view_description,
+                }
+            )
 
-        ## look for id in top level fields if exists create first seen and last seen views
+        # look for id in top level fields if exists create first seen and last seen views
         for i in schema:
             if i.name == "id":
                 fsv = FSLST.format(project, dataset, table, "firstSeenTime", time_expr)
@@ -1525,17 +1706,19 @@ ON
                 lsd = FSLSTDT.format("last", project, dataset, table)
 
                 if len(fsv) > 256 * 1024:
-                    raise BQHittingQueryGenerationQuotaLimit("Query {} is over 256kb".format(fsv))
+                    raise BQHittingQueryGenerationQuotaLimit(
+                        "Query {} is over 256kb".format(fsv)
+                    )
 
-                views.append({"name": table + "fs",
-                              "query": fsv, "description": fsd})
+                views.append({"name": table + "fs", "query": fsv, "description": fsd})
                 if len(lsv) > 256 * 1024:
-                    raise BQHittingQueryGenerationQuotaLimit("Query {} is over 256kb".format(lsv))
-                views.append({"name": table + "ls",
-                              "query": lsv, "description": lsd})
+                    raise BQHittingQueryGenerationQuotaLimit(
+                        "Query {} is over 256kb".format(lsv)
+                    )
+                views.append({"name": table + "ls", "query": lsv, "description": lsd})
                 break
 
-    except BQHittingQueryGenerationQuotaLimit as e:
+    except BQHittingQueryGenerationQuotaLimit:
         pass
 
     return views
@@ -1562,18 +1745,22 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
         if logger is not None:
             logger.warning(
                 "Evolving schema as new field(s) on {}:{}.{} views with * will need "
-                "reapplying".format(
-                    table.project, table.dataset_id, table.table_id))
+                "reapplying".format(table.project, table.dataset_id, table.table_id)
+            )
 
-        treq = bigquery.tables().get(projectId=table.project, datasetId=table.dataset_id,
-                                     tableId=table.table_id)
+        treq = bigquery.tables().get(
+            projectId=table.project, datasetId=table.dataset_id, tableId=table.table_id
+        )
         table_data = treq.execute()
-        oschema = table_data.get('schema')
-        tablechange, pschema = recurse_and_add_to_schema(schema, oschema['fields'])
-        update = {'schema': {"fields": pschema}}
-        preq = bigquery.tables().patch(projectId=table.project, datasetId=table.dataset_id,
-                                       tableId=table.table_id,
-                                       body=update)
+        oschema = table_data.get("schema")
+        tablechange, pschema = recurse_and_add_to_schema(schema, oschema["fields"])
+        update = {"schema": {"fields": pschema}}
+        preq = bigquery.tables().patch(
+            projectId=table.project,
+            datasetId=table.dataset_id,
+            tableId=table.table_id,
+            body=update,
+        )
         preq.execute()
         client.get_table(table)
         # table.reload()
@@ -1581,8 +1768,16 @@ def evolve_schema(insertobj, table, client, bigquery, logger=None):
     return evolved
 
 
-def create_default_bq_resources(template, basename, project, dataset, location, hint_fields=None,
-                                hint_mutable_fields=True, optheaddays=None):
+def create_default_bq_resources(
+    template,
+    basename,
+    project,
+    dataset,
+    location,
+    hint_fields=None,
+    hint_mutable_fields=True,
+    optheaddays=None,
+):
     """
 
     :param template: a template json object to create a big query schema for
@@ -1601,22 +1796,21 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
         "tableReference": {
             "projectId": project,
             "datasetId": dataset,
-            "tableId": basename
+            "tableId": basename,
         },
-        "timePartitioning": {
-            "type": "DAY",
-            "expirationMs": "94608000000"
-        },
-        "schema": {}
+        "timePartitioning": {"type": "DAY", "expirationMs": "94608000000"},
+        "schema": {},
     }
     table["schema"]["fields"] = get_bq_schema_from_json_repr(template)
     resourcelist.append(table)
-    views = gen_diff_views(project,
-                           dataset,
-                           basename,
-                           create_schema(template),
-                           hint_fields=hint_fields,
-                           hint_mutable_fields=hint_mutable_fields)
+    views = gen_diff_views(
+        project,
+        dataset,
+        basename,
+        create_schema(template),
+        hint_fields=hint_fields,
+        hint_mutable_fields=hint_mutable_fields,
+    )
 
     head_view_format = HEADVIEW
     # if a max days look back is given use it to optimise bytes in the head view
@@ -1628,13 +1822,12 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
         "tableReference": {
             "projectId": project,
             "datasetId": dataset,
-            "tableId": "{}head".format(basename)
+            "tableId": "{}head".format(basename),
         },
         "view": {
             "query": head_view_format.format(project, dataset, basename, optheaddays),
-            "useLegacySql": False
-
-        }
+            "useLegacySql": False,
+        },
     }
     resourcelist.append(table)
     for view_item in views:
@@ -1643,13 +1836,9 @@ def create_default_bq_resources(template, basename, project, dataset, location, 
             "tableReference": {
                 "projectId": project,
                 "datasetId": dataset,
-                "tableId": view_item["name"]
+                "tableId": view_item["name"],
             },
-            "view": {
-                "query": view_item["query"],
-                "useLegacySql": False
-
-            }
+            "view": {"query": view_item["query"], "useLegacySql": False},
         }
         resourcelist.append(table)
     return resourcelist
@@ -1678,42 +1867,52 @@ class ViewCompiler(object):
         return template_for_render.render(self.render_dictionary)
 
     def add_view_to_process(self, dataset, name, sql, unnest=True, description=None):
-
         standard_sql = True
         compiled_sql = self.render(sql)
         sql = compiled_sql
-        prefix = ""
-        if sql.strip().lower().find("#standardsql") == 0:
-            prefix = "#standardSQL\n"
-        else:
+        # prefix = ""
+        if sql.strip().lower().find("#legacysql") == 0:
             standard_sql = False
-            prefix = "#legacySQL\n"
 
         splitprojectdataset = ":"
         repattern = LEGACY_SQL_PDTCTABLEREGEXP
-        no_auth_view = "{}:{}".format(dataset.project, dataset.dataset_id)
+        # no_auth_view = "{}:{}".format(dataset.project, dataset.dataset_id)
 
         if standard_sql:
             splitprojectdataset = "."
             repattern = STANDARD_SQL_PDTCTABLEREGEXP
 
-        key = "{}{}{}.{}".format(dataset.project, splitprojectdataset, dataset.dataset_id, name)
+        key = "{}{}{}.{}".format(
+            dataset.project, splitprojectdataset, dataset.dataset_id, name
+        )
 
         dependsOn = []
 
-        for project_dataset_table in re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
-                                                                  sql).replace("\n", " ")):
+        for project_dataset_table in re.findall(
+            repattern, re.sub(SQL_COMMENT_REGEXP, "", sql).replace("\n", " ")
+        ):
             dependsOn.append(project_dataset_table)
 
-        self._views[key] = {"sql": sql, "dataset": dataset, "name": name, "dependsOn": dependsOn,
-                            "unnest": unnest, "description": description}
+        self._views[key] = {
+            "sql": sql,
+            "dataset": dataset,
+            "name": name,
+            "dependsOn": dependsOn,
+            "unnest": unnest,
+            "description": description,
+        }
 
     def compile_views(self):
         for tranche in self.view_tranche:
             for view in self.view_in_tranche(tranche):
-                view["sql"] = self.compile(view["dataset"], view["name"], view["sql"],
-                                           unnest=view["unnest"], description=view["description"],
-                                           rendered=True)
+                view["sql"] = self.compile(
+                    view["dataset"],
+                    view["name"],
+                    view["sql"],
+                    unnest=view["unnest"],
+                    description=view["description"],
+                    rendered=True,
+                )
 
     @property
     def view_tranche(self):
@@ -1760,9 +1959,11 @@ class ViewCompiler(object):
             self._add_auth_view[project_auth][dataset_auth] = []
         found = False
         for view in self._add_auth_view[project_auth][dataset_auth]:
-            if view_to_authorise["tableId"] == view["tableId"] and view_to_authorise["datasetId"] \
-                    == \
-                    view["datasetId"] and view_to_authorise["projectId"] == view["projectId"]:
+            if (
+                view_to_authorise["tableId"] == view["tableId"]
+                and view_to_authorise["datasetId"] == view["datasetId"]
+                and view_to_authorise["projectId"] == view["projectId"]
+            ):
                 found = True
                 break
         if not found:
@@ -1790,28 +1991,43 @@ class ViewCompiler(object):
                 for access in expected_auth_view_access:
                     if access["projectId"] not in managed_by_view_compiler:
                         managed_by_view_compiler[access["projectId"]] = {}
-                    if access["datasetId"] not in managed_by_view_compiler[access["projectId"]]:
-                        managed_by_view_compiler[access["projectId"]][access["datasetId"]] = True
-                    new_access_entries.append(bigquery.dataset.AccessEntry(None, 'view', access))
+                    if (
+                        access["datasetId"]
+                        not in managed_by_view_compiler[access["projectId"]]
+                    ):
+                        managed_by_view_compiler[access["projectId"]][
+                            access["datasetId"]
+                        ] = True
+                    new_access_entries.append(
+                        bigquery.dataset.AccessEntry(None, "view", access)
+                    )
 
                 for current_access in current_access_entries:
                     if current_access.entity_type == "view":
-                        if current_access.entity_id["projectId"] in managed_by_view_compiler and \
-                                current_access.entity_id["datasetId"] in managed_by_view_compiler[
-                            current_access.entity_id["projectId"]]:
+                        if (
+                            current_access.entity_id["projectId"]
+                            in managed_by_view_compiler
+                            and current_access.entity_id["datasetId"]
+                            in managed_by_view_compiler[
+                                current_access.entity_id["projectId"]
+                            ]
+                        ):
                             continue
                     new_access_entries.append(current_access)
                 return new_access_entries
 
         return current_access_entries
 
-    def compile(self, dataset, name, sql, unnest=True, description=None, rendered=False):
-
+    def compile(
+        self, dataset, name, sql, unnest=True, description=None, rendered=False
+    ):
         # if already done don't do again
         key = dataset.project + ":" + dataset.dataset_id + "." + name
         if key in self.view_depth_optimiser:
-            return self.view_depth_optimiser[key]["prefix"] + self.view_depth_optimiser[key][
-                "unnested"]
+            return (
+                self.view_depth_optimiser[key]["prefix"]
+                + self.view_depth_optimiser[key]["unnested"]
+            )
 
         if not rendered:
             sql = self.render(sql)
@@ -1831,22 +2047,28 @@ class ViewCompiler(object):
             prefix = "#legacySQL\n"
 
         # get rid of nested comments as they can break this even if in a string in a query
-        prefix = prefix + r"""
+        prefix = (
+            prefix
+            + r"""
 -- ===================================================================================
 -- 
 --                             ViewCompresser Output
 --     
 --                      \/\/\/\/\/\/Original SQL Below\/\/\/\/
 """
+        )
         for line in sql.splitlines():
             prefix = prefix + "-- " + line + "\n"
-        prefix = prefix + r"""
+        prefix = (
+            prefix
+            + r"""
 -- 
 --                      /\/\/\/\/\/\Original SQL Above/\/\/\/\
 --                      
 --                            Compiled SQL below
 -- ===================================================================================
 """
+        )
 
         splitprojectdataset = ":"
         repattern = LEGACY_SQL_PDCTABLEREGEXP
@@ -1865,29 +2087,45 @@ class ViewCompiler(object):
                 if not standard_sql:
                     compiled_sql = compiled_sql.replace(
                         "[" + i + "]",
-                        "( /* flattened view [-" + i + "-]*/ " + self.view_depth_optimiser[i][
-                            'unnested'] + ")")
+                        "( /* flattened view [-"
+                        + i
+                        + "-]*/ "
+                        + self.view_depth_optimiser[i]["unnested"]
+                        + ")",
+                    )
                 else:
                     compiled_sql = compiled_sql.replace(
-                        "`" + i.replace(':', '.') + "`",
-                        "( /* flattened view `-" + i + "-`*/ " + self.view_depth_optimiser[i][
-                            'unnested'] + ")")
+                        "`" + i.replace(":", ".") + "`",
+                        "( /* flattened view `-"
+                        + i
+                        + "-`*/ "
+                        + self.view_depth_optimiser[i]["unnested"]
+                        + ")",
+                    )
 
         # strip off comments before analysing queries for tables used in the query and remove
         # newlines
         # to avoid false positives
         # use set to get unique values
-        for project_dataset in set(re.findall(repattern, re.sub(SQL_COMMENT_REGEXP, "",
-                                                                compiled_sql).replace("\n", " "))):
+        for project_dataset in set(
+            re.findall(
+                repattern,
+                re.sub(SQL_COMMENT_REGEXP, "", compiled_sql).replace("\n", " "),
+            )
+        ):
             # if is a table in same dataset nothing to authorise
             if project_dataset != no_auth_view:
                 project_auth, dataset_auth = project_dataset.split(splitprojectdataset)
                 # spool the view needs authorisation for the authorisation task
-                self.add_auth_view(project_auth, dataset_auth, {
-                    "projectId": dataset.project,
-                    "datasetId": dataset.dataset_id,
-                    "tableId": name
-                })
+                self.add_auth_view(
+                    project_auth,
+                    dataset_auth,
+                    {
+                        "projectId": dataset.project,
+                        "datasetId": dataset.dataset_id,
+                        "tableId": name,
+                    },
+                )
                 unnest = False
 
         # and we put back original if we want to hide logic
@@ -1904,24 +2142,24 @@ class ViewCompiler(object):
             # if still too big strip out other comments
             # and extra space
             if len(prefix + compiled_sql) > max_query_size:
-                nsql = ''
+                nsql = ""
                 for line in compiled_sql.split("\n"):
                     # if not a comment
                     trimline = line.strip()
                     if trimline[:2] != "--":
-                        ' '.join(trimline.split())
+                        " ".join(trimline.split())
                         nsql = nsql + "\n" + trimline
                 compiled_sql = nsql
 
                 # if still too big go back to original sql stripped
                 if len(prefix + compiled_sql) > max_query_size:
                     if len(sql) > max_query_size:
-                        nsql = ''
+                        nsql = ""
                         for line in sql.split("\n"):
                             trimline = line.strip()
                             # if not a comment
                             if trimline[:1] != "#":
-                                ' '.join(line.split())
+                                " ".join(line.split())
                                 nsql = nsql + "\n" + trimline
                                 compiled_sql = nsql
                     else:
@@ -1931,7 +2169,8 @@ class ViewCompiler(object):
             self.view_depth_optimiser[key] = {
                 "raw": sql,
                 "unnested": compiled_sql,
-                "prefix": prefix}
+                "prefix": prefix,
+            }
 
         return prefix + compiled_sql
 
@@ -1944,8 +2183,18 @@ def compute_region_equals_bqregion(compute_region, bq_region):
     return compute_region.lower() == bq_compute_region
 
 
-def run_query(client, query, logger, desctext="", location=None, max_results=10000,
-              callback_on_complete=None, labels=None, params=None, query_cmek=None):
+def run_query(
+    client,
+    query,
+    logger,
+    desctext="",
+    location=None,
+    max_results=10000,
+    callback_on_complete=None,
+    labels=None,
+    params=None,
+    query_cmek=None,
+):
     """
     Runa big query query and yield on each row returned as a generator
     :param client: The BQ client to use to run the query
@@ -1954,7 +2203,7 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     :return: nothing
     """
     use_legacy_sql = False
-    if query.lower().find('#legacysql') == 0:
+    if query.lower().find("#legacysql") == 0:
         use_legacy_sql = True
 
     def _get_parameter(name, argtype):
@@ -1988,7 +2237,9 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
                         struct_list.append(_get_parameter(None, item))
                     return bigquery.ArrayQueryParameter(name, "STRUCT", struct_list)
                 else:
-                    return bigquery.ArrayQueryParameter(name, _get_type(argtype[0]), argtype)
+                    return bigquery.ArrayQueryParameter(
+                        name, _get_type(argtype[0]), argtype
+                    )
             else:
                 return None
 
@@ -2022,8 +2273,9 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     job_config.maximum_billing_tier = 10
     job_config.use_legacy_sql = use_legacy_sql
     if query_cmek is not None:
-        job_config.destination_encryption_configuration = bigquery.EncryptionConfiguration(
-            kms_key_name=query_cmek)
+        job_config.destination_encryption_configuration = (
+            bigquery.EncryptionConfiguration(kms_key_name=query_cmek)
+        )
     if labels is not None:
         job_config.labels = labels
 
@@ -2034,13 +2286,14 @@ def run_query(client, query, logger, desctext="", location=None, max_results=100
     while True:
         query_job.reload()  # Refreshes the state via a GET request.
 
-        if query_job.state == 'DONE':
+        if query_job.state == "DONE":
             if query_job.error_result:
-                errtext = "Query error {}{}".format(pretty_printer.pformat(query_job.error_result),
-                                                    pretty_printer.pformat(query_job.errors))
+                errtext = "Query error {}{}".format(
+                    pretty_printer.pformat(query_job.error_result),
+                    pretty_printer.pformat(query_job.errors),
+                )
                 logger.error(errtext, exc_info=True)
-                raise BQQueryError(
-                    query, desctext, errtext)
+                raise BQQueryError(query, desctext, errtext)
             else:
                 results = True
                 break
@@ -2078,13 +2331,14 @@ class ExportImportType(object):
         :param dst_encryption_configuration: if set overrides keys on tables some calc has driven
         this
         """
-        assert isinstance(srctable,
-                          bigquery.Table), "Export Import Type MUST be constructed with a " \
-                                           "bigquery.Table object"
-        assert dsttable is None or isinstance(dsttable,
-                                              bigquery.Table), "Export Import dsttabl Type MUST " \
-                                                               "be constructed with a " \
-                                                               "bigquery.Table object or None"
+        assert isinstance(srctable, bigquery.Table), (
+            "Export Import Type MUST be constructed with a " "bigquery.Table object"
+        )
+        assert dsttable is None or isinstance(dsttable, bigquery.Table), (
+            "Export Import dsttabl Type MUST "
+            "be constructed with a "
+            "bigquery.Table object or None"
+        )
 
         if dsttable is None:
             self.__table = srctable
@@ -2098,7 +2352,7 @@ class ExportImportType(object):
         # detect if any GEOGRAPHY or DATETIME fields
         def _detect_non_avro_and_parquet_types(schema):
             for field in schema:
-                if field.field_type == 'GEOGRAPHY' or field.field_type == "DATETIME":
+                if field.field_type == "GEOGRAPHY" or field.field_type == "DATETIME":
                     return True
                 if field.field_type == "RECORD":
                     if _detect_non_avro_and_parquet_types(list(field.fields)):
@@ -2129,7 +2383,9 @@ class ExportImportType(object):
         # if _detect_non_parquet_types(list(srctable.schema)):
         self.__destination_format = bigquery.job.DestinationFormat.AVRO
         if _detect_non_avro_and_parquet_types(list(srctable.schema)):
-            self.__destination_format = bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
+            self.__destination_format = (
+                bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
+            )
 
     @property
     def destination_format(self):
@@ -2150,7 +2406,10 @@ class ExportImportType(object):
             return bigquery.job.SourceFormat.AVRO
         if self.destination_format == bigquery.job.DestinationFormat.PARQUET:
             return bigquery.job.SourceFormat.PARQUET
-        if self.destination_format == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON:
+        if (
+            self.destination_format
+            == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
+        ):
             return bigquery.job.SourceFormat.NEWLINE_DELIMITED_JSON
         if self.destination_format == bigquery.job.DestinationFormat.CSV:
             return bigquery.job.SourceFormat.CSV
@@ -2161,7 +2420,10 @@ class ExportImportType(object):
             return ".avro"
         if self.destination_format == bigquery.job.DestinationFormat.PARQUET:
             return ".parquet"
-        if self.destination_format == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON:
+        if (
+            self.destination_format
+            == bigquery.job.DestinationFormat.NEWLINE_DELIMITED_JSON
+        ):
             return ".jsonl"
         if self.destination_format == bigquery.job.DestinationFormat.CSV:
             return ".csv"
@@ -2194,24 +2456,33 @@ class ExportImportType(object):
 
 
 class DefaultBQSyncDriver(object):
-    """ This class provides mechanical input to bqsync functions"""
+    """This class provides mechanical input to bqsync functions"""
+
     threadLocal = threading.local()
 
-    def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
-                 srcbucket=None, dstbucket=None, remove_deleted_tables=True,
-                 copy_data=True,
-                 copy_types=None,
-                 check_depth=-1,
-                 copy_access=True,
-                 table_view_filter=None,
-                 table_or_views_to_exclude=None,
-                 latest_date=None,
-                 days_before_latest_day=None,
-                 day_partition_deep_check=False,
-                 analysis_project=None,
-                 query_cmek=None,
-                 src_policy_tags=[],
-                 dst_policy_tags=[]):
+    def __init__(
+        self,
+        srcproject,
+        srcdataset,
+        dstdataset,
+        dstproject=None,
+        srcbucket=None,
+        dstbucket=None,
+        remove_deleted_tables=True,
+        copy_data=True,
+        copy_types=None,
+        check_depth=-1,
+        copy_access=True,
+        table_view_filter=None,
+        table_or_views_to_exclude=None,
+        latest_date=None,
+        days_before_latest_day=None,
+        day_partition_deep_check=False,
+        analysis_project=None,
+        query_cmek=None,
+        src_policy_tags=[],
+        dst_policy_tags=[],
+    ):
         """
         Constructor for base copy driver all other drivers should inherit from this
         :param srcproject: The project that is the source for the copy (note all actions are done
@@ -2227,10 +2498,13 @@ class DefaultBQSyncDriver(object):
         :param copy_data: Copy data or just do schema
         :param copy_types: Copy object types i.e. TABLE,VIEW,ROUTINE,MODEL
         """
-        assert query_cmek is None or (isinstance(query_cmek, list) and len(
-            query_cmek) == 2), "If cmek key is specified has to be a list and MUST be 2 keys with " \
-                               "" \
-                               "1st key being source location key and destination key"
+        assert query_cmek is None or (
+            isinstance(query_cmek, list) and len(query_cmek) == 2
+        ), (
+            "If cmek key is specified has to be a list and MUST be 2 keys with "
+            ""
+            "1st key being source location key and destination key"
+        )
         self._sessionid = datetime.utcnow().isoformat().replace(":", "-")
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
@@ -2244,8 +2518,9 @@ class DefaultBQSyncDriver(object):
         self._remove_deleted_tables = remove_deleted_tables
 
         # check copy makes some basic sense
-        assert srcproject != dstproject or srcdataset != dstdataset, "Source and destination " \
-                                                                     "datasets cannot be the same"
+        assert srcproject != dstproject or srcdataset != dstdataset, (
+            "Source and destination " "datasets cannot be the same"
+        )
         assert latest_date is None or isinstance(latest_date, datetime)
 
         self._source_project = srcproject
@@ -2280,16 +2555,20 @@ class DefaultBQSyncDriver(object):
             self.__base_predicates.append(
                 "{{retpartition}} BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
                 "days_before_latest_day} * 24 HOUR) AND {end_date}".format(
-                    end_date=end_date,
-                    days_before_latest_day=days_before_latest_day))
+                    end_date=end_date, days_before_latest_day=days_before_latest_day
+                )
+            )
 
         # now check that from a service the copy makes sense
-        assert dataset_exists(self.source_client, self.source_client.dataset(
-            self.source_dataset)), "Source dataset does not exist %r" % self.source_dataset
-        assert dataset_exists(self.destination_client,
-                              self.destination_client.dataset(
-                                  self.destination_dataset)), "Destination dataset does not " \
-                                                              "exists %r" % self.destination_dataset
+        assert dataset_exists(
+            self.source_client, self.source_client.dataset(self.source_dataset)
+        ), ("Source dataset does not exist %r" % self.source_dataset)
+        assert dataset_exists(
+            self.destination_client,
+            self.destination_client.dataset(self.destination_dataset),
+        ), (
+            "Destination dataset does not " "exists %r" % self.destination_dataset
+        )
 
         # figure out if cross region copy if within region copies optimised to happen in big query
         # if cross region buckets need to exist to support copy and they need to be in same region
@@ -2299,62 +2578,78 @@ class DefaultBQSyncDriver(object):
             query_cmek = []
             if destination_dataset_impl.default_encryption_configuration is not None:
                 query_cmek.append(
-                    destination_dataset_impl.default_encryption_configuration.kms_key_name)
+                    destination_dataset_impl.default_encryption_configuration.kms_key_name
+                )
             else:
                 query_cmek.append(None)
 
-            if query_cmek is None and source_dataset_impl.default_encryption_configuration is not\
-                    None:
-                query_cmek.append(source_dataset_impl.default_encryption_configuration.kms_key_name)
+            if (
+                not query_cmek
+                and source_dataset_impl.default_encryption_configuration is not None
+            ):
+                query_cmek.append(
+                    source_dataset_impl.default_encryption_configuration.kms_key_name
+                )
             else:
                 query_cmek.append(None)
 
         self._query_cmek = query_cmek
-        self._same_region = source_dataset_impl.location == destination_dataset_impl.location
+        self._same_region = (
+            source_dataset_impl.location == destination_dataset_impl.location
+        )
         self._source_location = source_dataset_impl.location
         self._destination_location = destination_dataset_impl.location
-        self._src_policy_tags  = src_policy_tags
+        self._src_policy_tags = src_policy_tags
         self._dst_policy_tags = dst_policy_tags
 
         # if not same region where are the buckets for copying
         if not self.same_region:
-            assert srcbucket is not None, "Being asked to copy datasets across region but no " \
-                                          "source bucket is defined these must be in same region " \
-                                          "as source dataset"
-            assert isinstance(srcbucket,
-                              six.string_types), "Being asked to copy datasets across region but " \
-                                                 "no " \
-                                                 "" \
-                                                 "" \
-                                                 "source bucket is not a string"
+            assert srcbucket is not None, (
+                "Being asked to copy datasets across region but no "
+                "source bucket is defined these must be in same region "
+                "as source dataset"
+            )
+            assert isinstance(srcbucket, six.string_types), (
+                "Being asked to copy datasets across region but "
+                "no "
+                ""
+                ""
+                "source bucket is not a string"
+            )
             self._source_bucket = srcbucket
-            assert dstbucket is not None, "Being asked to copy datasets across region but no " \
-                                          "destination bucket is defined these must be in same " \
-                                          "region " \
-                                          "as destination dataset"
-            assert isinstance(dstbucket,
-                              six.string_types), "Being asked to copy datasets across region but " \
-                                                 "destination bucket is not a string"
+            assert dstbucket is not None, (
+                "Being asked to copy datasets across region but no "
+                "destination bucket is defined these must be in same "
+                "region "
+                "as destination dataset"
+            )
+            assert isinstance(dstbucket, six.string_types), (
+                "Being asked to copy datasets across region but "
+                "destination bucket is not a string"
+            )
             self._destination_bucket = dstbucket
             client = storage.Client(project=self.source_project)
             src_bucket = client.get_bucket(self.source_bucket)
-            assert compute_region_equals_bqregion(src_bucket.location,
-                                                  source_dataset_impl.location), "Source bucket " \
-                                                                                 "location is not " \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "" \
-                                                                                 "same as source " \
-                                                                                 "dataset location"
+            assert compute_region_equals_bqregion(
+                src_bucket.location, source_dataset_impl.location
+            ), (
+                "Source bucket "
+                "location is not "
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                "same as source "
+                "dataset location"
+            )
             dst_bucket = client.get_bucket(self.destination_bucket)
-            assert compute_region_equals_bqregion(dst_bucket.location,
-                                                  destination_dataset_impl.location), \
-                "Destination bucket location is not same as destination dataset location"
+            assert compute_region_equals_bqregion(
+                dst_bucket.location, destination_dataset_impl.location
+            ), "Destination bucket location is not same as destination dataset location"
 
     @property
     def session_id(self):
@@ -2364,7 +2659,7 @@ class DefaultBQSyncDriver(object):
         """
         return self._sessionid
 
-    def map_schema_policy_tags(self,schema):
+    def map_schema_policy_tags(self, schema):
         """
         A method that takes as input a big query schema iterates through the schema
         and reads policy tags and maps them from src to destination.
@@ -2375,24 +2670,27 @@ class DefaultBQSyncDriver(object):
         for field in schema:
             if field.field_type == "RECORD":
                 tmp_field = field.to_api_repr()
-                tmp_field["fields"] = [i.to_api_repr() for i in self.map_schema_policy_tags(field.fields)]
+                tmp_field["fields"] = [
+                    i.to_api_repr() for i in self.map_schema_policy_tags(field.fields)
+                ]
                 field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
             else:
-                _,field = self.map_policy_tag(field)
+                _, field = self.map_policy_tag(field)
             nschema.append(field)
         return nschema
 
-    def map_policy_tag(self,field,dst_tgt=None):
+    def map_policy_tag(self, field, dst_tgt=None):
         """
         Method that tages a policy tags and will remap
-        :param policy_tag: The policy tag to map
+        :param field: The field to map
+        :param dst_tgt: The destination tag
         :return: The new policy tag
         """
         change = 0
         if field.field_type == "RECORD":
             schema = self.map_schema_policy_tags(field.fields)
             if field.fields != schema:
-                change=1
+                change = 1
             tmp_field = field.to_api_repr()
             tmp_field["fields"] = [i.to_api_repr() for i in schema]
             field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
@@ -2404,7 +2702,7 @@ class DefaultBQSyncDriver(object):
                 for tag in tags:
                     new_tag = self.map_policy_tag_string(tag)
                     if new_tag is None:
-                        field_api_repr.pop("policyTags",None)
+                        field_api_repr.pop("policyTags", None)
                         break
                     ntag.append(new_tag)
                 if "policyTags" in field_api_repr:
@@ -2412,11 +2710,11 @@ class DefaultBQSyncDriver(object):
                 field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
                 if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
                     change = 1
-                return change,bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+                return change, bigquery.schema.SchemaField.from_api_repr(field_api_repr)
 
-        return change,field
+        return change, field
 
-    def map_policy_tag_string(self,src_tag):
+    def map_policy_tag_string(self, src_tag):
         """
         This method maps a source tag to a destination policy tag
         :param src_tag: The starting table column tags
@@ -2811,7 +3109,9 @@ class DefaultBQSyncDriver(object):
 
     @property
     def destination_dataset_impl(self):
-        destination_datasetref = self.destination_client.dataset(self.destination_dataset)
+        destination_datasetref = self.destination_client.dataset(
+            self.destination_dataset
+        )
         return self.destination_client.get_dataset(destination_datasetref)
 
     @property
@@ -2822,35 +3122,49 @@ class DefaultBQSyncDriver(object):
         By default it is the destination but can be overriden by passing a target project
         :return: A big query client for the project to be charged
         """
-        warnings.filterwarnings("ignore",
-                                "Your application has authenticated using end user credentials")
+        warnings.filterwarnings(
+            "ignore", "Your application has authenticated using end user credentials"
+        )
         """
         Obtains a source client in the current thread only constructs a client once per thread
         :return:
         """
         source_client = getattr(
-            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
+            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None
+        )
         if source_client is None:
-            setattr(DefaultBQSyncDriver.threadLocal, self.__analysisproject,
-                    bigquery.Client(project=self.__analysisproject, _http=self.http))
-        return getattr(
-            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.__analysisproject,
+                bigquery.Client(project=self.__analysisproject, _http=self.http),
+            )
+        return getattr(DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
 
     @property
     def source_client(self):
-        warnings.filterwarnings("ignore",
-                                "Your application has authenticated using end user credentials")
+        warnings.filterwarnings(
+            "ignore", "Your application has authenticated using end user credentials"
+        )
         """
         Obtains a source client in the current thread only constructs a client once per thread
         :return:
         """
         source_client = getattr(
-            DefaultBQSyncDriver.threadLocal, self.source_project + self._source_dataset, None)
+            DefaultBQSyncDriver.threadLocal,
+            self.source_project + self._source_dataset,
+            None,
+        )
         if source_client is None:
-            setattr(DefaultBQSyncDriver.threadLocal, self.source_project + self._source_dataset,
-                    bigquery.Client(project=self.source_project, _http=self.http))
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.source_project + self._source_dataset,
+                bigquery.Client(project=self.source_project, _http=self.http),
+            )
         return getattr(
-            DefaultBQSyncDriver.threadLocal, self.source_project + self._source_dataset, None)
+            DefaultBQSyncDriver.threadLocal,
+            self.source_project + self._source_dataset,
+            None,
+        )
 
     @property
     def http(self):
@@ -2868,25 +3182,32 @@ class DefaultBQSyncDriver(object):
         :return:
         """
         source_client = getattr(
-            DefaultBQSyncDriver.threadLocal, self.destination_project + self.destination_dataset,
-            None)
+            DefaultBQSyncDriver.threadLocal,
+            self.destination_project + self.destination_dataset,
+            None,
+        )
         if source_client is None:
-            setattr(DefaultBQSyncDriver.threadLocal,
-                    self.destination_project + self.destination_dataset,
-                    bigquery.Client(project=self.destination_project, _http=self.http))
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.destination_project + self.destination_dataset,
+                bigquery.Client(project=self.destination_project, _http=self.http),
+            )
         return getattr(
-            DefaultBQSyncDriver.threadLocal, self.destination_project + self.destination_dataset,
-            None)
+            DefaultBQSyncDriver.threadLocal,
+            self.destination_project + self.destination_dataset,
+            None,
+        )
 
     def export_import_format_supported(self, srctable, dsttable=None):
-        """ Calculates a suitable export import type based upon schema
+        """Calculates a suitable export import type based upon schema
         default mecahnism is to use AVRO and SNAPPY as parallel and fast
         If though a schema type notsupported by AVRO fall back to jsonnl and gzip
         """
         dst_encryption_configuration = None
         if dsttable is None and srctable.encryption_configuration is not None:
             dst_encryption_configuration = self.calculate_target_cmek_config(
-                srctable.encryption_configuration)
+                srctable.encryption_configuration
+            )
         else:
             dst_encryption_configuration = None
 
@@ -2937,7 +3258,10 @@ class DefaultBQSyncDriver(object):
         default = ""
         retpartition_time = "_PARTITIONTIME"
 
-        if getattr(table, "time_partitioning", None) and table.time_partitioning.field is not None:
+        if (
+            getattr(table, "time_partitioning", None)
+            and table.time_partitioning.field is not None
+        ):
             retpartition_time = "TIMESTAMP({})".format(table.time_partitioning.field)
 
         SCHEMA = list(table.schema)
@@ -2946,18 +3270,15 @@ class DefaultBQSyncDriver(object):
         aliasdict = {"alias": "", "extrajoinpredicates": ""}
 
         """
-        
         Use FRAM_FINGERPRINT as hash of each value and then summed
         basically a merkel function
-        
         """
 
         def add_data_check(SCHEMA, prefix=None, depth=0):
-
             if prefix is None:
                 prefix = []
                 # add base table alia
-                prefix.append('zzz')
+                prefix.append("zzz")
 
             expression_list = []
 
@@ -2968,75 +3289,118 @@ class DefaultBQSyncDriver(object):
             for field in SCHEMA:
                 prefix.append(field.name)
                 if field.mode != "REPEATED":
-                    if self.check_depth >= 0 or \
-                            (self.check_depth >= -1 and (
-                                    re.search("update.*time", field.name.lower()) or
-                                    re.search("modifi.*time", field.name.lower()) or
-                                    re.search("version", field.name.lower()) or
-                                    re.search("creat.*time", field.name.lower()))):
-
+                    if self.check_depth >= 0 or (
+                        self.check_depth >= -1
+                        and (
+                            re.search("update.*time", field.name.lower())
+                            or re.search("modifi.*time", field.name.lower())
+                            or re.search("version", field.name.lower())
+                            or re.search("creat.*time", field.name.lower())
+                        )
+                    ):
                         if field.field_type == "STRING":
-                            expression_list.append("IFNULL(`{0}`,'')".format("`.`".join(prefix)))
+                            expression_list.append(
+                                "IFNULL(`{0}`,'')".format("`.`".join(prefix))
+                            )
                         elif field.field_type == "TIMESTAMP":
                             expression_list.append(
                                 "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
-                                    "`.`".join(prefix)))
-                        elif field.field_type == "INTEGER" or field.field_type == "INT64":
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "INTEGER" or field.field_type == "INT64"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,0) AS STRING)".format("`.`".join(prefix)))
-                        elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
-                                field.field_type == "NUMERIC":
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "FLOAT"
+                            or field.field_type == "FLOAT64"
+                            or field.field_type == "NUMERIC"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format("`.`".join(prefix)))
-                        elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,false) AS STRING)".format("`.`".join(prefix)))
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
                         elif field.field_type == "BYTES":
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,'') AS STRING)".format("`.`".join(prefix)))
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
                     if field.field_type == "RECORD":
                         SSCHEMA = list(field.fields)
-                        expression_list.extend(add_data_check(SSCHEMA, prefix=prefix, depth=depth))
+                        expression_list.extend(
+                            add_data_check(SSCHEMA, prefix=prefix, depth=depth)
+                        )
                 else:
-                    if field.field_type != "RECORD" and (self.check_depth >= 0 or
-                                                         (self.check_depth >= -1 and (
-                                                                 re.search("update.*time",
-                                                                           field.name.lower()) or
-                                                                 re.search("modifi.*time",
-                                                                           field.name.lower()) or
-                                                                 re.search("version",
-                                                                           field.name.lower()) or
-                                                                 re.search("creat.*time",
-                                                                           field.name.lower())))):
+                    if field.field_type != "RECORD" and (
+                        self.check_depth >= 0
+                        or (
+                            self.check_depth >= -1
+                            and (
+                                re.search("update.*time", field.name.lower())
+                                or re.search("modifi.*time", field.name.lower())
+                                or re.search("version", field.name.lower())
+                                or re.search("creat.*time", field.name.lower())
+                            )
+                        )
+                    ):
                         # add the unnestof repeated base type can use own field name
                         fieldname = "{}{}".format(aliasdict["alias"], field.name)
-                        aliasdict["extrajoinpredicates"] = """{}
-LEFT JOIN UNNEST(`{}`) AS `{}`""".format(aliasdict["extrajoinpredicates"],
-                                         field.name,
-                                         fieldname)
+                        aliasdict[
+                            "extrajoinpredicates"
+                        ] = """{}
+LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
+                            aliasdict["extrajoinpredicates"], field.name, fieldname
+                        )
                         if field.field_type == "STRING":
                             expression_list.append("IFNULL(`{0}`,'')".format(fieldname))
                         elif field.field_type == "TIMESTAMP":
                             expression_list.append(
                                 "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
-                                    fieldname))
-                        elif field.field_type == "INTEGER" or field.field_type == "INT64":
+                                    fieldname
+                                )
+                            )
+                        elif (
+                            field.field_type == "INTEGER" or field.field_type == "INT64"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(fieldname))
-                        elif field.field_type == "FLOAT" or field.field_type == "FLOAT64" or \
-                                field.field_type == "NUMERIC":
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(fieldname)
+                            )
+                        elif (
+                            field.field_type == "FLOAT"
+                            or field.field_type == "FLOAT64"
+                            or field.field_type == "NUMERIC"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(fieldname))
-                        elif field.field_type == "BOOL" or field.field_type == "BOOLEAN":
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(fieldname)
+                            )
+                        elif (
+                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
+                        ):
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(fieldname))
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(fieldname)
+                            )
                         elif field.field_type == "BYTES":
                             expression_list.append(
-                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(fieldname))
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(fieldname)
+                            )
                     if field.field_type == "RECORD":
                         # if we want to go deeper in checking
                         if depth < self.check_depth:
-
                             # need to unnest as repeated
                             if aliasdict["alias"] == "":
                                 # uses this to name space from real columns
@@ -3050,13 +3414,21 @@ LEFT JOIN UNNEST(`{}`) AS `{}`""".format(aliasdict["extrajoinpredicates"],
                             newprefix.append(aliasdict["alias"])
 
                             # add the unnest
-                            aliasdict["extrajoinpredicates"] = """{}
-LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".join(prefix),
-                                       aliasdict["alias"])
+                            aliasdict[
+                                "extrajoinpredicates"
+                            ] = """{}
+LEFT JOIN UNNEST(`{}`) AS {}""".format(
+                                aliasdict["extrajoinpredicates"],
+                                "`.`".join(prefix),
+                                aliasdict["alias"],
+                            )
 
                             # add the fields
                             expression_list.extend(
-                                add_data_check(SSCHEMA, prefix=newprefix, depth=depth + 1))
+                                add_data_check(
+                                    SSCHEMA, prefix=newprefix, depth=depth + 1
+                                )
+                            )
                 prefix.pop()
             return expression_list
 
@@ -3072,12 +3444,17 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(aliasdict["extrajoinpredicates"], "`.`".j
             default = """,
     AVG(FARM_FINGERPRINT(CONCAT({0})) &  0x0000000FFFFFFFF) as avgFingerprintLB,
     AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
-                ",".join(expression_list))
+                ",".join(expression_list)
+            )
 
         predicates = self.comparison_predicates(table.table_id, retpartition_time)
         if len(predicates) > 0:
-            aliasdict["extrajoinpredicates"] = """{}
-WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates))
+            aliasdict[
+                "extrajoinpredicates"
+            ] = """{}
+WHERE ({})""".format(
+                aliasdict["extrajoinpredicates"], ") AND (".join(predicates)
+            )
 
         return retpartition_time, default, aliasdict["extrajoinpredicates"]
 
@@ -3113,61 +3490,80 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
         """
         try:
             function(*args)
-        except Exception as e:
+        except Exception:
             pretty_printer = pprint.PrettyPrinter()
             self.get_logger().exception(
-                "Exception calling function {} args {}".format(function.__name__,
-                                                               pretty_printer.pformat(args)))
+                "Exception calling function {} args {}".format(
+                    function.__name__, pretty_printer.pformat(args)
+                )
+            )
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
         view_definition = view_definition.replace(
-            r'`{}.{}.'.format(self.source_project, self.source_dataset),
-            "`{}.{}.".format(self.destination_project, self.destination_dataset))
+            r"`{}.{}.".format(self.source_project, self.source_dataset),
+            "`{}.{}.".format(self.destination_project, self.destination_dataset),
+        )
         view_definition = view_definition.replace(
-            r'[{}:{}.'.format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset))
+            r"[{}:{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
         # this should not be required but seems it is
         view_definition = view_definition.replace(
-            r'[{}.{}.'.format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset))
+            r"[{}.{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
         # support short names
         view_definition = view_definition.replace(
-            r'{}.'.format(self.source_dataset),
-            "{}.".format(self.destination_dataset))
+            r"{}.".format(self.source_dataset), "{}.".format(self.destination_dataset)
+        )
 
         return view_definition
 
     def calculate_target_cmek_config(self, encryption_config):
-        assert isinstance(encryption_config,
-                          bigquery.EncryptionConfiguration) or (
-                       getattr(self.destination_dataset_impl,
-                               "default_encryption_configuration", None) is not None
-                       and self.destination_dataset_impl.default_encryption_configuration is
-                       not None), \
-            " To recaclculate a new encryption " \
-            "config the original config has to be passed in and be of class " \
+        assert isinstance(encryption_config, bigquery.EncryptionConfiguration) or (
+            getattr(
+                self.destination_dataset_impl, "default_encryption_configuration", None
+            )
+            is not None
+            and self.destination_dataset_impl.default_encryption_configuration
+            is not None
+        ), (
+            " To recaclculate a new encryption "
+            "config the original config has to be passed in and be of class "
             "bigquery.EncryptionConfig"
+        )
 
         # if destination dataset has default kms key already, just use the same
-        if (getattr(self.destination_dataset_impl, "default_encryption_configuration",
-                    None) is not None
-                and self.destination_dataset_impl.default_encryption_configuration is not None):
+        if (
+            getattr(
+                self.destination_dataset_impl, "default_encryption_configuration", None
+            )
+            is not None
+            and self.destination_dataset_impl.default_encryption_configuration
+            is not None
+        ):
             return self.destination_dataset_impl.default_encryption_configuration
 
         # if a global key or same region we are good to go
-        if self.same_region or encryption_config.kms_key_name.find(
-                "/locations/global/") != -1:
+        if (
+            self.same_region
+            or encryption_config.kms_key_name.find("/locations/global/") != -1
+        ):
             # strip off version if exists
-            return bigquery.EncryptionConfiguration(get_kms_key_name(encryption_config.kms_key_name))
+            return bigquery.EncryptionConfiguration(
+                get_kms_key_name(encryption_config.kms_key_name)
+            )
 
         # if global key can still be used
         # if comparing table key get rid fo version
         parts = get_kms_key_name(encryption_config.kms_key_name).split("/")
-        parts[3] = MAPBQREGION2KMSREGION.get(self.destination_location,
-                                             self.destination_location.lower())
+        parts[3] = MAPBQREGION2KMSREGION.get(
+            self.destination_location, self.destination_location.lower()
+        )
 
         return bigquery.encryption_configuration.EncryptionConfiguration(
-            kms_key_name="/".join(parts))
+            kms_key_name="/".join(parts)
+        )
 
     def copy_access_to_destination(self):
         # for those not created compare data structures
@@ -3177,9 +3573,11 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
         # copy dataset permissions
         if self.copy_access:
             src_dataset = self.source_client.get_dataset(
-                self.source_client.dataset(self.source_dataset))
+                self.source_client.dataset(self.source_dataset)
+            )
             dst_dataset = self.destination_client.get_dataset(
-                self.destination_client.dataset(self.destination_dataset))
+                self.destination_client.dataset(self.destination_dataset)
+            )
             access_entries = src_dataset.access_entries
             dst_access_entries = []
             for access in access_entries:
@@ -3201,15 +3599,23 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
                 dst_dataset.friendly_name = src_dataset.friendly_name
                 fields.append("friendly_name")
 
-            if dst_dataset.default_table_expiration_ms != src_dataset.default_table_expiration_ms:
-                dst_dataset.default_table_expiration_ms = src_dataset.default_table_expiration_ms
+            if (
+                dst_dataset.default_table_expiration_ms
+                != src_dataset.default_table_expiration_ms
+            ):
+                dst_dataset.default_table_expiration_ms = (
+                    src_dataset.default_table_expiration_ms
+                )
                 fields.append("default_table_expiration_ms")
 
             if getattr(dst_dataset, "default_partition_expiration_ms", None):
-                if dst_dataset.default_partition_expiration_ms != \
-                        src_dataset.default_partition_expiration_ms:
-                    dst_dataset.default_partition_expiration_ms = \
+                if (
+                    dst_dataset.default_partition_expiration_ms
+                    != src_dataset.default_partition_expiration_ms
+                ):
+                    dst_dataset.default_partition_expiration_ms = (
                         src_dataset.default_partition_expiration_ms
+                    )
                     fields.append("default_partition_expiration_ms")
 
             # compare 2 dictionaries that are simple key, value
@@ -3220,15 +3626,17 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
             shared_items = {k: x[k] for k in x if k in y and x[k] == y[k]}
 
             # must be same size and values if not set labels
-            if len(dst_dataset.labels) != len(src_dataset.labels) or len(shared_items) != len(
-                    src_dataset.labels):
+            if len(dst_dataset.labels) != len(src_dataset.labels) or len(
+                shared_items
+            ) != len(src_dataset.labels):
                 dst_dataset.labels = src_dataset.labels
                 fields.append("labels")
 
             if getattr(dst_dataset, "default_encryption_configuration", None):
                 if not (
-                        src_dataset.default_encryption_configuration is None and
-                        dst_dataset.default_encryption_configuration is None):
+                    src_dataset.default_encryption_configuration is None
+                    and dst_dataset.default_encryption_configuration is None
+                ):
                     # if src_dataset.default_encryption_configuration is None:
                     #     dst_dataset.default_encryption_configuration = None
                     # else:
@@ -3238,23 +3646,27 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
 
                     # equate dest kms config to src only if it's None
                     if dst_dataset.default_encryption_configuration is None:
-                        dst_dataset.default_encryption_configuration = \
+                        dst_dataset.default_encryption_configuration = (
                             self.calculate_target_cmek_config(
-                                src_dataset.default_encryption_configuration)
+                                src_dataset.default_encryption_configuration
+                            )
+                        )
                     fields.append("default_encryption_configuration")
 
             try:
                 self.destination_client.update_dataset(dst_dataset, fields)
-            except exceptions.Forbidden as e:
+            except exceptions.Forbidden:
                 self.logger.error(
                     "Unable to det permission on {}.{} dataset as Forbidden".format(
-                        self.destination_project,
-                        self.destination_dataset))
-            except exceptions.BadRequest as e:
+                        self.destination_project, self.destination_dataset
+                    )
+                )
+            except exceptions.BadRequest:
                 self.logger.error(
                     "Unable to det permission on {}.{} dataset as BadRequest".format(
-                        self.destination_project,
-                        self.destination_dataset))
+                        self.destination_project, self.destination_dataset
+                    )
+                )
 
     def create_access_view(self, entity_id):
         """
@@ -3268,12 +3680,14 @@ WHERE ({})""".format(aliasdict["extrajoinpredicates"], ") AND (".join(predicates
         ...     'tableId': 'my_table'
         ... }
         """
-        if enity_id["projectId"] == self.source_project and enity_id[
-            "datasetId"] == self.source_dataset:
-            enity_id["projectId"] = self.destination_project
+        if (
+            entity_id["projectId"] == self.source_project
+            and entity_id["datasetId"] == self.source_dataset
+        ):
+            entity_id["projectId"] = self.destination_project
             entity_id["datasetId"] = self.destination_dataset
 
-        return bigquery.AccessEntry(None, 'view', enity_id)
+        return bigquery.AccessEntry(None, "view", entity_id)
 
     @property
     def logger(self):
@@ -3295,6 +3709,7 @@ class MultiBQSyncCoordinator(object):
     """
     Class to copy many datasets from one region to another and reset associated views
     """
+
     """
         States of sync job
     """
@@ -3302,26 +3717,32 @@ class MultiBQSyncCoordinator(object):
     RUNNING = "RUNNING"
     FINSIHED = "FINSIHED"
 
-    def __init__(self, srcproject_and_dataset_list, dstproject_and_dataset_list,
-                 srcbucket=None, dstbucket=None, remove_deleted_tables=True,
-                 copy_data=True,
-                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
-                 check_depth=-1,
-                 copy_access=True,
-                 table_view_filter=(".*"),
-                 table_or_views_to_exclude=None,
-                 latest_date=None,
-                 days_before_latest_day=None,
-                 day_partition_deep_check=False,
-                 analysis_project=None,
-                 cloud_logging_and_monitoring=False,
-                 src_ref_project_datasets=None,
-                 dst_ref_project_datasets=(),
-                 query_cmek=None,
-                 src_policy_tags=[],
-                 dst_policy_tags=[]):
+    def __init__(
+        self,
+        srcproject_and_dataset_list,
+        dstproject_and_dataset_list,
+        srcbucket=None,
+        dstbucket=None,
+        remove_deleted_tables=True,
+        copy_data=True,
+        copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
+        check_depth=-1,
+        copy_access=True,
+        table_view_filter=(".*"),
+        table_or_views_to_exclude=None,
+        latest_date=None,
+        days_before_latest_day=None,
+        day_partition_deep_check=False,
+        analysis_project=None,
+        cloud_logging_and_monitoring=False,
+        src_ref_project_datasets=None,
+        dst_ref_project_datasets=(),
+        query_cmek=None,
+        src_policy_tags=[],
+        dst_policy_tags=[],
+    ):
         if copy_types is None:
-            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL","MATERIALIZEDVIEW"]
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
         if table_view_filter is None:
             table_view_filter = [".*"]
         if table_or_views_to_exclude is None:
@@ -3331,14 +3752,16 @@ class MultiBQSyncCoordinator(object):
         if dst_ref_project_datasets is None:
             dst_ref_project_datasets = []
         assert len(srcproject_and_dataset_list) == len(
-            dstproject_and_dataset_list), "Source and destination lists must be same length"
-        assert len(
-            srcproject_and_dataset_list) > 0, "Fro multi copy we need at least 1 source and 1 " \
-                                              "destination"
+            dstproject_and_dataset_list
+        ), "Source and destination lists must be same length"
+        assert len(srcproject_and_dataset_list) > 0, (
+            "Fro multi copy we need at least 1 source and 1 " "destination"
+        )
 
-        assert len(src_ref_project_datasets) == len(
-            dst_ref_project_datasets), "referenced datsets dst_ref_project_datasets and " \
-                                       "dst_ref_project_datasets MUST be same length"
+        assert len(src_ref_project_datasets) == len(dst_ref_project_datasets), (
+            "referenced datsets dst_ref_project_datasets and "
+            "dst_ref_project_datasets MUST be same length"
+        )
         self.__src_ref_project_datasets = src_ref_project_datasets
         self.__dst_ref_project_datasets = dst_ref_project_datasets
 
@@ -3355,37 +3778,34 @@ class MultiBQSyncCoordinator(object):
         # note assumption is a set will always be from same source location to destination location
         for itemnum, src_project_dataset in enumerate(srcproject_and_dataset_list):
             dst_project_dataset = dstproject_and_dataset_list[itemnum]
-            copy_driver = MultiBQSyncDriver(src_project_dataset.split(".")[0],
-                                            src_project_dataset.split(".")[1],
-                                            dst_project_dataset.split(".")[1],
-                                            dstproject=dst_project_dataset.split(".")[0],
-                                            srcbucket=srcbucket, dstbucket=dstbucket,
-                                            remove_deleted_tables=remove_deleted_tables,
-                                            copy_data=copy_data,
-                                            copy_types=copy_types,
-                                            check_depth=self.__check_depth,
-                                            coordinator=self,
-                                            copy_access=copy_access,
-                                            table_view_filter=table_view_filter,
-                                            table_or_views_to_exclude=table_or_views_to_exclude,
-                                            latest_date=latest_date,
-                                            days_before_latest_day=days_before_latest_day,
-                                            day_partition_deep_check=day_partition_deep_check,
-                                            analysis_project=analysis_project,
-                                            query_cmek=query_cmek,
-                                            src_policy_tags=src_policy_tags,
-                                            dst_policy_tags=dst_policy_tags)
+            copy_driver = MultiBQSyncDriver(
+                src_project_dataset.split(".")[0],
+                src_project_dataset.split(".")[1],
+                dst_project_dataset.split(".")[1],
+                dstproject=dst_project_dataset.split(".")[0],
+                srcbucket=srcbucket,
+                dstbucket=dstbucket,
+                remove_deleted_tables=remove_deleted_tables,
+                copy_data=copy_data,
+                copy_types=copy_types,
+                check_depth=self.__check_depth,
+                coordinator=self,
+                copy_access=copy_access,
+                table_view_filter=table_view_filter,
+                table_or_views_to_exclude=table_or_views_to_exclude,
+                latest_date=latest_date,
+                days_before_latest_day=days_before_latest_day,
+                day_partition_deep_check=day_partition_deep_check,
+                analysis_project=analysis_project,
+                query_cmek=query_cmek,
+                src_policy_tags=src_policy_tags,
+                dst_policy_tags=dst_policy_tags,
+            )
             self.__copy_drivers.append(copy_driver)
 
     @property
     def cloud_logging_and_monitoring(self):
         return self.__cloud_logging_and_monitoring
-
-    @property
-    def cloud_monitoring_client(self):
-        if self.cloud_logging_and_monitoring:
-            return google.cloud.monitoring_v3.MetricServiceClient()
-        return None
 
     @property
     def start_time(self):
@@ -3639,12 +4059,16 @@ class MultiBQSyncCoordinator(object):
         while not stop_event.isSet():
             try:
                 sleep(0.5)
-                if self.state != MultiBQSyncCoordinator.NOTSTARTED \
-                        and (datetime.utcnow() - last_run).seconds > 60:
+                if (
+                    self.state != MultiBQSyncCoordinator.NOTSTARTED
+                    and (datetime.utcnow() - last_run).seconds > 60
+                ):
                     last_run = datetime.utcnow()
                     self.log_stats()
-            except Exception as e:
-                self.logger.exception("Exception monitoring MultiBQSync ignoring and continuing")
+            except Exception:
+                self.logger.exception(
+                    "Exception monitoring MultiBQSync ignoring and continuing"
+                )
                 pass
         self.logger.info("=============== Sync Completed ================")
         self.log_stats()
@@ -3657,17 +4081,22 @@ class MultiBQSyncCoordinator(object):
         self.logger.info("=============== Sync Starting ================")
         # start monitoring thread
         stop_event = threading.Event()
-        t = threading.Thread(target=self.sync_monitor_thread, name="monitorthread", args=[
-            stop_event])
+        t = threading.Thread(
+            target=self.sync_monitor_thread, name="monitorthread", args=[stop_event]
+        )
         t.daemon = True
         t.start()
 
         self.__copy_drivers[0].logger.info("Calculating differences....")
         for copy_driver in self.__copy_drivers:
-            copy_driver.get_logger().info("{}.{} -> {}.{}".format(copy_driver.source_project,
-                                                                  copy_driver.source_dataset,
-                                                                  copy_driver.destination_project,
-                                                                  copy_driver.destination_dataset))
+            copy_driver.get_logger().info(
+                "{}.{} -> {}.{}".format(
+                    copy_driver.source_project,
+                    copy_driver.source_dataset,
+                    copy_driver.destination_project,
+                    copy_driver.destination_dataset,
+                )
+            )
             sync_bq_datset(copy_driver)
 
         # once copied we can try doing access
@@ -3680,13 +4109,13 @@ class MultiBQSyncCoordinator(object):
         t.join()
 
     def log_stats(self):
-
         # provide some stats
         if self.rows_synced - self.rows_avoided == 0:
-            speed_up = float('inf')
+            speed_up = float("inf")
         else:
             speed_up = float(self.rows_synced) / float(
-                self.rows_synced - self.rows_avoided)
+                self.rows_synced - self.rows_avoided
+            )
 
         self.logger.info("Tables synced {:,d}".format(self.tables_synced))
         self.logger.info("Tables avoided {:,d}".format(self.tables_avoided))
@@ -3702,51 +4131,84 @@ class MultiBQSyncCoordinator(object):
         self.logger.info("Models failed {:,d}".format(self.models_failed_sync))
         self.logger.info(
             "Rows synced {:,d} Total rows as declared in meta data scan phase".format(
-                self.rows_synced))
+                self.rows_synced
+            )
+        )
         self.logger.info(
             "Rows Avoided {:,d} Rows avoided in calculation phase".format(
-                self.rows_avoided))
+                self.rows_avoided
+            )
+        )
         self.logger.info(
-            "Rows Difference {:,d}".format(
-                self.rows_synced - self.rows_avoided))
+            "Rows Difference {:,d}".format(self.rows_synced - self.rows_avoided)
+        )
         self.logger.info("Bytes Billed {:,d}".format(self.total_bytes_billed))
-        self.logger.info(
-            "Bytes Processed {:,d}".format(self.total_bytes_processed))
+        self.logger.info("Bytes Processed {:,d}".format(self.total_bytes_processed))
         self.logger.info(
             "Cost of comparison at $5.00 per TB $ {:1,.02f}".format(
-                round((self.total_bytes_processed * 5.0) / (1024.0 *
-                                                            1024.0 *
-                                                            1024.0 *
-                                                            1024.0), 2)))
+                round(
+                    (self.total_bytes_processed * 5.0)
+                    / (1024.0 * 1024.0 * 1024.0 * 1024.0),
+                    2,
+                )
+            )
+        )
         self.logger.info("Query Cache Hits {:,d}".format(self.query_cache_hits))
         self.logger.info("Extract Fails {:,d}".format(self.extract_fails))
         self.logger.info(
-            "Blob retryable exceptions {:,d}".format(self.blob_rewrite_retried_exceptions))
+            "Blob retryable exceptions {:,d}".format(
+                self.blob_rewrite_retried_exceptions
+            )
+        )
         self.logger.info(
-            "Blob unretryable exceptions {:,d}".format(self.blob_rewrite_unretryable_exceptions))
+            "Blob unretryable exceptions {:,d}".format(
+                self.blob_rewrite_unretryable_exceptions
+            )
+        )
         self.logger.info("Load Fails {:,d}".format(self.load_fails))
         self.logger.info("Copy Fails {:,d}".format(self.copy_fails))
-        self.logger.info(
-            "Files Copied {:,d}".format(self.files_copied_across_region))
+        self.logger.info("Files Copied {:,d}".format(self.files_copied_across_region))
         self.logger.info(
             "Bytes Copied {:1,.02f} GB".format(
-                round(self.bytes_copied_across_region / (1024 * 1024 * 1024), 2)))
+                round(self.bytes_copied_across_region / (1024 * 1024 * 1024), 2)
+            )
+        )
         self.logger.info(
             "BQ Bytes Synced {:1,.02f} GB".format(
-                round(self.bytes_synced / (1024 * 1024 * 1024), 2)))
+                round(self.bytes_synced / (1024 * 1024 * 1024), 2)
+            )
+        )
         self.logger.info(
             "BQ Bytes Uncompressed Copied {:1,.02f} GB".format(
-                round(self.bytes_copied / (1024 * 1024 * 1024), 2)))
-        self.logger.info("Sync Duration {}".format(
-            str(self.end_time - self.start_time)))
-        self.logger.info("Rows per Second {:1,.2f}".format(
-            round(self.rows_synced / self.sync_time_seconds, 2)))
-        self.logger.info("Cross Region (Network) {:1,.3f} Mbs".format(
-            round(((self.bytes_copied_across_region * 8.0) / (1024 * 1024)) /
-                  self.sync_time_seconds, 3)))
-        self.logger.info("Cross Region (Big Query Uncompressed Data) {:1,.3f} Mbs".format(
-            round(((self.bytes_copied * 8.0) / (1024 * 1024)) /
-                  self.sync_time_seconds, 3)))
+                round(self.bytes_copied / (1024 * 1024 * 1024), 2)
+            )
+        )
+        self.logger.info(
+            "Sync Duration {}".format(str(self.end_time - self.start_time))
+        )
+        self.logger.info(
+            "Rows per Second {:1,.2f}".format(
+                round(self.rows_synced / self.sync_time_seconds, 2)
+            )
+        )
+        self.logger.info(
+            "Cross Region (Network) {:1,.3f} Mbs".format(
+                round(
+                    ((self.bytes_copied_across_region * 8.0) / (1024 * 1024))
+                    / self.sync_time_seconds,
+                    3,
+                )
+            )
+        )
+        self.logger.info(
+            "Cross Region (Big Query Uncompressed Data) {:1,.3f} Mbs".format(
+                round(
+                    ((self.bytes_copied * 8.0) / (1024 * 1024))
+                    / self.sync_time_seconds,
+                    3,
+                )
+            )
+        )
         self.logger.info("Speed up {:1,.2f}".format(round(speed_up, 2)))
         if self.cloud_logging_and_monitoring:
             pass
@@ -3764,63 +4226,85 @@ class MultiBQSyncCoordinator(object):
     def update_source_view_definition(self, view_definition, use_standard_sql):
         # handle projects and dasets in the copy
         for copy_driver in self.__copy_drivers:
-            view_definition = copy_driver.real_update_source_view_definition(view_definition,
-                                                                             use_standard_sql)
+            view_definition = copy_driver.real_update_source_view_definition(
+                view_definition, use_standard_sql
+            )
 
         # handle referenced projects and datsets if any
-        for numproj, src_proj_dataset, src_dataset in enumerate(self.__src_ref_project_datasets):
+        for numproj, src_proj_dataset, src_dataset in enumerate(
+            self.__src_ref_project_datasets
+        ):
             dst_proj_dataset = self.__dst_ref_project_datasets[numproj]
             src_proj, src_dataset = src_proj_dataset.split(".")
             dst_proj, dst_dataset = dst_proj_dataset.split(".")
             view_definition = view_definition.replace(
-                r'`{}.{}.'.format(src_proj, src_dataset),
-                "`{}.{}.".format(dst_proj, dst_dataset))
+                r"`{}.{}.".format(src_proj, src_dataset),
+                "`{}.{}.".format(dst_proj, dst_dataset),
+            )
             view_definition = view_definition.replace(
-                r'[{}:{}.'.format(src_proj, src_dataset),
-                "[{}:{}.".format(dst_proj, dst_dataset))
+                r"[{}:{}.".format(src_proj, src_dataset),
+                "[{}:{}.".format(dst_proj, dst_dataset),
+            )
             # this should not be required but seems it is
             view_definition = view_definition.replace(
-                r'[{}.{}.'.format(src_proj, src_dataset),
-                "[{}:{}.".format(dst_proj, dst_dataset))
+                r"[{}.{}.".format(src_proj, src_dataset),
+                "[{}:{}.".format(dst_proj, dst_dataset),
+            )
             # this should not be required but seems it is
             view_definition = view_definition.replace(
-                r'{}.'.format(src_dataset),
-                "{}.".format(dst_dataset))
+                r"{}.".format(src_dataset), "{}.".format(dst_dataset)
+            )
         return view_definition
 
 
 class MultiBQSyncDriver(DefaultBQSyncDriver):
-    def __init__(self, srcproject, srcdataset, dstdataset, dstproject=None,
-                 srcbucket=None, dstbucket=None, remove_deleted_tables=True,
-                 copy_data=True,
-                 copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
-                 check_depth=-1,
-                 copy_access=True,
-                 coordinator=None,
-                 table_view_filter=(".*"),
-                 table_or_views_to_exclude=(),
-                 latest_date=None,
-                 days_before_latest_day=None,
-                 day_partition_deep_check=False,
-                 analysis_project=None,
-                 query_cmek=None,
-                 src_policy_tags=[],
-                 dst_policy_tags=[]):
-        DefaultBQSyncDriver.__init__(self, srcproject, srcdataset, dstdataset, dstproject,
-                                     srcbucket, dstbucket, remove_deleted_tables,
-                                     copy_data,
-                                     copy_types=copy_types,
-                                     check_depth=check_depth,
-                                     copy_access=copy_access,
-                                     table_view_filter=table_view_filter,
-                                     table_or_views_to_exclude=table_or_views_to_exclude,
-                                     latest_date=latest_date,
-                                     days_before_latest_day=days_before_latest_day,
-                                     day_partition_deep_check=day_partition_deep_check,
-                                     analysis_project=analysis_project,
-                                     query_cmek=query_cmek,
-                                     src_policy_tags=src_policy_tags,
-                                     dst_policy_tags=dst_policy_tags)
+    def __init__(
+        self,
+        srcproject,
+        srcdataset,
+        dstdataset,
+        dstproject=None,
+        srcbucket=None,
+        dstbucket=None,
+        remove_deleted_tables=True,
+        copy_data=True,
+        copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
+        check_depth=-1,
+        copy_access=True,
+        coordinator=None,
+        table_view_filter=(".*"),
+        table_or_views_to_exclude=(),
+        latest_date=None,
+        days_before_latest_day=None,
+        day_partition_deep_check=False,
+        analysis_project=None,
+        query_cmek=None,
+        src_policy_tags=[],
+        dst_policy_tags=[],
+    ):
+        DefaultBQSyncDriver.__init__(
+            self,
+            srcproject,
+            srcdataset,
+            dstdataset,
+            dstproject,
+            srcbucket,
+            dstbucket,
+            remove_deleted_tables,
+            copy_data,
+            copy_types=copy_types,
+            check_depth=check_depth,
+            copy_access=copy_access,
+            table_view_filter=table_view_filter,
+            table_or_views_to_exclude=table_or_views_to_exclude,
+            latest_date=latest_date,
+            days_before_latest_day=days_before_latest_day,
+            day_partition_deep_check=day_partition_deep_check,
+            analysis_project=analysis_project,
+            query_cmek=query_cmek,
+            src_policy_tags=src_policy_tags,
+            dst_policy_tags=dst_policy_tags,
+        )
         self.__coordinater = coordinator
         self._cache = None
         self._lock = threading.RLock()
@@ -3836,31 +4320,33 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
     def real_update_source_view_definition(self, view_definition, use_standard_sql):
         # long form
         view_definition = view_definition.replace(
-            r'`{}.{}.'.format(self.source_project, self.source_dataset),
-            "`{}.{}.".format(self.destination_project, self.destination_dataset))
+            r"`{}.{}.".format(self.source_project, self.source_dataset),
+            "`{}.{}.".format(self.destination_project, self.destination_dataset),
+        )
         view_definition = view_definition.replace(
-            r'[{}:{}.'.format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset))
+            r"[{}:{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
         # this should not be required but seems it is
         view_definition = view_definition.replace(
-            r'[{}.{}.'.format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset))
+            r"[{}.{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
         # short form
         view_definition = view_definition.replace(
-            r'{}.'.format(self.source_dataset),
-            "{}.".format(self.destination_dataset))
+            r"{}.".format(self.source_dataset), "{}.".format(self.destination_dataset)
+        )
         return view_definition
 
     def discovery_update_table(self, table_api_rep, logging):
-        bqservice = discovery.build(
-            'bigquery', 
-            'v2',
-            static_discovery=False)
+        bqservice = discovery.build("bigquery", "v2", static_discovery=False)
 
-        req = bqservice.tables().update(projectId=table_api_rep["tableReference"]["projectId"],
-                                        datasetId=table_api_rep["tableReference"]["datasetId"],
-                                        tableId=table_api_rep["tableReference"]["tableId"],
-                                        body=table_api_rep)
+        req = bqservice.tables().update(
+            projectId=table_api_rep["tableReference"]["projectId"],
+            datasetId=table_api_rep["tableReference"]["datasetId"],
+            tableId=table_api_rep["tableReference"]["tableId"],
+            body=table_api_rep,
+        )
         # TODO: More exception handling we will see this return to a fault barrier but rate limit
         # should be handled
         req.execute()
@@ -3877,19 +4363,22 @@ class MultiBQSyncDriver(DefaultBQSyncDriver):
         ...     'tableId': 'my_table'
         ... }
         """
-        if entity_id["projectId"] == self.source_project and entity_id[
-            "datasetId"] == self.source_dataset:
+        if (
+            entity_id["projectId"] == self.source_project
+            and entity_id["datasetId"] == self.source_dataset
+        ):
             entity_id["projectId"] = self.destination_project
             entity_id["datasetId"] = self.destination_dataset
 
-        return bigquery.AccessEntry(None, 'view', entity_id)
+        return bigquery.AccessEntry(None, "view", entity_id)
 
     def create_access_view(self, entity_id):
         return self.coordinater.create_access_view(entity_id)
 
     def update_source_view_definition(self, view_definition, use_standard_sql):
-        view_defintion = self.coordinater.update_source_view_definition(view_definition,
-                                                                        use_standard_sql)
+        view_defintion = self.coordinater.update_source_view_definition(
+            view_definition, use_standard_sql
+        )
         return view_defintion
 
 
@@ -3902,41 +4391,48 @@ def compare_create_materialized_view(copy_driver, table_name, comparison_require
     :param comparison_required: if true then destination exists if false does not
     :return:
     """
-    assert isinstance(copy_driver,
-                      DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
-                                            "Driver"
+    assert isinstance(copy_driver, DefaultBQSyncDriver), (
+        "Copy driver has to be a subclass of DefaultCopy " "Driver"
+    )
 
-    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
     try:
         srctable = copy_driver.source_client.get_table(srctable_ref)
     except exceptions.NotFound:
-        copy_driver.get_logger().warning("Materialized view {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
-                                                                                                                                   copy_driver.source_dataset,
-                                                                                                                                   table_name))
+        copy_driver.get_logger().warning(
+            "Materialized view {}.{}.{} has been deleted between list comparison and detail sync skipping".format(
+                copy_driver.source_project, copy_driver.source_dataset, table_name
+            )
+        )
         return
     copy_mv = False
 
     if comparison_required:
-        dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
-            table_name)
+        dsttable_ref = copy_driver.destination_client.dataset(
+            copy_driver.destination_dataset
+        ).table(table_name)
         dsttable = copy_driver.destination_client.get_table(dsttable_ref)
-        if srctable.mview_enable_refresh != dsttable.mview_enable_refresh or \
-            srctable.mview_query != dsttable.mview_query or \
-            srctable.mview_refresh_interval != dsttable.mview_refresh_interval or \
-            srctable.friendly_name != dsttable.friendly_name or \
-            srctable.partitioning_type != dsttable.partitioning_type or \
-            srctable.time_partitioning != dsttable.time_partitioning or \
-            srctable.partition_expiration != dsttable.partition_expiration or\
-            srctable.labels != dsttable.labels or\
-            srctable.clustering_fields != dsttable.clustering_fields:
+        if (
+            srctable.mview_enable_refresh != dsttable.mview_enable_refresh
+            or srctable.mview_query != dsttable.mview_query
+            or srctable.mview_refresh_interval != dsttable.mview_refresh_interval
+            or srctable.friendly_name != dsttable.friendly_name
+            or srctable.partitioning_type != dsttable.partitioning_type
+            or srctable.time_partitioning != dsttable.time_partitioning
+            or srctable.partition_expiration != dsttable.partition_expiration
+            or srctable.labels != dsttable.labels
+            or srctable.clustering_fields != dsttable.clustering_fields
+        ):
             copy_driver.destination_client.delete_table(dsttable)
             copy_mv = True
     else:
         copy_mv = True
     if copy_mv:
         dsttable_ref = copy_driver.destination_client.dataset(
-            copy_driver.destination_dataset).table(
-            table_name)
+            copy_driver.destination_dataset
+        ).table(table_name)
         dsttable = bigquery.Table(dsttable_ref)
         dsttable.mview_enable_refresh = srctable.mview_enable_refresh
         dsttable.mview_refresh_interval = srctable.mview_refresh_interval
@@ -3952,15 +4448,17 @@ def compare_create_materialized_view(copy_driver, table_name, comparison_require
 
         # update references
         dsttable.mview_query = copy_driver.update_source_view_definition(
-                            srctable.mview_query, True)
+            srctable.mview_query, True
+        )
 
         # update cmek
         encryption_config = srctable.encryption_configuration
 
         # encryption configs can be location specific
         if encryption_config is not None:
-            dsttable.encryption_config = \
-                copy_driver.calculate_target_cmek_config(encryption_config)
+            dsttable.encryption_config = copy_driver.calculate_target_cmek_config(
+                encryption_config
+            )
 
         copy_driver.logger.info(
             "Copying materialized view {}.{}.{} to {}.{}.{}".format(
@@ -3969,8 +4467,11 @@ def compare_create_materialized_view(copy_driver, table_name, comparison_require
                 table_name,
                 copy_driver.destination_project,
                 copy_driver.destination_dataset,
-                table_name))
+                table_name,
+            )
+        )
         copy_driver.destination_client.create_table(dsttable)
+
 
 def create_and_copy_table(copy_driver, table_name):
     """
@@ -3981,31 +4482,38 @@ def create_and_copy_table(copy_driver, table_name):
     :param table_name: The table name we are copying from source
     :return: None
     """
-    assert isinstance(copy_driver,
-                      DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
-                                            "Driver"
+    assert isinstance(copy_driver, DefaultBQSyncDriver), (
+        "Copy driver has to be a subclass of DefaultCopy " "Driver"
+    )
 
-    dst_dataset_impl = copy_driver.destination_dataset_impl
+    # dst_dataset_impl = copy_driver.destination_dataset_impl
 
-    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
     srctable = copy_driver.source_client.get_table(srctable_ref)
 
-    if srctable.table_type != 'TABLE':
+    if srctable.table_type != "TABLE":
         if srctable.table_type in copy_driver.copy_types:
             if srctable.table_type == "MODEL":
                 create_and_copy_model(copy_driver, table_name)
             else:
                 copy_driver.get_logger().warning(
                     "Unable to copy a non table of type {} name {}.{}.{}".format(
-                        srctable.table_type, copy_driver.source_project, copy_driver.source_dataset,
-                        table_name))
+                        srctable.table_type,
+                        copy_driver.source_project,
+                        copy_driver.source_dataset,
+                        table_name,
+                    )
+                )
                 copy_driver.increment_tables_failed_sync()
     else:
         NEW_SCHEMA = list(srctable.schema)
         NEW_SCHEMA = copy_driver.map_schema_policy_tags(NEW_SCHEMA)
         export_import_type = copy_driver.export_import_format_supported(srctable)
         destination_table_ref = copy_driver.destination_client.dataset(
-            copy_driver.destination_dataset).table(table_name)
+            copy_driver.destination_dataset
+        ).table(table_name)
         destination_table = bigquery.Table(destination_table_ref, schema=NEW_SCHEMA)
         destination_table.description = srctable.description
         destination_table.friendly_name = srctable.friendly_name
@@ -4017,7 +4525,9 @@ def create_and_copy_table(copy_driver, table_name):
         destination_table.expires = srctable.expires
         # handle older library backward cmpatability
         if getattr(srctable, "require_partition_filter", None):
-            destination_table.require_partition_filter = srctable.require_partition_filter
+            destination_table.require_partition_filter = (
+                srctable.require_partition_filter
+            )
         if getattr(srctable, "range_partitioning", None):
             destination_table.range_partitioning = srctable.range_partitioning
         if getattr(srctable, "time_partitioning", None):
@@ -4028,8 +4538,9 @@ def create_and_copy_table(copy_driver, table_name):
 
         # encryption configs can be location specific
         if encryption_config is not None:
-            destination_table.encryption_config = \
+            destination_table.encryption_config = (
                 copy_driver.calculate_target_cmek_config(encryption_config)
+            )
 
         # and create the table
         retry = True
@@ -4043,18 +4554,23 @@ def create_and_copy_table(copy_driver, table_name):
                         f"Got a conflict error when creating table "
                         f"{copy_driver.destination_project}.{copy_driver.destination_dataset}."
                         f"{table_name}  already exists could be a "
-                        "different type of object i.e. view checking")
+                        "different type of object i.e. view checking"
+                    )
                     try:
                         dest_object_ref = copy_driver.destination_client.dataset(
-                            copy_driver.destination_dataset).table(table_name)
-                        dest_object = copy_driver.destination_client.get_table(dest_object_ref)
+                            copy_driver.destination_dataset
+                        ).table(table_name)
+                        dest_object = copy_driver.destination_client.get_table(
+                            dest_object_ref
+                        )
                         # if a view replace these with the table
                         if dest_object.table_type in ["VIEW", "MATERIALIZED_VIEW"]:
                             copy_driver.get_logger().info(
                                 f"Destination object {copy_driver.destination_project}."
                                 f"{copy_driver.destination_dataset}.{table_name} is a view type "
                                 f"object source is "
-                                "table deleting target and replacing with table")
+                                "table deleting target and replacing with table"
+                            )
                             copy_driver.destination_client.delete_table(dest_object)
                         else:
                             copy_driver.increment_tables_failed_sync()
@@ -4063,7 +4579,8 @@ def create_and_copy_table(copy_driver, table_name):
                                 f"{copy_driver.destination_project}."
                                 f"{copy_driver.destination_dataset}.{table_name} already exists "
                                 f"assuming "
-                                "race condition skipping")
+                                "race condition skipping"
+                            )
                             raise
                     except Exception:
                         raise
@@ -4075,21 +4592,34 @@ def create_and_copy_table(copy_driver, table_name):
                 raise
 
         copy_driver.get_logger().info(
-            "Created table {}.{}.{}".format(copy_driver.destination_project,
-                                            copy_driver.destination_dataset,
-                                            table_name))
+            "Created table {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
 
         # anything to copy we have just created table
         # so destination we know is 0
         if srctable.num_rows != 0:
             copy_driver.add_bytes_synced(srctable.num_bytes)
             copy_driver.add_rows_synced(srctable.num_rows)
-            copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
-                                                                       [copy_driver, table_name,
-                                                                        srctable.partitioning_type,
-                                                                        0,
-                                                                        srctable.num_rows,
-                                                                        export_import_type])))
+            copy_driver.copy_q.put(
+                (
+                    -1 * srctable.num_rows,
+                    BQSyncTask(
+                        copy_table_data,
+                        [
+                            copy_driver,
+                            table_name,
+                            srctable.partitioning_type,
+                            0,
+                            srctable.num_rows,
+                            export_import_type,
+                        ],
+                    ),
+                )
+            )
 
 
 def create_and_copy_model(copy_driver, model_name):
@@ -4097,14 +4627,17 @@ def create_and_copy_model(copy_driver, model_name):
         copy_driver.get_logger().error(
             "Unable to copy Model {}.{}.{} as meta data of input to model for training is not "
             "provided by the model meta data calls form big query skipping".format(
-                copy_driver.source_project, copy_driver.source_dataset,
-                model_name))
+                copy_driver.source_project, copy_driver.source_dataset, model_name
+            )
+        )
         copy_driver.increment_models_failed_sync()
     else:
         copy_driver.get_logger().error(
             "Unable to copy Model {}.{}.{} as current python environment big query library does "
-            "not support Models".format(copy_driver.source_project, copy_driver.source_dataset,
-                                        model_name))
+            "not support Models".format(
+                copy_driver.source_project, copy_driver.source_dataset, model_name
+            )
+        )
         copy_driver.increment_models_failed_sync()
 
 
@@ -4120,23 +4653,31 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     :param table_name:
     :return:
     """
-    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
     try:
         srctable = copy_driver.source_client.get_table(srctable_ref)
     except exceptions.NotFound:
-        copy_driver.get_logger().warning("Table {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
-                                                                                                                                   copy_driver.source_dataset,
-                                                                                                                                   table_name))
+        copy_driver.get_logger().warning(
+            "Table {}.{}.{} has been deleted between list comparison and detail sync skipping".format(
+                copy_driver.source_project, copy_driver.source_dataset, table_name
+            )
+        )
         return
-    dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
-        table_name)
+    dsttable_ref = copy_driver.destination_client.dataset(
+        copy_driver.destination_dataset
+    ).table(table_name)
     dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
     # if different table types thats not good need to sort
     # drop and recreate this handles TABLE->MODEL and MODEL->TABLE
-    if dsttable.table_type != srctable.table_type \
-            or srctable.partitioning_type is None and dsttable.partitioning_type is not None \
-            or srctable.partitioning_type != dsttable.partitioning_type:
+    if (
+        dsttable.table_type != srctable.table_type
+        or srctable.partitioning_type is None
+        and dsttable.partitioning_type is not None
+        or srctable.partitioning_type != dsttable.partitioning_type
+    ):
         copy_driver.get_logger().warning(
             "Change in table_type source {0}.{1}.{tablename} is type {2} and destination {3}.{"
             "4}.{tablename} is type {5}".format(
@@ -4146,7 +4687,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                 copy_driver.destination_project,
                 copy_driver.destination_dataset,
                 dsttable.table_type,
-                tablename=table_name))
+                tablename=table_name,
+            )
+        )
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
         return
@@ -4160,9 +4703,13 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
 
     fields = []
     # Only check encryption if missing if its has been updated but exists left as is
-    if srctable.encryption_configuration is not None and dsttable.encryption_configuration is None:
+    if (
+        srctable.encryption_configuration is not None
+        and dsttable.encryption_configuration is None
+    ):
         dsttable.encryption_configuration = copy_driver.calculate_target_cmek_config(
-            srctable.encryption_configuration)
+            srctable.encryption_configuration
+        )
         fields.append("encryption_configuration")
     if dsttable.description != srctable.description:
         dsttable.description = srctable.description
@@ -4179,7 +4726,6 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
     if dsttable.expires != srctable.expires:
         dsttable.expires = srctable.expires
         fields.append("expires")
-
 
     # if fields added lengths will differ
     # as initial copy used original these will be same order
@@ -4206,7 +4752,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                     if tgt_schema_item.description != schema_item.description:
                         changes += 1
                     if tgt_schema_item.field_type != "RECORD":
-                        tag_change,tgt_schema_item2 = copy_driver.map_policy_tag(tgt_schema_item,schema_item)
+                        tag_change, tgt_schema_item2 = copy_driver.map_policy_tag(
+                            tgt_schema_item, schema_item
+                        )
                         if tag_change:
                             changes += 1
                             tgt_schema_item = tgt_schema_item2
@@ -4221,9 +4769,12 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                             return input
 
                         output = compare_and_merge_schema_fields(
-                            {"oldchema": list(schema_item.fields),
-                             "newschema": list(tgt_schema_item.fields),
-                             "changes": 0})
+                            {
+                                "oldchema": list(schema_item.fields),
+                                "newschema": list(tgt_schema_item.fields),
+                                "changes": 0,
+                            }
+                        )
                         changes += output["changes"]
                         # if changes then need to create a new schema with new fields
                         # field is immutable so convert to api rep
@@ -4234,12 +4785,21 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                                 newfields.append(schema_item.to_api_repr())
                             tmp_work = tgt_schema_item.to_api_repr()
                             tmp_work["fields"] = newfields
-                            working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
+                            working_schema.append(
+                                bigquery.SchemaField.from_api_repr(tmp_work)
+                            )
                         else:
                             tmp_work = tgt_schema_item.to_api_repr()
-                            tmp_work["fields"] = [i.to_api_repr() for i in output['workingchema']]
-                            working_schema.append(bigquery.SchemaField.from_api_repr(tmp_work))
-                        if "deleteandrecreate" in output and output["deleteandrecreate"]:
+                            tmp_work["fields"] = [
+                                i.to_api_repr() for i in output["workingchema"]
+                            ]
+                            working_schema.append(
+                                bigquery.SchemaField.from_api_repr(tmp_work)
+                            )
+                        if (
+                            "deleteandrecreate" in output
+                            and output["deleteandrecreate"]
+                        ):
                             input["deleteandrecreate"] = output["deleteandrecreate"]
                             input["changes"] = changes
                             input["workingchema"] = working_schema
@@ -4255,7 +4815,7 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         # add any new structures
         for tgt_schema_item in input["newschema"]:
             if tgt_schema_item.name not in field_names_found:
-                _,new_field = copy_driver.map_policy_tag(tgt_schema_item)
+                _, new_field = copy_driver.map_policy_tag(tgt_schema_item)
                 working_schema.append(new_field)
                 changes += 1
 
@@ -4266,9 +4826,9 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
         input["changes"] = changes
         return input
 
-    output = compare_and_merge_schema_fields({"oldchema": OLD_SCHEMA,
-                                              "newschema": NEW_SCHEMA,
-                                              "changes": 0})
+    output = compare_and_merge_schema_fields(
+        {"oldchema": OLD_SCHEMA, "newschema": NEW_SCHEMA, "changes": 0}
+    )
     if "deleteandrecreate" in output:
         remove_deleted_destination_table(copy_driver, table_name)
         create_and_copy_table(copy_driver, table_name)
@@ -4285,71 +4845,100 @@ def compare_schema_patch_ifneeded(copy_driver, table_name):
                     dsttable.clustering_fields = srctable.clustering_fields
                     table_api_rep = dsttable.to_api_repr()
                     fields.append("clustering")
-                    copy_driver.discovery_update_table(table_api_rep,copy_driver)
+                    copy_driver.discovery_update_table(table_api_rep, copy_driver)
                 else:
-                    copy_driver.destination_client.update_table(dsttable,
-                                                            fields)
+                    copy_driver.destination_client.update_table(dsttable, fields)
             except exceptions.BadRequest as e:
-                if "encryption_configuration" in fields and \
-                        str(e).find(
-                            "Changing from Default to Cloud KMS encryption key and back must be "
-                            "done via table.copy job") != -1:
+                if (
+                    "encryption_configuration" in fields
+                    and str(e).find(
+                        "Changing from Default to Cloud KMS encryption key and back must be "
+                        "done via table.copy job"
+                    )
+                    != -1
+                ):
                     pass
                 else:
                     copy_driver.get_logger().exception(
-                        "Bad Request when patching table {}.{}.{} {}".format(copy_driver.destination_project,
-                                                           copy_driver.destination_dataset,
-                                                           table_name, ",".join(fields)))
+                        "Bad Request when patching table {}.{}.{} {}".format(
+                            copy_driver.destination_project,
+                            copy_driver.destination_dataset,
+                            table_name,
+                            ",".join(fields),
+                        )
+                    )
                     copy_driver.increment_tables_failed_sync()
                     raise
-            except Exception as e:
+            except Exception:
                 copy_driver.increment_tables_failed_sync()
                 raise
 
             dsttable = copy_driver.destination_client.get_table(dsttable_ref)
             copy_driver.get_logger().info(
-                "Patched table {}.{}.{} {}".format(copy_driver.destination_project,
-                                                   copy_driver.destination_dataset,
-                                                   table_name, ",".join(fields)))
+                "Patched table {}.{}.{} {}".format(
+                    copy_driver.destination_project,
+                    copy_driver.destination_dataset,
+                    table_name,
+                    ",".join(fields),
+                )
+            )
 
         copy_driver.add_bytes_synced(srctable.num_bytes)
         copy_driver.add_rows_synced(srctable.num_rows)
 
         # as not possible to patch on day partition with data time to rebuild this table
         # this should be feasible with an in region copy
-        if "encryption_configuration" in fields and \
-                dsttable.num_rows != 0 and \
-                (dsttable.partitioning_type in PARTITIONING_BY_TIME or
-                 dsttable.encryption_configuration is None):  # going from none to some needs to
+        if (
+            "encryption_configuration" in fields
+            and dsttable.num_rows != 0
+            and (
+                dsttable.partitioning_type in PARTITIONING_BY_TIME
+                or dsttable.encryption_configuration is None
+            )
+        ):  # going from none to some needs to
             # happen via a copy
-            update_table_cmek_via_copy(copy_driver.destination_client,
-                                       dsttable,
-                                       copy_driver.calculate_target_cmek_config(
-                                           srctable.encryption_configuration),
-                                       copy_driver.get_logger())
+            update_table_cmek_via_copy(
+                copy_driver.destination_client,
+                dsttable,
+                copy_driver.calculate_target_cmek_config(
+                    srctable.encryption_configuration
+                ),
+                copy_driver.get_logger(),
+            )
             dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
-        if dsttable.num_rows != srctable.num_rows or \
-                dsttable.num_bytes != srctable.num_bytes or \
-                srctable.modified >= dsttable.modified or \
-                copy_driver.table_data_change(srctable, dsttable):
-            export_import_type = copy_driver.export_import_format_supported(srctable, dsttable)
-            copy_driver.copy_q.put((-1 * srctable.num_rows, BQSyncTask(copy_table_data,
-                                                                       [copy_driver, table_name,
-                                                                        srctable.partitioning_type,
-                                                                        dsttable.num_rows,
-                                                                        srctable.num_rows,
-                                                                        export_import_type])))
+        if (
+            dsttable.num_rows != srctable.num_rows
+            or dsttable.num_bytes != srctable.num_bytes
+            or srctable.modified >= dsttable.modified
+            or copy_driver.table_data_change(srctable, dsttable)
+        ):
+            export_import_type = copy_driver.export_import_format_supported(
+                srctable, dsttable
+            )
+            copy_driver.copy_q.put(
+                (
+                    -1 * srctable.num_rows,
+                    BQSyncTask(
+                        copy_table_data,
+                        [
+                            copy_driver,
+                            table_name,
+                            srctable.partitioning_type,
+                            dsttable.num_rows,
+                            srctable.num_rows,
+                            export_import_type,
+                        ],
+                    ),
+                )
+            )
         else:
             copy_driver.increment_tables_avoided()
             copy_driver.add_bytes_avoided(srctable.num_bytes)
             copy_driver.add_rows_avoided(srctable.num_rows)
 
 
-def update_table_cmek_via_copy(client,
-                               srctable,
-                               encryption_configuration,
-                               logger):
+def update_table_cmek_via_copy(client, srctable, encryption_configuration, logger):
     """
     being asked to update a day partition tables cmek copy it within dataset
     recreate and copy back
@@ -4361,15 +4950,20 @@ def update_table_cmek_via_copy(client,
     """
 
     # copy to a temp table
-    dsttable = client.dataset(srctable.dataset_id).table("zz" + srctable.table_id + "_temp")
+    dsttable = client.dataset(srctable.dataset_id).table(
+        "zz" + srctable.table_id + "_temp"
+    )
     if table_exists(client, dsttable):
         client.delete_table(dsttable)
 
     job_config = bigquery.CopyJobConfig()
     job_config.destination_encryption_configuration = encryption_configuration
     job = client.copy_table(
-        srctable, dsttable, job_config=job_config,
-        location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
+        srctable,
+        dsttable,
+        job_config=job_config,
+        location=client.get_dataset(client.dataset(srctable.dataset_id)).location,
+    )
 
     wait_for_jobs([job], logger=logger)
 
@@ -4381,8 +4975,11 @@ def update_table_cmek_via_copy(client,
     job_config = bigquery.CopyJobConfig()
     job_config.destination_encryption_configuration = encryption_configuration
     job = client.copy_table(
-        srctable, dsttable, job_config=job_config,
-        location=client.get_dataset(client.dataset(srctable.dataset_id)).location)
+        srctable,
+        dsttable,
+        job_config=job_config,
+        location=client.get_dataset(client.dataset(srctable.dataset_id)).location,
+    )
 
     wait_for_jobs([job], logger=logger)
 
@@ -4401,9 +4998,12 @@ def remove_deleted_destination_table(copy_driver, table_name):
         table = copy_driver.destination_client.get_table(table_ref)
         copy_driver.destination_client.delete_table(table)
         copy_driver.get_logger().info(
-            "Deleted table/view {}.{}.{}".format(copy_driver.destination_project,
-                                                 copy_driver.destination_dataset,
-                                                 table_name))
+            "Deleted table/view {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
 
 
 # need to be able to compare close numbers
@@ -4414,12 +5014,9 @@ def isclose(a, b, rel_tol=1e-09, abs_tol=0.0):
     return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 
-def copy_table_data(copy_driver,
-                    table_name,
-                    partitioning_type,
-                    dst_rows,
-                    src_rows,
-                    export_import_format):
+def copy_table_data(
+    copy_driver, table_name, partitioning_type, dst_rows, src_rows, export_import_format
+):
     """
     Function copies data assumes schemas are identical
     :param copy_driver:
@@ -4428,15 +5025,17 @@ def copy_table_data(copy_driver,
     """
     if not copy_driver.copy_data:
         copy_driver.logger.info(
-            "Would have copied table {}.{}.{} to {}.{}.{} source rows {} destination rows {}".
-                format(copy_driver.source_project,
-                       copy_driver.source_dataset,
-                       table_name,
-                       copy_driver.destination_project,
-                       copy_driver.destination_dataset,
-                       table_name,
-                       src_rows,
-                       dst_rows))
+            "Would have copied table {}.{}.{} to {}.{}.{} source rows {} destination rows {}".format(
+                copy_driver.source_project,
+                copy_driver.source_dataset,
+                table_name,
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+                src_rows,
+                dst_rows,
+            )
+        )
         return
 
     src_query = None
@@ -4446,64 +5045,87 @@ def copy_table_data(copy_driver,
         bqclient = copy_driver.source_client
         srctable_ref = bqclient.dataset(copy_driver.source_dataset).table(table_name)
         srctable = bqclient.get_table(srctable_ref)
-        partitiontime, extrafields, extrajoinandpredicates = copy_driver.extra_dp_compare_functions(
-            srctable)
-        src_query = TCMPDAYPARTITION.format(strftime=PARTITIONING_BY_TIME[partitioning_type],
-                                            partitiontime=partitiontime,
-                                            project=copy_driver.source_project,
-                                            dataset=copy_driver.source_dataset,
-                                            extrafunctions=extrafields,
-                                            extrajoinandpredicates=extrajoinandpredicates,
-                                            table_name=table_name)
-        dst_query = TCMPDAYPARTITION.format(strftime=PARTITIONING_BY_TIME[partitioning_type],
-                                            partitiontime=partitiontime,
-                                            project=copy_driver.destination_project,
-                                            dataset=copy_driver.destination_dataset,
-                                            extrafunctions=extrafields,
-                                            extrajoinandpredicates=extrajoinandpredicates,
-                                            table_name=table_name)
+        (
+            partitiontime,
+            extrafields,
+            extrajoinandpredicates,
+        ) = copy_driver.extra_dp_compare_functions(srctable)
+        src_query = TCMPDAYPARTITION.format(
+            strftime=PARTITIONING_BY_TIME[partitioning_type],
+            partitiontime=partitiontime,
+            project=copy_driver.source_project,
+            dataset=copy_driver.source_dataset,
+            extrafunctions=extrafields,
+            extrajoinandpredicates=extrajoinandpredicates,
+            table_name=table_name,
+        )
+        dst_query = TCMPDAYPARTITION.format(
+            strftime=PARTITIONING_BY_TIME[partitioning_type],
+            partitiontime=partitiontime,
+            project=copy_driver.destination_project,
+            dataset=copy_driver.destination_dataset,
+            extrafunctions=extrafields,
+            extrajoinandpredicates=extrajoinandpredicates,
+            table_name=table_name,
+        )
 
     # if same region now just do a table copy
     if copy_driver.same_region:
         jobs = []
-        if partitioning_type not in PARTITIONING_BY_TIME or (
-                partitioning_type in PARTITIONING_BY_TIME and dst_rows == 0 and
-                len(copy_driver.comparison_predicates(table_name)) == 0) or (
-                partitioning_type in PARTITIONING_BY_TIME and src_rows <= 5000 and
-                len(copy_driver.comparison_predicates(table_name)) == 0):
+        if (
+            partitioning_type not in PARTITIONING_BY_TIME
+            or (
+                partitioning_type in PARTITIONING_BY_TIME
+                and dst_rows == 0
+                and len(copy_driver.comparison_predicates(table_name)) == 0
+            )
+            or (
+                partitioning_type in PARTITIONING_BY_TIME
+                and src_rows <= 5000
+                and len(copy_driver.comparison_predicates(table_name)) == 0
+            )
+        ):
             jobs.append(in_region_copy(copy_driver, table_name))
         else:
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.query_client, src_query,
-                                         copy_driver.get_logger(),
-                                         "List source data per partition",
-                                         location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[0])
+            source_generator = run_query(
+                copy_driver.query_client,
+                src_query,
+                copy_driver.get_logger(),
+                "List source data per partition",
+                location=copy_driver.source_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[0],
+            )
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.query_client, dst_query,
-                                              copy_driver.get_logger(),
-                                              "List destination data per partition",
-                                              location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[1])
+            destination_generator = run_query(
+                copy_driver.query_client,
+                dst_query,
+                copy_driver.get_logger(),
+                "List destination data per partition",
+                location=copy_driver.destination_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[1],
+            )
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
                 destination_ended = True
 
             while not (source_ended and destination_ended):
-                if not destination_ended and not source_ended and destination_row[
-                    "partitionName"] == \
-                        source_row["partitionName"]:
+                if (
+                    not destination_ended
+                    and not source_ended
+                    and destination_row["partitionName"] == source_row["partitionName"]
+                ):
                     diff = False
                     rowdict = dict(list(source_row.items()))
                     for key in rowdict:
@@ -4513,10 +5135,9 @@ def copy_table_data(copy_driver,
                         # type errors so only check within float
                         # accuracy tolerance
                         if source_row[key] != destination_row[key] and (
-                                not isinstance(source_row[key], float) or not isclose(
-                            source_row[key],
-                            destination_row[
-                                key])):
+                            not isinstance(source_row[key], float)
+                            or not isclose(source_row[key], destination_row[key])
+                        ):
                             diff = True
                             copy_driver.logger.info(
                                 "Copying {}.{}.{}${} to {}.{}.{}${} difference in {} source value "
@@ -4525,21 +5146,24 @@ def copy_table_data(copy_driver,
                                     copy_driver.source_project,
                                     copy_driver.source_dataset,
                                     table_name,
-                                    source_row[
-                                        "partitionName"],
+                                    source_row["partitionName"],
                                     copy_driver.destination_project,
                                     copy_driver.destination_dataset,
                                     table_name,
-                                    source_row[
-                                        "partitionName"],
+                                    source_row["partitionName"],
                                     key,
                                     source_row[key],
-                                    destination_row[key]))
+                                    destination_row[key],
+                                )
+                            )
                             break
                     if diff:
-                        jobs.append(in_region_copy(copy_driver,
-                                                   "{}${}".format(table_name,
-                                                                  source_row["partitionName"])))
+                        jobs.append(
+                            in_region_copy(
+                                copy_driver,
+                                "{}${}".format(table_name, source_row["partitionName"]),
+                            )
+                        )
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
@@ -4549,32 +5173,39 @@ def copy_table_data(copy_driver,
                     except StopIteration:
                         destination_ended = True
                 elif (destination_ended and not source_ended) or (
-                        not source_ended and source_row["partitionName"] < destination_row[
-                    "partitionName"]):
+                    not source_ended
+                    and source_row["partitionName"] < destination_row["partitionName"]
+                ):
                     copy_driver.logger.info(
                         "Copying {}.{}.{}${} to {}.{}.{}${} as not on destination".format(
                             copy_driver.source_project,
                             copy_driver.source_dataset,
                             table_name,
-                            source_row[
-                                "partitionName"],
+                            source_row["partitionName"],
                             copy_driver.destination_project,
                             copy_driver.destination_dataset,
                             table_name,
-                            source_row[
-                                "partitionName"]))
-                    jobs.append(in_region_copy(copy_driver,
-                                               "{}${}".format(table_name,
-                                                              source_row["partitionName"])))
+                            source_row["partitionName"],
+                        )
+                    )
+                    jobs.append(
+                        in_region_copy(
+                            copy_driver,
+                            "{}${}".format(table_name, source_row["partitionName"]),
+                        )
+                    )
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
                 elif (source_ended and not destination_ended) or (
-                        not destination_ended and source_row["partitionName"] > destination_row[
-                    "partitionName"]):
+                    not destination_ended
+                    and source_row["partitionName"] > destination_row["partitionName"]
+                ):
                     remove_deleted_destination_table(
-                        copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
+                        copy_driver,
+                        "{}${}".format(table_name, destination_row["partitionName"]),
+                    )
                     try:
                         destination_row = next(destination_generator)
                     except StopIteration:
@@ -4587,8 +5218,12 @@ def copy_table_data(copy_driver,
         for job in jobs:
             callbacks[job.job_id] = copy_complete_callback
 
-        wait_for_jobs(jobs, copy_driver.logger, desc="Wait for copy jobs",
-                      call_back_on_complete=callbacks)
+        wait_for_jobs(
+            jobs,
+            copy_driver.logger,
+            desc="Wait for copy jobs",
+            call_back_on_complete=callbacks,
+        )
 
     # else not same region so have to extract
     # copy object and
@@ -4600,34 +5235,42 @@ def copy_table_data(copy_driver,
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.query_client, src_query,
-                                         copy_driver.get_logger(),
-                                         "List source data per partition",
-                                         location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[0])
+            source_generator = run_query(
+                copy_driver.query_client,
+                src_query,
+                copy_driver.get_logger(),
+                "List source data per partition",
+                location=copy_driver.source_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[0],
+            )
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.query_client, dst_query,
-                                              copy_driver.get_logger(),
-                                              "List destination data per partition",
-                                              location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[1])
+            destination_generator = run_query(
+                copy_driver.query_client,
+                dst_query,
+                copy_driver.get_logger(),
+                "List destination data per partition",
+                location=copy_driver.destination_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[1],
+            )
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
                 destination_ended = True
 
             while not (source_ended and destination_ended):
-                if not destination_ended and not source_ended and destination_row[
-                    "partitionName"] == \
-                        source_row["partitionName"]:
+                if (
+                    not destination_ended
+                    and not source_ended
+                    and destination_row["partitionName"] == source_row["partitionName"]
+                ):
                     diff = False
                     rowdict = dict(list(source_row.items()))
                     for key in sorted(rowdict.keys()):
@@ -4637,10 +5280,9 @@ def copy_table_data(copy_driver,
                         # type errors so only check within float
                         # accuracy tolerance
                         if source_row[key] != destination_row[key] and (
-                                not isinstance(source_row[key], float) or not isclose(
-                            source_row[key],
-                            destination_row[
-                                key])):
+                            not isinstance(source_row[key], float)
+                            or not isclose(source_row[key], destination_row[key])
+                        ):
                             diff = True
                             copy_driver.logger.info(
                                 "Copying {}.{}.{}${} to {}.{}.{}${} difference in {} source value "
@@ -4649,31 +5291,40 @@ def copy_table_data(copy_driver,
                                     copy_driver.source_project,
                                     copy_driver.source_dataset,
                                     table_name,
-                                    source_row[
-                                        "partitionName"],
+                                    source_row["partitionName"],
                                     copy_driver.destination_project,
                                     copy_driver.destination_dataset,
                                     table_name,
-                                    source_row[
-                                        "partitionName"],
+                                    source_row["partitionName"],
                                     key,
                                     source_row[key],
-                                    destination_row[key]))
+                                    destination_row[key],
+                                )
+                            )
                             break
                     if diff:
-                        partition_path = "TABLE_ID={table_name}/PT={partition_name}".format(
-                            table_name=table_name,
-                            partition_name=source_row[
-                                "partitionName"])
+                        partition_path = (
+                            "TABLE_ID={table_name}/PT={partition_name}".format(
+                                table_name=table_name,
+                                partition_name=source_row["partitionName"],
+                            )
+                        )
                         copy_driver.copy_q.put(
-                            (-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
-                                                                   [copy_driver,
-                                                                    "{}${}".format(
-                                                                        table_name,
-                                                                        source_row[
-                                                                            "partitionName"]),
-                                                                    export_import_format,
-                                                                    partition_path])))
+                            (
+                                -1 * source_row["rowNum"],
+                                BQSyncTask(
+                                    cross_region_copy,
+                                    [
+                                        copy_driver,
+                                        "{}${}".format(
+                                            table_name, source_row["partitionName"]
+                                        ),
+                                        export_import_format,
+                                        partition_path,
+                                    ],
+                                ),
+                            )
+                        )
                     else:
                         copy_driver.add_rows_avoided(source_row["rowNum"])
                     try:
@@ -4685,41 +5336,54 @@ def copy_table_data(copy_driver,
                     except StopIteration:
                         destination_ended = True
                 elif (destination_ended and not source_ended) or (
-                        not source_ended and source_row["partitionName"] < destination_row[
-                    "partitionName"]):
+                    not source_ended
+                    and source_row["partitionName"] < destination_row["partitionName"]
+                ):
                     copy_driver.logger.info(
                         "Copying {}.{}.{}${} to {}.{}.{}${} as not on destination".format(
                             copy_driver.source_project,
                             copy_driver.source_dataset,
                             table_name,
-                            source_row[
-                                "partitionName"],
+                            source_row["partitionName"],
                             copy_driver.destination_project,
                             copy_driver.destination_dataset,
                             table_name,
-                            source_row[
-                                "partitionName"]))
-                    partition_path = "TABLE_ID={table_name}/PT={partition_name}".format(table_name=table_name,
-                                                                                        partition_name=source_row[
-                                                                                           "partitionName"])
-                    copy_driver.copy_q.put((-1 * source_row["rowNum"], BQSyncTask(cross_region_copy,
-                                                                                  [copy_driver,
-                                                                                   "{}${}".format(
-                                                                                       table_name,
-                                                                                       source_row[
-                                                                                           "partitionName"],
-                                                                                   ),
-                                                                                   export_import_format,
-                                                                                   partition_path])))
+                            source_row["partitionName"],
+                        )
+                    )
+                    partition_path = "TABLE_ID={table_name}/PT={partition_name}".format(
+                        table_name=table_name,
+                        partition_name=source_row["partitionName"],
+                    )
+                    copy_driver.copy_q.put(
+                        (
+                            -1 * source_row["rowNum"],
+                            BQSyncTask(
+                                cross_region_copy,
+                                [
+                                    copy_driver,
+                                    "{}${}".format(
+                                        table_name,
+                                        source_row["partitionName"],
+                                    ),
+                                    export_import_format,
+                                    partition_path,
+                                ],
+                            ),
+                        )
+                    )
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
                 elif (source_ended and not destination_ended) or (
-                        not destination_ended and source_row["partitionName"] > destination_row[
-                    "partitionName"]):
+                    not destination_ended
+                    and source_row["partitionName"] > destination_row["partitionName"]
+                ):
                     remove_deleted_destination_table(
-                        copy_driver, "{}${}".format(table_name, destination_row["partitionName"]))
+                        copy_driver,
+                        "{}${}".format(table_name, destination_row["partitionName"]),
+                    )
                     try:
                         destination_row = next(destination_generator)
                     except StopIteration:
@@ -4738,7 +5402,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
     """
 
     if partition_path is None:
-        partition_path="TABLE_ID={table_name}".format(table_name=table_name)
+        partition_path = "TABLE_ID={table_name}".format(table_name=table_name)
     bqclient = copy_driver.source_client
     srctable = bqclient.dataset(copy_driver.source_dataset).table(table_name)
     blobname = "SESSION_ID={session_id}/PROJECT_ID={source_project}/DATASET_ID={source_dataset}/{partition_path}/data*{extension}".format(
@@ -4746,7 +5410,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
         source_project=copy_driver.source_project,
         source_dataset=copy_driver.source_dataset,
         partition_path=partition_path,
-        extension=export_import_type.source_file_extension
+        extension=export_import_type.source_file_extension,
     )
     # blobname = "{}-{}-{}-{}-{}*.avro".format(table_name, copy_driver.source_project,
     #                                          copy_driver.source_dataset,
@@ -4767,14 +5431,15 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
     job_config.compression = export_import_type.compression_format
 
     # start the extract
-    job = copy_driver.query_client.extract_table(srctable, [src_uri], job_config=job_config,
-                                                 location=copy_driver.source_location)
+    job = copy_driver.query_client.extract_table(
+        srctable, [src_uri], job_config=job_config, location=copy_driver.source_location
+    )
 
     def cross_region_rewrite(job):
         if job.error_result:
             copy_driver.increment_extract_fails()
         else:
-            blob_uris = int(job._job_statistics().get('destinationUriFileCounts')[0])
+            blob_uris = int(job._job_statistics().get("destinationUriFileCounts")[0])
 
             def generate_cp_files():
                 """Generate sources and destinations."""
@@ -4788,7 +5453,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                 retry = True
                 loop = 0
 
-                while (retry):
+                while retry:
                     retry = False
                     try:
                         client = storage.Client(project=copy_driver.source_project)
@@ -4799,25 +5464,30 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
 
                         dst_blob = storage.blob.Blob(new_name, dst_bucket)
 
-                        (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob)
+                        (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(
+                            src_blob
+                        )
 
                         # wait for rewrite to finish
                         while token is not None:
-                            (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(src_blob,
-                                                                                     token=token)
+                            (token, bytes_rewritten, total_bytes) = dst_blob.rewrite(
+                                src_blob, token=token
+                            )
 
                     # retry based upon
                     # https://cloud.google.com/storage/docs/json_api/v1/status-codes
-                    except (exceptions.BadGateway,
-                            exceptions.GatewayTimeout,
-                            exceptions.InternalServerError,
-                            exceptions.TooManyRequests,
-                            exceptions.ServiceUnavailable,
-                            requests.exceptions.SSLError) as e:
+                    except (
+                        exceptions.BadGateway,
+                        exceptions.GatewayTimeout,
+                        exceptions.InternalServerError,
+                        exceptions.TooManyRequests,
+                        exceptions.ServiceUnavailable,
+                        requests.exceptions.SSLError,
+                    ):
                         # exponential back off for these
                         copy_driver.increment_blob_rewrite_retried_exceptions()
                         loop = loop + 1
-                        sleep_time_secs = min(random.random() * (2 ** loop), 32.0)
+                        sleep_time_secs = min(random.random() * (2**loop), 32.0)
                         copy_driver.get_logger().exception(
                             "Retryable exception  re-writing blob in cross region copy gs://{}/{} "
                             "to gs://{}/{"
@@ -4826,16 +5496,22 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                                 new_name,
                                 copy_driver.destination_bucket,
                                 new_name,
-                                sleep_time_secs))
+                                sleep_time_secs,
+                            )
+                        )
                         sleep(sleep_time_secs)
                         retry = True
-                    except Exception as e:
+                    except Exception:
                         copy_driver.increment_blob_rewrite_unretryable_exceptions()
                         copy_driver.get_logger().exception(
                             "Exception re-writing blob in cross region copy gs://{}/{} to gs://{}/{"
                             "}".format(
                                 copy_driver.source_bucket,
-                                new_name, copy_driver.destination_bucket, new_name))
+                                new_name,
+                                copy_driver.destination_bucket,
+                                new_name,
+                            )
+                        )
 
                     # handle fact not even got a blob object this implies something bad has
                     # happend but logging will have repoted this anyhow
@@ -4851,12 +5527,11 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
             # None is ThreadPoolExecutor max_workers default. 1 is single-threaded.
             # this fires up a number of background threads to rewrite all the blobs
             # we keep storage client work withi
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) \
-                    as executor:
+            with ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as executor:
                 futures = [
-                    executor.submit(
-                        rewrite_blob,
-                        new_name=blob_name)
+                    executor.submit(rewrite_blob, new_name=blob_name)
                     for blob_name in generate_cp_files()
                 ]
 
@@ -4865,7 +5540,9 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
 
             dst_uri = "gs://{}/{}".format(copy_driver.destination_bucket, blobname)
             bqclient = copy_driver.destination_client
-            dsttable = bqclient.dataset(copy_driver.destination_dataset).table(table_name)
+            dsttable = bqclient.dataset(copy_driver.destination_dataset).table(
+                table_name
+            )
             job_config = bigquery.LoadJobConfig()
 
             if export_import_type.source_format == bigquery.job.SourceFormat.AVRO:
@@ -4878,19 +5555,26 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
             # this is required but nee dto sort patching of cmek first
             if export_import_type.encryption_configuration is not None:
                 # no calc encryption MUST exists and MUSt be set in destination format
-                job_config.destination_encryption_configuration = \
+                job_config.destination_encryption_configuration = (
                     export_import_type.encryption_configuration
+                )
 
             job_config.write_disposition = bigquery.WriteDisposition.WRITE_TRUNCATE
             job_config.create_disposition = bigquery.CreateDisposition.CREATE_NEVER
             if getattr(job_config, "schema_update_options", None):
-                job_config.schema_update_options = bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
-                job_config.schema_update_options = \
+                job_config.schema_update_options = (
+                    bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION
+                )
+                job_config.schema_update_options = (
                     bigquery.SchemaUpdateOption.ALLOW_FIELD_RELAXATION
+                )
 
-            job = copy_driver.query_client.load_table_from_uri([dst_uri], dsttable,
-                                                               job_config=job_config,
-                                                               location=copy_driver.destination_location)
+            job = copy_driver.query_client.load_table_from_uri(
+                [dst_uri],
+                dsttable,
+                job_config=job_config,
+                location=copy_driver.destination_location,
+            )
 
         def delete_blob(job):
             copy_driver.update_job_stats(job)
@@ -4904,41 +5588,53 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                     try:
                         dst_blob.delete()
                     except exceptions.NotFound:
-                        copy_driver.get_logger().error("Not found gs://{}/{} when deleting".format(copy_driver.destination_bucket,ablobname))
+                        copy_driver.get_logger().error(
+                            "Not found gs://{}/{} when deleting".format(
+                                copy_driver.destination_bucket, ablobname
+                            )
+                        )
 
         callbackobj = {job.job_id: delete_blob}
-        wait_for_jobs([job], copy_driver.get_logger(),
-                      desc="Wait for load job for table {}.{}.{}".format(
-                          copy_driver.destination_project,
-                          copy_driver.destination_dataset,
-                          table_name),
-                      call_back_on_complete=callbackobj)
+        wait_for_jobs(
+            [job],
+            copy_driver.get_logger(),
+            desc="Wait for load job for table {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            ),
+            call_back_on_complete=callbackobj,
+        )
 
     callbackobj = {job.job_id: cross_region_rewrite}
-    wait_for_jobs([job], copy_driver.get_logger(),
-                  desc="Wait for extract job for table {}.{}.{}".format(
-                      copy_driver.source_project,
-                      copy_driver.source_dataset,
-                      table_name),
-                  call_back_on_complete=callbackobj)
+    wait_for_jobs(
+        [job],
+        copy_driver.get_logger(),
+        desc="Wait for extract job for table {}.{}.{}".format(
+            copy_driver.source_project, copy_driver.source_dataset, table_name
+        ),
+        call_back_on_complete=callbackobj,
+    )
 
     return
 
 
 def in_region_copy(copy_driver, table_name):
-    srctable = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
-    dsttable = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
-        table_name)
+    srctable = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
+    dsttable = copy_driver.destination_client.dataset(
+        copy_driver.destination_dataset
+    ).table(table_name)
     # Move to use write disposition so can haved ifferent write modes
     # this allows day partition snapshot and append tables
     # if self.table_exists(client, dsttable):
     #    client.delete_table(dsttable)
     job_config = bigquery.CopyJobConfig()
-    job_config.write_disposition = 'WRITE_TRUNCATE'
-    job_config.create_disposition = 'CREATE_IF_NEEDED'
+    job_config.write_disposition = "WRITE_TRUNCATE"
+    job_config.create_disposition = "CREATE_IF_NEEDED"
 
-    job = copy_driver.query_client.copy_table(
-        srctable, dsttable, job_config=job_config)
+    job = copy_driver.query_client.copy_table(srctable, dsttable, job_config=job_config)
 
     return job
 
@@ -4950,12 +5646,12 @@ def sync_bq_processor(stop_event, copy_driver, q):
     :param q: The work queue tasks are put in
     :return: None
     """
-    assert isinstance(copy_driver,
-                      DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
-                                            "Driver"
-    assert isinstance(q,
-                      queue.Queue), "Must be passed a queue for background thread " \
-                                    "Driver"
+    assert isinstance(copy_driver, DefaultBQSyncDriver), (
+        "Copy driver has to be a subclass of DefaultCopy " "Driver"
+    )
+    assert isinstance(q, queue.Queue), (
+        "Must be passed a queue for background thread " "Driver"
+    )
 
     while not stop_event.isSet():
         try:
@@ -4963,12 +5659,17 @@ def sync_bq_processor(stop_event, copy_driver, q):
                 _, task = q.get(timeout=1)
                 assert isinstance(task, BQSyncTask)
             except TypeError as e:
-                if str(e).find(
-                        "not supported between instances of 'function' and 'function'") == -1:
+                if (
+                    str(e).find(
+                        "not supported between instances of 'function' and 'function'"
+                    )
+                    == -1
+                ):
                     raise
                 else:
                     copy_driver.logger.exception(
-                        "Swallowing type exception cause by bug in Priority Queue")
+                        "Swallowing type exception cause by bug in Priority Queue"
+                    )
 
             if task is None:
                 continue
@@ -4995,35 +5696,36 @@ def wait_for_jobs(jobs, logger, desc="", sleepTime=0.1, call_back_on_complete=No
         didnothing = True
         for job in jobs:
             # hmm not sure how it can ever be None
-            if job is not None:
+            if job:
                 if job.done():
                     didnothing = False
                     if job.error_result:
                         logger.error(
-                            "{}:Error BQ {} Job {} error {}".format(desc, job.job_type, job.job_id,
-                                                                    str(job.error_result)))
+                            "{}:Error BQ {} Job {} error {}".format(
+                                desc, job.job_type, job.job_id, str(job.error_result)
+                            )
+                        )
                     else:
-                        if (job.job_type == "load") and \
-                                job.output_rows is not None:
+                        if (job.job_type == "load") and job.output_rows is not None:
                             logger.info(
-                                "{}:BQ {} Job completed:{} rows {}ed {:,d}".format(desc,
-                                                                                   job.job_type,
-                                                                                   job.job_id,
-                                                                                   job.job_type,
-                                                                                   job.output_rows))
-                    if call_back_on_complete is not None and job.job_id in \
-                            call_back_on_complete:
+                                "{}:BQ {} Job completed:{} rows {}ed {:,d}".format(
+                                    desc,
+                                    job.job_type,
+                                    job.job_id,
+                                    job.job_type,
+                                    job.output_rows,
+                                )
+                            )
+                    if (
+                        call_back_on_complete is not None
+                        and job.job_id in call_back_on_complete
+                    ):
                         call_back_on_complete[job.job_id](job)
-
-            else:
-                didnothing = False
-                logger.debug("{}:BQ {} Job completed:{}".format(desc, job.job_type, job.job_id))
 
         if didnothing:
             sleep(sleepTime)
         else:
-            jobs = [x for x in jobs if x.job_id
-                    is not None and not x.state == 'DONE']
+            jobs = [x for x in jobs if x.job_id is not None and not x.state == "DONE"]
 
 
 def wait_for_queue(q, desc=None, sleepTime=0.2, logger=None):
@@ -5032,6 +5734,8 @@ def wait_for_queue(q, desc=None, sleepTime=0.2, logger=None):
     :param q: The q to wiat for
     :return:
     """
+    if not desc:
+        desc = ""
     qsize = 0
     while q.qsize() > 0:
         qsize = q.qsize()
@@ -5041,21 +5745,25 @@ def wait_for_queue(q, desc=None, sleepTime=0.2, logger=None):
             sleep(sleepTime)
 
     if logger is not None and desc is not None:
-        logger.info("Waiting for tasks {} to complete".format(qsize, desc))
+        logger.info("Waiting for tasks {} to complete {}".format(qsize, desc))
     q.join()
     if logger is not None and desc is not None:
-        logger.info("All tasks {} now complete".format(qsize, desc))
+        logger.info("All tasks {} now complete {}".format(qsize, desc))
 
 
 def remove_deleted_destination_routine(copy_driver, routine_name):
     # handle old libraries with no routine support
     if getattr(bigquery, "Routine", None):
         dstroutine_ref = bigquery.Routine(
-            "{}.{}.{}".format(copy_driver.destination_project, copy_driver.destination_dataset,
-                              routine_name))
+            "{}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                routine_name,
+            )
+        )
         try:
             copy_driver.destination_client.delete_routine(dstroutine_ref)
-        except exceptions.NotFound as e:
+        except exceptions.NotFound:
             pass
     else:
         copy_driver.get_logger().warning(
@@ -5063,7 +5771,9 @@ def remove_deleted_destination_routine(copy_driver, routine_name):
             "bigquery library in the current python environment".format(
                 copy_driver.destination_project,
                 copy_driver.destination_dataset,
-                routine_name))
+                routine_name,
+            )
+        )
         copy_driver.increment_routines_failed_sync()
 
 
@@ -5083,11 +5793,18 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
     # handle old libraries with no routine support
     if getattr(bigquery, "Routine", None):
         srcroutine_ref = bigquery.Routine(
-            "{}.{}.{}".format(copy_driver.source_project, copy_driver.source_dataset, routine_name))
+            "{}.{}.{}".format(
+                copy_driver.source_project, copy_driver.source_dataset, routine_name
+            )
+        )
         srcroutine = copy_driver.source_client.get_routine(srcroutine_ref)
         dstroutine_ref = bigquery.Routine(
-            "{}.{}.{}".format(copy_driver.destination_project, copy_driver.destination_dataset,
-                              routine_name))
+            "{}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                routine_name,
+            )
+        )
         # dstroutine = bigquery.Routine(dstroutine_ref)
         dstroutine_ref.description = srcroutine.description
         dstroutine_ref.body = routine_input["routine_definition"]
@@ -5101,15 +5818,19 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
 
         # normally as referencing a routine not created
         # so we accept this on basis next sync will resolve
-        except exceptions.BadRequest as e:
-            copy_driver.get_logger().exception(f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}")
+        except exceptions.BadRequest:
+            copy_driver.get_logger().exception(
+                f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
+            )
             return
         return dstroutine
     else:
         copy_driver.get_logger().warning(
             "Unable to copy Routine {}.{}.{} as current python environment big query library does "
-            "not support Routines".format(copy_driver.source_project, copy_driver.source_dataset,
-                                          routine_name))
+            "not support Routines".format(
+                copy_driver.source_project, copy_driver.source_dataset, routine_name
+            )
+        )
         copy_driver.increment_routines_failed_sync()
 
 
@@ -5126,13 +5847,17 @@ def create_destination_view(copy_driver, table_name, view_input):
     :return:
     """
 
-    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
     try:
         srctable = copy_driver.source_client.get_table(srctable_ref)
     except exceptions.NotFound:
-        copy_driver.get_logger().warning("View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
-                                                                                                                                   copy_driver.source_dataset,
-                                                                                                                                   table_name))
+        copy_driver.get_logger().warning(
+            "View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(
+                copy_driver.source_project, copy_driver.source_dataset, table_name
+            )
+        )
         return
 
     use_legacy_sql = True
@@ -5140,7 +5865,8 @@ def create_destination_view(copy_driver, table_name, view_input):
         use_legacy_sql = False
 
     destination_table_ref = copy_driver.destination_client.dataset(
-        copy_driver.destination_dataset).table(table_name)
+        copy_driver.destination_dataset
+    ).table(table_name)
     destination_table = bigquery.Table(destination_table_ref)
     destination_table.description = srctable.description
     destination_table.friendly_name = srctable.friendly_name
@@ -5151,21 +5877,33 @@ def create_destination_view(copy_driver, table_name, view_input):
     try:
         copy_driver.destination_client.create_table(destination_table)
         copy_driver.get_logger().info(
-            "Created view {}.{}.{}".format(copy_driver.destination_project,
-                                           copy_driver.destination_dataset, table_name))
-    except exceptions.PreconditionFailed as e:
+            "Created view {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
+    except exceptions.PreconditionFailed:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Pre conditionfailed creating view {}:{}".format(table_name,
-                                                             view_input["view_definition"]))
-    except exceptions.BadRequest as e:
+            "Pre conditionfailed creating view {}:{}".format(
+                table_name, view_input["view_definition"]
+            )
+        )
+    except exceptions.BadRequest:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Bad request creating view {}:{}".format(table_name, view_input["view_definition"]))
-    except exceptions.NotFound as e:
+            "Bad request creating view {}:{}".format(
+                table_name, view_input["view_definition"]
+            )
+        )
+    except exceptions.NotFound:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Not Found creating view {}:{}".format(table_name, view_input["view_definition"]))
+            "Not Found creating view {}:{}".format(
+                table_name, view_input["view_definition"]
+            )
+        )
 
 
 def patch_destination_view(copy_driver, table_name, view_input):
@@ -5180,16 +5918,21 @@ def patch_destination_view(copy_driver, table_name, view_input):
         "view_definition":sql}
     :return:
     """
-    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(table_name)
+    srctable_ref = copy_driver.source_client.dataset(copy_driver.source_dataset).table(
+        table_name
+    )
     try:
         srctable = copy_driver.source_client.get_table(srctable_ref)
     except exceptions.NotFound:
-        copy_driver.get_logger().warning("View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(copy_driver.source_project,
-                                                                                                                                   copy_driver.source_dataset,
-                                                                                                                                   table_name))
+        copy_driver.get_logger().warning(
+            "View {}.{}.{} has been deleted between list comparison and detail sync skipping".format(
+                copy_driver.source_project, copy_driver.source_dataset, table_name
+            )
+        )
         return
-    dsttable_ref = copy_driver.destination_client.dataset(copy_driver.destination_dataset).table(
-        table_name)
+    dsttable_ref = copy_driver.destination_client.dataset(
+        copy_driver.destination_dataset
+    ).table(table_name)
     dsttable = copy_driver.destination_client.get_table(dsttable_ref)
 
     use_legacy_sql = True
@@ -5217,27 +5960,41 @@ def patch_destination_view(copy_driver, table_name, view_input):
         if len(fields) > 0:
             copy_driver.destination_client.update_table(dsttable, fields)
             copy_driver.get_logger().info(
-                "Patched view {}.{}.{}".format(copy_driver.destination_project,
-                                               copy_driver.destination_dataset, table_name))
+                "Patched view {}.{}.{}".format(
+                    copy_driver.destination_project,
+                    copy_driver.destination_dataset,
+                    table_name,
+                )
+            )
         else:
             copy_driver.increment_view_avoided()
-    except exceptions.PreconditionFailed as e:
+    except exceptions.PreconditionFailed :
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Pre conditionfailed patching view {}.{}.{}".format(copy_driver.destination_project,
-                                                                copy_driver.destination_dataset,
-                                                                table_name))
-    except exceptions.BadRequest as e:
+            "Pre conditionfailed patching view {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
+    except exceptions.BadRequest:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Bad request patching view {}.{}.{}".format(copy_driver.destination_project,
-                                                        copy_driver.destination_dataset,
-                                                        table_name))
-    except exceptions.NotFound as e:
+            "Bad request patching view {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
+    except exceptions.NotFound:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
-            "Not Found patching view {}.{}.{}".format(copy_driver.destination_project,
-                                                      copy_driver.destination_dataset, table_name))
+            "Not Found patching view {}.{}.{}".format(
+                copy_driver.destination_project,
+                copy_driver.destination_dataset,
+                table_name,
+            )
+        )
 
 
 def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
@@ -5246,9 +6003,9 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     :param copy_driver:
     :return: Nothing
     """
-    assert isinstance(copy_driver,
-                      DefaultBQSyncDriver), "Copy driver has to be a subclass of DefaultCopy " \
-                                            "Driver"
+    assert isinstance(copy_driver, DefaultBQSyncDriver), (
+        "Copy driver has to be a subclass of DefaultCopy " "Driver"
+    )
     copy_driver.start_sync()
 
     # start by copying tables
@@ -5261,8 +6018,11 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     thread_list = []
     stop_event = threading.Event()
     for i in range(schema_threads):
-        t = threading.Thread(target=sync_bq_processor, name="copyschemabackgroundthread", args=[
-            stop_event, copy_driver, schema_q])
+        t = threading.Thread(
+            target=sync_bq_processor,
+            name="copyschemabackgroundthread",
+            args=[stop_event, copy_driver, schema_q],
+        )
         t.daemon = True
         t.start()
         thread_list.append(t)
@@ -5271,50 +6031,71 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     copy_driver.copy_q = copy_q
 
     for i in range(copy_data_threads):
-        t = threading.Thread(target=sync_bq_processor, name="copydatabackgroundthread", args=[
-            stop_event, copy_driver, copy_q])
+        t = threading.Thread(
+            target=sync_bq_processor,
+            name="copydatabackgroundthread",
+            args=[stop_event, copy_driver, copy_q],
+        )
         t.daemon = True
         t.start()
         thread_list.append(t)
 
-    source_query = DSTABLELISTQUERY.format(copy_driver.source_project, copy_driver.source_dataset)
-    destination_query = DSTABLELISTQUERY.format(copy_driver.destination_project,
-                                                copy_driver.destination_dataset)
+    source_query = DSTABLELISTQUERY.format(
+        copy_driver.source_project, copy_driver.source_dataset
+    )
+    destination_query = DSTABLELISTQUERY.format(
+        copy_driver.destination_project, copy_driver.destination_dataset
+    )
     source_ended = False
     destination_ended = False
 
-    source_generator = run_query(copy_driver.query_client, source_query,
-                                 copy_driver.get_logger(),
-                                 "List source tables",
-                                 location=copy_driver.source_location,
-                                 callback_on_complete=copy_driver.update_job_stats,
-                                 labels=BQSYNCQUERYLABELS,
-                                 query_cmek=copy_driver.query_cmek[1])
+    source_generator = run_query(
+        copy_driver.query_client,
+        source_query,
+        copy_driver.get_logger(),
+        "List source tables",
+        location=copy_driver.source_location,
+        callback_on_complete=copy_driver.update_job_stats,
+        labels=BQSYNCQUERYLABELS,
+        query_cmek=copy_driver.query_cmek[1],
+    )
     try:
         source_row = next(source_generator)
     except StopIteration:
         source_ended = True
 
-    destination_generator = run_query(copy_driver.query_client, destination_query,
-                                      copy_driver.get_logger(),
-                                      "List destination tables",
-                                      location=copy_driver.destination_location,
-                                      callback_on_complete=copy_driver.update_job_stats,
-                                      labels=BQSYNCQUERYLABELS,
-                                      query_cmek=copy_driver.query_cmek[0])
+    destination_generator = run_query(
+        copy_driver.query_client,
+        destination_query,
+        copy_driver.get_logger(),
+        "List destination tables",
+        location=copy_driver.destination_location,
+        callback_on_complete=copy_driver.update_job_stats,
+        labels=BQSYNCQUERYLABELS,
+        query_cmek=copy_driver.query_cmek[0],
+    )
     try:
         destination_row = next(destination_generator)
     except StopIteration:
         destination_ended = True
 
     while not (source_ended and destination_ended):
-        if not destination_ended and not source_ended and destination_row["table_name"] == \
-                source_row["table_name"]:
+        if (
+            not destination_ended
+            and not source_ended
+            and destination_row["table_name"] == source_row["table_name"]
+        ):
             if copy_driver.istableincluded(source_row["table_name"]):
                 copy_driver.increment_tables_synced()
                 schema_q.put(
-                    (0, BQSyncTask(compare_schema_patch_ifneeded,
-                                   [copy_driver, source_row["table_name"]])))
+                    (
+                        0,
+                        BQSyncTask(
+                            compare_schema_patch_ifneeded,
+                            [copy_driver, source_row["table_name"]],
+                        ),
+                    )
+                )
             try:
                 source_row = next(source_generator)
             except StopIteration:
@@ -5325,19 +6106,29 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 destination_ended = True
 
         elif (destination_ended and not source_ended) or (
-                not source_ended and source_row["table_name"] < destination_row["table_name"]):
+            not source_ended
+            and source_row["table_name"] < destination_row["table_name"]
+        ):
             if copy_driver.istableincluded(source_row["table_name"]):
                 copy_driver.increment_tables_synced()
                 schema_q.put(
-                    (0, BQSyncTask(create_and_copy_table, [copy_driver, source_row["table_name"]])))
+                    (
+                        0,
+                        BQSyncTask(
+                            create_and_copy_table,
+                            [copy_driver, source_row["table_name"]],
+                        ),
+                    )
+                )
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
 
         elif (source_ended and not destination_ended) or (
-                not destination_ended and source_row["table_name"] > destination_row[
-            "table_name"]):
+            not destination_ended
+            and source_row["table_name"] > destination_row["table_name"]
+        ):
             copy_driver.increment_tables_synced()
             remove_deleted_destination_table(copy_driver, destination_row["table_name"])
             try:
@@ -5345,48 +6136,68 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
             except StopIteration:
                 destination_ended = True
 
-    wait_for_queue(schema_q, "Table schemas sychronization", 0.3, copy_driver.get_logger())
+    wait_for_queue(
+        schema_q, "Table schemas sychronization", 0.3, copy_driver.get_logger()
+    )
 
     if "MATERIALIZEDVIEW" in copy_driver.copy_types:
-        source_query = DSMATERIALIZED_VIEWLISTQUERY.format(copy_driver.source_project,
-                                               copy_driver.source_dataset)
-        destination_query = DSMATERIALIZED_VIEWLISTQUERY.format(copy_driver.destination_project,
-                                                    copy_driver.destination_dataset)
+        source_query = DSMATERIALIZED_VIEWLISTQUERY.format(
+            copy_driver.source_project, copy_driver.source_dataset
+        )
+        destination_query = DSMATERIALIZED_VIEWLISTQUERY.format(
+            copy_driver.destination_project, copy_driver.destination_dataset
+        )
 
         source_ended = False
         destination_ended = False
 
-        source_generator = run_query(copy_driver.query_client, source_query, "List source tables",
-                                     copy_driver.get_logger(),
-                                     location=copy_driver.source_location,
-                                     callback_on_complete=copy_driver.update_job_stats,
-                                     labels=BQSYNCQUERYLABELS,
-                                     query_cmek=copy_driver.query_cmek[1])
+        source_generator = run_query(
+            copy_driver.query_client,
+            source_query,
+            "List source tables",
+            copy_driver.get_logger(),
+            location=copy_driver.source_location,
+            callback_on_complete=copy_driver.update_job_stats,
+            labels=BQSYNCQUERYLABELS,
+            query_cmek=copy_driver.query_cmek[1],
+        )
         try:
             source_row = next(source_generator)
         except StopIteration:
             source_ended = True
 
-        destination_generator = run_query(copy_driver.query_client, destination_query,
-                                          copy_driver.get_logger(),
-                                          "List destination tables",
-                                          location=copy_driver.destination_location,
-                                          callback_on_complete=copy_driver.update_job_stats,
-                                          labels=BQSYNCQUERYLABELS,
-                                          query_cmek=copy_driver.query_cmek[0])
+        destination_generator = run_query(
+            copy_driver.query_client,
+            destination_query,
+            copy_driver.get_logger(),
+            "List destination tables",
+            location=copy_driver.destination_location,
+            callback_on_complete=copy_driver.update_job_stats,
+            labels=BQSYNCQUERYLABELS,
+            query_cmek=copy_driver.query_cmek[0],
+        )
         try:
             destination_row = next(destination_generator)
         except StopIteration:
             destination_ended = True
 
         while not (source_ended and destination_ended):
-            if not destination_ended and not source_ended and destination_row["table_name"] == \
-                    source_row["table_name"]:
+            if (
+                not destination_ended
+                and not source_ended
+                and destination_row["table_name"] == source_row["table_name"]
+            ):
                 if copy_driver.istableincluded(source_row["table_name"]):
                     copy_driver.increment_materialized_views_synced()
                     schema_q.put(
-                        (0, BQSyncTask(compare_create_materialized_view,
-                                       [copy_driver, source_row["table_name"],True])))
+                        (
+                            0,
+                            BQSyncTask(
+                                compare_create_materialized_view,
+                                [copy_driver, source_row["table_name"], True],
+                            ),
+                        )
+                    )
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
@@ -5397,28 +6208,41 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     destination_ended = True
 
             elif (destination_ended and not source_ended) or (
-                    not source_ended and source_row["table_name"] < destination_row["table_name"]):
+                not source_ended
+                and source_row["table_name"] < destination_row["table_name"]
+            ):
                 if copy_driver.istableincluded(source_row["table_name"]):
                     copy_driver.increment_materialized_views_synced()
                     schema_q.put(
-                        (0, BQSyncTask(compare_create_materialized_view,
-                                       [copy_driver, source_row["table_name"],False])))
+                        (
+                            0,
+                            BQSyncTask(
+                                compare_create_materialized_view,
+                                [copy_driver, source_row["table_name"], False],
+                            ),
+                        )
+                    )
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
                     source_ended = True
 
             elif (source_ended and not destination_ended) or (
-                    not destination_ended and source_row["table_name"] > destination_row[
-                "table_name"]):
+                not destination_ended
+                and source_row["table_name"] > destination_row["table_name"]
+            ):
                 copy_driver.increment_tables_synced()
-                remove_deleted_destination_table(copy_driver, destination_row["table_name"])
+                remove_deleted_destination_table(
+                    copy_driver, destination_row["table_name"]
+                )
                 try:
                     destination_row = next(destination_generator)
                 except StopIteration:
                     destination_ended = True
 
-        wait_for_queue(schema_q, "Materialized view sychronization", 0.3, copy_driver.get_logger())
+        wait_for_queue(
+            schema_q, "Materialized view sychronization", 0.3, copy_driver.get_logger()
+        )
 
     # scalar functions have to be copied in case in views
     if "VIEW" in copy_driver.copy_types or "ROUTINE" in copy_driver.copy_types:
@@ -5430,62 +6254,79 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         views_to_apply = {}
         routines_to_apply = {}
 
-        view_order_query = DSVIEWORDER.format(copy_driver.source_project,
-                                              copy_driver.source_dataset)
+        view_order_query = DSVIEWORDER.format(
+            copy_driver.source_project, copy_driver.source_dataset
+        )
 
-        for viewrow in run_query(copy_driver.query_client, view_order_query,
-                                 copy_driver.get_logger(),
-                                 "List views in apply order",
-                                 location=copy_driver.source_location,
-                                 callback_on_complete=copy_driver.update_job_stats,
-                                 labels=BQSYNCQUERYLABELS,
-                                 query_cmek=copy_driver.query_cmek[1]):
+        for viewrow in run_query(
+            copy_driver.query_client,
+            view_order_query,
+            copy_driver.get_logger(),
+            "List views in apply order",
+            location=copy_driver.source_location,
+            callback_on_complete=copy_driver.update_job_stats,
+            labels=BQSYNCQUERYLABELS,
+            query_cmek=copy_driver.query_cmek[1],
+        ):
             view_or_routine_order.append(viewrow["table_name"])
 
         # now list and compare views
-        source_routine_query = FUNCCOMPARE.format(copy_driver.source_project,
-                                                 copy_driver.source_dataset)
-        destination_routine_query = FUNCCOMPARE.format(copy_driver.destination_project,
-                                                      copy_driver.destination_dataset)
+        source_routine_query = FUNCCOMPARE.format(
+            copy_driver.source_project, copy_driver.source_dataset
+        )
+        destination_routine_query = FUNCCOMPARE.format(
+            copy_driver.destination_project, copy_driver.destination_dataset
+        )
         source_ended = False
         destination_ended = False
 
-        source_generator = run_query(copy_driver.query_client, source_routine_query,
-                                     "List source functions", copy_driver.get_logger(),
-                                     location=copy_driver.source_location,
-                                     callback_on_complete=copy_driver.update_job_stats,
-                                     labels=BQSYNCQUERYLABELS,
-                                     query_cmek=copy_driver.query_cmek[1])
+        source_generator = run_query(
+            copy_driver.query_client,
+            source_routine_query,
+            "List source functions",
+            copy_driver.get_logger(),
+            location=copy_driver.source_location,
+            callback_on_complete=copy_driver.update_job_stats,
+            labels=BQSYNCQUERYLABELS,
+            query_cmek=copy_driver.query_cmek[1],
+        )
         try:
             source_row = next(source_generator)
         except StopIteration:
             source_ended = True
 
-        destination_generator = run_query(copy_driver.query_client, destination_routine_query,
-                                          copy_driver.get_logger(),
-                                          "List destination functions",
-                                          location=copy_driver.destination_location,
-                                          callback_on_complete=copy_driver.update_job_stats,
-                                          labels=BQSYNCQUERYLABELS,
-                                          query_cmek=copy_driver.query_cmek[0])
+        destination_generator = run_query(
+            copy_driver.query_client,
+            destination_routine_query,
+            copy_driver.get_logger(),
+            "List destination functions",
+            location=copy_driver.destination_location,
+            callback_on_complete=copy_driver.update_job_stats,
+            labels=BQSYNCQUERYLABELS,
+            query_cmek=copy_driver.query_cmek[0],
+        )
         try:
             destination_row = next(destination_generator)
         except StopIteration:
             destination_ended = True
 
         while not source_ended or not destination_ended:
-            if not destination_ended and not source_ended and destination_row["routine_name"] \
-                    == \
-                    source_row["routine_name"]:
+            if (
+                not destination_ended
+                and not source_ended
+                and destination_row["routine_name"] == source_row["routine_name"]
+            ):
                 if copy_driver.istableincluded(source_row["routine_name"]):
                     copy_driver.increment_routines_synced()
                     expected_definition = copy_driver.update_source_view_definition(
-                        source_row["routine_definition"], source_row["routine_type"])
+                        source_row["routine_definition"], source_row["routine_type"]
+                    )
                     if expected_definition != destination_row["routine_definition"]:
                         routines_to_apply[source_row["routine_name"]] = {
                             "routine_definition": expected_definition,
                             "routine_type": source_row["routine_type"],
-                            "action": "patch_routine"}
+                            "action": "patch_routine",
+                        }
                     else:
                         copy_driver.increment_routines_avoided()
                 try:
@@ -5497,23 +6338,30 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                 except StopIteration:
                     destination_ended = True
             elif (destination_ended and not source_ended) or (
-                    not source_ended and source_row["routine_name"] < destination_row[
-                "routine_name"]):
+                not source_ended
+                and source_row["routine_name"] < destination_row["routine_name"]
+            ):
                 if copy_driver.istableincluded(source_row["routine_name"]):
                     copy_driver.increment_routines_synced()
                     expected_definition = copy_driver.update_source_view_definition(
-                        source_row["routine_definition"], source_row["routine_type"])
+                        source_row["routine_definition"], source_row["routine_type"]
+                    )
                     routines_to_apply[source_row["routine_name"]] = {
                         "routine_definition": expected_definition,
-                        "routine_type": source_row["routine_type"], "action": "create_routine"}
+                        "routine_type": source_row["routine_type"],
+                        "action": "create_routine",
+                    }
                 try:
                     source_row = next(source_generator)
                 except StopIteration:
                     source_ended = True
             elif (source_ended and not destination_ended) or (
-                    not destination_ended and source_row["routine_name"] > destination_row[
-                "routine_name"]):
-                remove_deleted_destination_routine(copy_driver, destination_row["routine_name"])
+                not destination_ended
+                and source_row["routine_name"] > destination_row["routine_name"]
+            ):
+                remove_deleted_destination_routine(
+                    copy_driver, destination_row["routine_name"]
+                )
                 try:
                     destination_row = next(destination_generator)
                 except StopIteration:
@@ -5522,20 +6370,27 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         for view in view_or_routine_order:
             if view in routines_to_apply:
                 if routines_to_apply[view]["action"] == "create_routine":
-                    create_destination_routine(copy_driver, view, routines_to_apply[view])
+                    create_destination_routine(
+                        copy_driver, view, routines_to_apply[view]
+                    )
                 else:
-                    patch_destination_routine(copy_driver, view, routines_to_apply[view])
+                    patch_destination_routine(
+                        copy_driver, view, routines_to_apply[view]
+                    )
             if view in views_to_apply:
                 if views_to_apply[view]["action"] == "create_view":
                     create_destination_view(copy_driver, view, views_to_apply[view])
                 else:
                     patch_destination_view(copy_driver, view, views_to_apply[view])
 
-        wait_for_queue(schema_q, "View/Routine schema synchronization", 0.3,
-                       copy_driver.get_logger())
+        wait_for_queue(
+            schema_q,
+            "View/Routine schema synchronization",
+            0.3,
+            copy_driver.get_logger(),
+        )
 
     if "VIEW" in copy_driver.copy_types or "ROUTINE" in copy_driver.copy_types:
-
         # Now do views
         # views need applying in order
         # we assume order created is the order
@@ -5545,47 +6400,63 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         if "VIEW" in copy_driver.copy_types:
             # now list and compare views
-            source_view_query = DSVIEWLISTQUERY.format(copy_driver.source_project,
-                                                       copy_driver.source_dataset)
-            destination_view_query = DSVIEWLISTQUERY.format(copy_driver.destination_project,
-                                                            copy_driver.destination_dataset)
+            source_view_query = DSVIEWLISTQUERY.format(
+                copy_driver.source_project, copy_driver.source_dataset
+            )
+            destination_view_query = DSVIEWLISTQUERY.format(
+                copy_driver.destination_project, copy_driver.destination_dataset
+            )
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.query_client, source_view_query,
-                                         "List source views", copy_driver.get_logger(),
-                                         location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[1])
+            source_generator = run_query(
+                copy_driver.query_client,
+                source_view_query,
+                "List source views",
+                copy_driver.get_logger(),
+                location=copy_driver.source_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[1],
+            )
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.query_client, destination_view_query,
-                                              copy_driver.get_logger(),
-                                              "List destination views",
-                                              location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[0])
+            destination_generator = run_query(
+                copy_driver.query_client,
+                destination_view_query,
+                copy_driver.get_logger(),
+                "List destination views",
+                location=copy_driver.destination_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[0],
+            )
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
                 destination_ended = True
 
             while not source_ended or not destination_ended:
-                if not destination_ended and not source_ended and destination_row["table_name"] == \
-                        source_row["table_name"]:
+                if (
+                    not destination_ended
+                    and not source_ended
+                    and destination_row["table_name"] == source_row["table_name"]
+                ):
                     if copy_driver.istableincluded(source_row["table_name"]):
                         copy_driver.increment_views_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["view_definition"], source_row["use_standard_sql"])
+                            source_row["view_definition"],
+                            source_row["use_standard_sql"],
+                        )
                         if expected_definition != destination_row["view_definition"]:
                             views_to_apply[source_row["table_name"]] = {
                                 "use_standard_sql": source_row["use_standard_sql"],
-                                "view_definition": expected_definition, "action": "patch_view"}
+                                "view_definition": expected_definition,
+                                "action": "patch_view",
+                            }
                         else:
                             copy_driver.increment_view_avoided()
                     try:
@@ -5597,23 +6468,31 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     except StopIteration:
                         destination_ended = True
                 elif (destination_ended and not source_ended) or (
-                        not source_ended and source_row["table_name"] < destination_row[
-                    "table_name"]):
+                    not source_ended
+                    and source_row["table_name"] < destination_row["table_name"]
+                ):
                     if copy_driver.istableincluded(source_row["table_name"]):
                         copy_driver.increment_views_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["view_definition"], source_row["use_standard_sql"])
+                            source_row["view_definition"],
+                            source_row["use_standard_sql"],
+                        )
                         views_to_apply[source_row["table_name"]] = {
                             "use_standard_sql": source_row["use_standard_sql"],
-                            "view_definition": expected_definition, "action": "create_view"}
+                            "view_definition": expected_definition,
+                            "action": "create_view",
+                        }
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
                 elif (source_ended and not destination_ended) or (
-                        not destination_ended and source_row["table_name"] > destination_row[
-                    "table_name"]):
-                    remove_deleted_destination_table(copy_driver, destination_row["table_name"])
+                    not destination_ended
+                    and source_row["table_name"] > destination_row["table_name"]
+                ):
+                    remove_deleted_destination_table(
+                        copy_driver, destination_row["table_name"]
+                    )
                     try:
                         destination_row = next(destination_generator)
                     except StopIteration:
@@ -5621,49 +6500,62 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
 
         if "ROUTINE" in copy_driver.copy_types:
             # now list and compare views
-            source_routine_query = RTNCOMPARE.format(copy_driver.source_project,
-                                                     copy_driver.source_dataset)
-            destination_routine_query = RTNCOMPARE.format(copy_driver.destination_project,
-                                                          copy_driver.destination_dataset)
+            source_routine_query = RTNCOMPARE.format(
+                copy_driver.source_project, copy_driver.source_dataset
+            )
+            destination_routine_query = RTNCOMPARE.format(
+                copy_driver.destination_project, copy_driver.destination_dataset
+            )
             source_ended = False
             destination_ended = False
 
-            source_generator = run_query(copy_driver.query_client, source_routine_query,
-                                         "List source views", copy_driver.get_logger(),
-                                         location=copy_driver.source_location,
-                                         callback_on_complete=copy_driver.update_job_stats,
-                                         labels=BQSYNCQUERYLABELS,
-                                         query_cmek=copy_driver.query_cmek[1])
+            source_generator = run_query(
+                copy_driver.query_client,
+                source_routine_query,
+                "List source views",
+                copy_driver.get_logger(),
+                location=copy_driver.source_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[1],
+            )
             try:
                 source_row = next(source_generator)
             except StopIteration:
                 source_ended = True
 
-            destination_generator = run_query(copy_driver.query_client, destination_routine_query,
-                                              copy_driver.get_logger(),
-                                              "List destination views",
-                                              location=copy_driver.destination_location,
-                                              callback_on_complete=copy_driver.update_job_stats,
-                                              labels=BQSYNCQUERYLABELS,
-                                              query_cmek=copy_driver.query_cmek[0])
+            destination_generator = run_query(
+                copy_driver.query_client,
+                destination_routine_query,
+                copy_driver.get_logger(),
+                "List destination views",
+                location=copy_driver.destination_location,
+                callback_on_complete=copy_driver.update_job_stats,
+                labels=BQSYNCQUERYLABELS,
+                query_cmek=copy_driver.query_cmek[0],
+            )
             try:
                 destination_row = next(destination_generator)
             except StopIteration:
                 destination_ended = True
 
             while not source_ended or not destination_ended:
-                if not destination_ended and not source_ended and destination_row["routine_name"] \
-                        == \
-                        source_row["routine_name"]:
+                if (
+                    not destination_ended
+                    and not source_ended
+                    and destination_row["routine_name"] == source_row["routine_name"]
+                ):
                     if copy_driver.istableincluded(source_row["routine_name"]):
                         copy_driver.increment_routines_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["routine_definition"], source_row["routine_type"])
+                            source_row["routine_definition"], source_row["routine_type"]
+                        )
                         if expected_definition != destination_row["routine_definition"]:
                             routines_to_apply[source_row["routine_name"]] = {
                                 "routine_definition": expected_definition,
                                 "routine_type": source_row["routine_type"],
-                                "action": "patch_routine"}
+                                "action": "patch_routine",
+                            }
                         else:
                             copy_driver.increment_routines_avoided()
                     try:
@@ -5675,23 +6567,30 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
                     except StopIteration:
                         destination_ended = True
                 elif (destination_ended and not source_ended) or (
-                        not source_ended and source_row["routine_name"] < destination_row[
-                    "routine_name"]):
+                    not source_ended
+                    and source_row["routine_name"] < destination_row["routine_name"]
+                ):
                     if copy_driver.istableincluded(source_row["routine_name"]):
                         copy_driver.increment_routines_synced()
                         expected_definition = copy_driver.update_source_view_definition(
-                            source_row["routine_definition"], source_row["routine_type"])
+                            source_row["routine_definition"], source_row["routine_type"]
+                        )
                         routines_to_apply[source_row["routine_name"]] = {
                             "routine_definition": expected_definition,
-                            "routine_type": source_row["routine_type"], "action": "create_routine"}
+                            "routine_type": source_row["routine_type"],
+                            "action": "create_routine",
+                        }
                     try:
                         source_row = next(source_generator)
                     except StopIteration:
                         source_ended = True
                 elif (source_ended and not destination_ended) or (
-                        not destination_ended and source_row["routine_name"] > destination_row[
-                    "routine_name"]):
-                    remove_deleted_destination_routine(copy_driver, destination_row["routine_name"])
+                    not destination_ended
+                    and source_row["routine_name"] > destination_row["routine_name"]
+                ):
+                    remove_deleted_destination_routine(
+                        copy_driver, destination_row["routine_name"]
+                    )
                     try:
                         destination_row = next(destination_generator)
                     except StopIteration:
@@ -5700,17 +6599,25 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
         for view in view_or_routine_order:
             if view in routines_to_apply:
                 if routines_to_apply[view]["action"] == "create_routine":
-                    create_destination_routine(copy_driver, view, routines_to_apply[view])
+                    create_destination_routine(
+                        copy_driver, view, routines_to_apply[view]
+                    )
                 else:
-                    patch_destination_routine(copy_driver, view, routines_to_apply[view])
+                    patch_destination_routine(
+                        copy_driver, view, routines_to_apply[view]
+                    )
             if view in views_to_apply:
                 if views_to_apply[view]["action"] == "create_view":
                     create_destination_view(copy_driver, view, views_to_apply[view])
                 else:
                     patch_destination_view(copy_driver, view, views_to_apply[view])
 
-        wait_for_queue(schema_q, "View/Routine schema synchronization", 0.3,
-                       copy_driver.get_logger())
+        wait_for_queue(
+            schema_q,
+            "View/Routine schema synchronization",
+            0.3,
+            copy_driver.get_logger(),
+        )
 
     wait_for_queue(copy_q, "Table copying", 0.3, copy_driver.get_logger())
 
@@ -5725,10 +6632,12 @@ def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
     copy_driver.copy_q = None
 
     if len(copy_driver.jobs) > 0:
-        wait_for_jobs(copy_driver.jobs,
-                      copy_driver.get_logger(),
-                      desc="Table copying",
-                      sleepTime=0.1)
+        wait_for_jobs(
+            copy_driver.jobs,
+            copy_driver.get_logger(),
+            desc="Table copying",
+            sleepTime=0.1,
+        )
 
     copy_driver.end_sync()
 
