@@ -5822,6 +5822,33 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
             copy_driver.get_logger().exception(
                 f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
             )
+            if dstroutine_ref.type_ == "SCALAR_FUNCTION" and dstroutine_ref.language == "SQL":
+                copy_driver.get_logger().info("As scalar function and SQL attempting adding as query")
+                function_as_query = f"""CREATE OR REPLACE FUNCTION `{dstroutine_ref.project}.{dstroutine_ref.dataset_id}.{dstroutine_ref.routine_id}` ({",".join([arg.name + " " + arg.data_type.type_kind for arg in dstroutine_ref.arguments])})   AS
+({dstroutine_ref.body})
+{"RETURNS " + dstroutine_ref.return_type.type_kind if dstroutine_ref.return_type else ""}
+OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description else ""}")"""
+                try:
+                    for result in run_query(
+                            copy_driver.query_client,
+                            function_as_query,
+                            copy_driver.get_logger(),
+                            "Apply SQL scalar function",
+                            location=copy_driver.destination_location,
+                            callback_on_complete=copy_driver.update_job_stats,
+                            labels=BQSYNCQUERYLABELS,
+                            # ddl statements cannot use CMEK
+                            query_cmek=None,
+                    ):
+                        pass
+                    copy_driver.get_logger().info(f"Running as query did work function {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} created")
+                except Exception:
+                    copy_driver.increment_routines_failed_sync()
+                    copy_driver.get_logger().exception(
+                        f"Unable to create routine using query  {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
+                    )
+            else:
+                copy_driver.increment_routines_failed_sync()
             return
         return dstroutine
     else:
