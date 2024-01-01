@@ -1,3 +1,9 @@
+1.0.6 Jan 1st 2024
+- Move to pyproject.toml from setup.py to make package more modern
+- Updates and improve testing and add tox actions on pull requests
+- Update dependencies (dependabot) absl-py and bigquery
+- Enhance head views to include streaming buffer
+
 1.0.5 April 10th 2023
 - Adjust jinja dependency so will allow Jina2 version3
 - Fix issue with routine copying failing
