@@ -31,12 +31,17 @@ from io import open
 from time import sleep
 
 import requests
+
 # handle python 2 and 3 versions of this
 import six
 from google.cloud import bigquery, exceptions, storage
 from googleapiclient import discovery
 from jinja2 import Environment, select_autoescape, FileSystemLoader, Template
 import queue
+from google.cloud.bigquery.client import Client
+from google.cloud.bigquery.dataset import Dataset, DatasetReference
+from google.cloud.bigquery.job.query import QueryJob
+from typing import Any, Callable, List, Optional, Union
 
 __version__ = importlib.metadata.version("bqtools-json")
 
@@ -357,10 +362,14 @@ class SchemaMutationError(BQTError):
 class BQQueryError(BQTError):
     """Error for Query execution error."""
 
-    CUSTOM_ERROR_MESSAGE = "GCP API Error: unable to processquery {0} from GCP {1}:\n{2}"
+    CUSTOM_ERROR_MESSAGE = (
+        "GCP API Error: unable to processquery {0} from GCP {1}:\n{2}"
+    )
 
     def __init__(self, query, desc, e):
-        super(BQQueryError, self).__init__(self.CUSTOM_ERROR_MESSAGE.format(query, desc, e))
+        super(BQQueryError, self).__init__(
+            self.CUSTOM_ERROR_MESSAGE.format(query, desc, e)
+        )
 
 
 class BQHittingQueryGenerationQuotaLimit(BQTError):
@@ -374,8 +383,1260 @@ class BQHittingQueryGenerationQuotaLimit(BQTError):
         )
 
 
+class DefaultBQSyncDriver(object):
+    """This class provides mechanical input to bqsync functions"""
+
+    threadLocal = threading.local()
+
+    def __init__(
+        self,
+        srcproject: str,
+        srcdataset: str,
+        dstdataset: str,
+        dstproject: Optional[str] = None,
+        srcbucket: Optional[str] = None,
+        dstbucket: Optional[str] = None,
+        remove_deleted_tables: bool = True,
+        copy_data: bool = True,
+        copy_types: Optional[List[str]] = None,
+        check_depth: int = -1,
+        copy_access: bool = True,
+        table_view_filter: Optional[List[str]] = None,
+        table_or_views_to_exclude: Optional[List[str]] = None,
+        latest_date: Optional[datetime] = None,
+        days_before_latest_day: Optional[int] = None,
+        day_partition_deep_check: bool = False,
+        analysis_project: str = None,
+        query_cmek: Optional[List[str]] = None,
+        src_policy_tags: Optional[List[str]] = [],
+        dst_policy_tags: Optional[List[str]] = [],
+    ) -> None:
+        """
+        Constructor for base copy driver all other drivers should inherit from this
+        :param srcproject: The project that is the source for the copy (note all actions are done
+        inc ontext of source project)
+        :param srcdataset: The source dataset
+        :param dstdataset: The destination dataset
+        :param dstproject: The source project if None assumed to be source project
+        :param srcbucket:  The source bucket when copying cross region data is extracted to this
+        bucket rewritten to destination bucket
+        :param dstbucket: The destination bucket where data is loaded from
+        :param remove_deleted_tables: If table exists in destination but not in source should it
+        be deleted
+        :param copy_data: Copy data or just do schema
+        :param copy_types: Copy object types i.e. TABLE,VIEW,ROUTINE,MODEL
+        """
+        assert query_cmek is None or (
+            isinstance(query_cmek, list) and len(query_cmek) == 2
+        ), (
+            "If cmek key is specified has to be a list and MUST be 2 keys with "
+            ""
+            "1st key being source location key and destination key"
+        )
+        self._sessionid = datetime.utcnow().isoformat().replace(":", "-")
+        if copy_types is None:
+            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
+        if table_view_filter is None:
+            table_view_filter = [".*"]
+        if table_or_views_to_exclude is None:
+            table_or_views_to_exclude = []
+        if dstproject is None:
+            dstproject = srcproject
+
+        self._remove_deleted_tables = remove_deleted_tables
+
+        # check copy makes some basic sense
+        assert srcproject != dstproject or srcdataset != dstdataset, (
+            "Source and destination " "datasets cannot be the same"
+        )
+        assert latest_date is None or isinstance(latest_date, datetime)
+
+        self._source_project = srcproject
+        self._source_dataset = srcdataset
+        self._destination_project = dstproject
+        self._destination_dataset = dstdataset
+        self._copy_data = copy_data
+        self._http = None
+        self.__copy_q = None
+        self.__schema_q = None
+        self.__jobs = []
+        self.__copy_types = copy_types
+        self.reset_stats()
+        self.__logger = logging
+        self.__check_depth = check_depth
+        self.__copy_access = copy_access
+        self.__table_view_filter = table_view_filter
+        self.__table_or_views_to_exclude = table_or_views_to_exclude
+        self.__re_table_view_filter = []
+        self.__re_table_or_views_to_exclude = []
+        self.__base_predicates = []
+        self.__day_partition_deep_check = day_partition_deep_check
+        self.__analysisproject = self._destination_project
+        if analysis_project is not None:
+            self.__analysisproject = analysis_project
+
+        if days_before_latest_day is not None:
+            if latest_date is None:
+                end_date = "TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(),DAY),INTERVAL 1 DAY)"
+            else:
+                end_date = "TIMESTAMP('{}')".format(latest_date.strftime("%Y-%m-%d"))
+            self.__base_predicates.append(
+                "{{retpartition}} BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
+                "days_before_latest_day} * 24 HOUR) AND {end_date}".format(
+                    end_date=end_date, days_before_latest_day=days_before_latest_day
+                )
+            )
+
+        # now check that from a service the copy makes sense
+        assert dataset_exists(
+            self.source_client, self.source_client.dataset(self.source_dataset)
+        ), ("Source dataset does not exist %r" % self.source_dataset)
+        assert dataset_exists(
+            self.destination_client,
+            self.destination_client.dataset(self.destination_dataset),
+        ), (
+            "Destination dataset does not " "exists %r" % self.destination_dataset
+        )
+
+        # figure out if cross region copy if within region copies optimised to happen in big query
+        # if cross region buckets need to exist to support copy and they need to be in same region
+        source_dataset_impl = self.source_dataset_impl
+        destination_dataset_impl = self.destination_dataset_impl
+        if query_cmek is None:
+            query_cmek = []
+            if destination_dataset_impl.default_encryption_configuration is not None:
+                query_cmek.append(
+                    destination_dataset_impl.default_encryption_configuration.kms_key_name
+                )
+            else:
+                query_cmek.append(None)
+
+            if (
+                not query_cmek
+                and source_dataset_impl.default_encryption_configuration is not None
+            ):
+                query_cmek.append(
+                    source_dataset_impl.default_encryption_configuration.kms_key_name
+                )
+            else:
+                query_cmek.append(None)
+
+        self._query_cmek = query_cmek
+        self._same_region = (
+            source_dataset_impl.location == destination_dataset_impl.location
+        )
+        self._source_location = source_dataset_impl.location
+        self._destination_location = destination_dataset_impl.location
+        self._src_policy_tags = src_policy_tags
+        self._dst_policy_tags = dst_policy_tags
+
+        # if not same region where are the buckets for copying
+        if not self.same_region:
+            assert srcbucket is not None, (
+                "Being asked to copy datasets across region but no "
+                "source bucket is defined these must be in same region "
+                "as source dataset"
+            )
+            assert isinstance(srcbucket, six.string_types), (
+                "Being asked to copy datasets across region but "
+                "no "
+                ""
+                ""
+                "source bucket is not a string"
+            )
+            self._source_bucket = srcbucket
+            assert dstbucket is not None, (
+                "Being asked to copy datasets across region but no "
+                "destination bucket is defined these must be in same "
+                "region "
+                "as destination dataset"
+            )
+            assert isinstance(dstbucket, six.string_types), (
+                "Being asked to copy datasets across region but "
+                "destination bucket is not a string"
+            )
+            self._destination_bucket = dstbucket
+            client = storage.Client(project=self.source_project)
+            src_bucket = client.get_bucket(self.source_bucket)
+            assert compute_region_equals_bqregion(
+                src_bucket.location, source_dataset_impl.location
+            ), (
+                "Source bucket "
+                "location is not "
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                ""
+                "same as source "
+                "dataset location"
+            )
+            dst_bucket = client.get_bucket(self.destination_bucket)
+            assert compute_region_equals_bqregion(
+                dst_bucket.location, destination_dataset_impl.location
+            ), "Destination bucket location is not same as destination dataset location"
+
+    @property
+    def session_id(self):
+        """
+        This method returns the uniue identifier for this copy session
+        :return: The copy drivers session
+        """
+        return self._sessionid
+
+    def map_schema_policy_tags(self, schema):
+        """
+        A method that takes as input a big query schema iterates through the schema
+        and reads policy tags and maps them from src to destination.
+        :param schema: The schema to map
+        :return: schema the same schema but with policy tags updated
+        """
+        nschema = []
+        for field in schema:
+            if field.field_type == "RECORD":
+                tmp_field = field.to_api_repr()
+                tmp_field["fields"] = [
+                    i.to_api_repr() for i in self.map_schema_policy_tags(field.fields)
+                ]
+                field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
+            else:
+                _, field = self.map_policy_tag(field)
+            nschema.append(field)
+        return nschema
+
+    def map_policy_tag(self, field, dst_tgt=None):
+        """
+        Method that tages a policy tags and will remap
+        :param field: The field to map
+        :param dst_tgt: The destination tag
+        :return: The new policy tag
+        """
+        change = 0
+        if field.field_type == "RECORD":
+            schema = self.map_schema_policy_tags(field.fields)
+            if field.fields != schema:
+                change = 1
+            tmp_field = field.to_api_repr()
+            tmp_field["fields"] = [i.to_api_repr() for i in schema]
+            field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
+        else:
+            if field.policy_tags is not None:
+                field_api_repr = field.to_api_repr()
+                tags = field_api_repr["policyTags"]["names"]
+                ntag = []
+                for tag in tags:
+                    new_tag = self.map_policy_tag_string(tag)
+                    if new_tag is None:
+                        field_api_repr.pop("policyTags", None)
+                        break
+                    ntag.append(new_tag)
+                if "policyTags" in field_api_repr:
+                    field_api_repr["policyTags"]["names"] = ntag
+                field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+                if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
+                    change = 1
+                return change, bigquery.schema.SchemaField.from_api_repr(field_api_repr)
+
+        return change, field
+
+    def map_policy_tag_string(self, src_tag):
+        """
+        This method maps a source tag to a destination policy tag
+        :param src_tag: The starting table column tags
+        :return: The expected destination tags
+        """
+        # if same region and src has atag just simply reuse the tag
+        if self._same_region and not self._src_policy_tags:
+            return src_tag
+        try:
+            # look for the tag in the src destination map
+            return self._dst_policy_tags[self._src_policy_tags.index(src_tag)]
+        # if it doesnt return None as the tag
+        except ValueError:
+            return None
+
+    def base_predicates(self, retpartition):
+        actual_basepredicates = []
+        for predicate in self.__base_predicates:
+            actual_basepredicates.append(predicate.format(retpartition=retpartition))
+        return actual_basepredicates
+
+    def comparison_predicates(self, table_name, retpartition="_PARTITIONTIME"):
+        return self.base_predicates(retpartition)
+
+    def istableincluded(self, table_name: str) -> bool:
+        """
+        This method when passed a table_name returns true if it should be processed in a copy action
+        :param table_name:
+        :return: boolean True then it should be include False then no
+        """
+        if len(self.__re_table_view_filter) == 0:
+            for filter in self.__table_view_filter:
+                self.__re_table_view_filter.append(re.compile(filter))
+            for filter in self.__table_or_views_to_exclude:
+                self.__re_table_or_views_to_exclude.append(re.compile(filter))
+
+        result = False
+
+        for regexp2check in self.__re_table_view_filter:
+            if regexp2check.search(table_name):
+                result = True
+                break
+
+        if result:
+            for regexp2check in self.__re_table_or_views_to_exclude:
+                if regexp2check.search(table_name):
+                    result = False
+                    break
+
+        return result
+
+    def reset_stats(self) -> None:
+        self.__bytes_synced = 0
+        self.__rows_synced = 0
+        self.__bytes_avoided = 0
+        self.__rows_avoided = 0
+        self.__tables_synced = 0
+        self.__materialized_views_synced = 0
+        self.__views_synced = 0
+        self.__routines_synced = 0
+        self.__routines_failed_sync = 0
+        self.__routines_avoided = 0
+        self.__models_synced = 0
+        self.__models_failed_sync = 0
+        self.__models_avoided = 0
+        self.__views_failed_sync = 0
+        self.__tables_failed_sync = 0
+        self.__tables_avoided = 0
+        self.__view_avoided = 0
+        self.__extract_fails = 0
+        self.__load_fails = 0
+        self.__copy_fails = 0
+        self.__query_cache_hits = 0
+        self.__total_bytes_processed = 0
+        self.__total_bytes_billed = 0
+        self.__start_time = None
+        self.__end_time = None
+        self.__load_input_file_bytes = 0
+        self.__load_input_files = 0
+        self.__load_output_bytes = 0
+        self.__blob_rewrite_retried_exceptions = 0
+        self.__blob_rewrite_unretryable_exceptions = 0
+
+    @property
+    def blob_rewrite_retried_exceptions(self):
+        return self.__blob_rewrite_retried_exceptions
+
+    @property
+    def blob_rewrite_unretryable_exceptions(self):
+        return self.__blob_rewrite_unretryable_exceptions
+
+    def increment_blob_rewrite_retried_exceptions(self):
+        self.__blob_rewrite_retried_exceptions += 1
+
+    def increment_blob_rewrite_unretryable_exceptions(self):
+        self.__blob_rewrite_unretryable_exceptions += 1
+
+    @property
+    def models_synced(self):
+        return self.__models_synced
+
+    def increament_models_synced(self):
+        self.__models_synced += 1
+
+    @property
+    def models_failed_sync(self) -> int:
+        return self.__models_failed_sync
+
+    def increment_models_failed_sync(self):
+        self.__models_failed_sync += 1
+
+    @property
+    def models_avoided(self):
+        return self.__models_avoided
+
+    def increment_models_avoided(self):
+        self.__models_avoided += 1
+
+    @property
+    def routines_synced(self):
+        return self.__routines_synced
+
+    @property
+    def query_cmek(self) -> List[Optional[str]]:
+        return self._query_cmek
+
+    def increment_routines_synced(self):
+        self.__routines_synced += 1
+
+    def increment_routines_avoided(self):
+        self.__routines_avoided += 1
+
+    @property
+    def routines_failed_sync(self) -> int:
+        return self.__routines_failed_sync
+
+    @property
+    def routines_avoided(self):
+        return self.__routines_avoided
+
+    def increment_rows_avoided(self):
+        self.__routines_avoided += 1
+
+    def increment_routines_failed_sync(self):
+        self.__routines_failed_sync += 1
+
+    @property
+    def bytes_copied_across_region(self):
+        return self.__load_input_file_bytes
+
+    @property
+    def files_copied_across_region(self):
+        return self.__load_input_files
+
+    @property
+    def bytes_copied(self):
+        return self.__load_output_bytes
+
+    def increment_load_input_file_bytes(self, value):
+        self.__load_input_file_bytes += value
+
+    def increment_load_input_files(self, value):
+        self.__load_input_files += value
+
+    def increment_load_output_bytes(self, value):
+        self.__load_output_bytes += value
+
+    @property
+    def start_time(self):
+        return self.__start_time
+
+    @property
+    def end_time(self):
+        if self.__end_time is None and self.__start_time is not None:
+            return datetime.utcnow()
+        return self.__end_time
+
+    @property
+    def sync_time_seconds(self):
+        if self.__start_time is None:
+            return None
+        return (self.__end_time - self.__start_time).seconds
+
+    def start_sync(self) -> None:
+        self.__start_time = datetime.utcnow()
+
+    def end_sync(self) -> None:
+        self.__end_time = datetime.utcnow()
+
+    @property
+    def query_cache_hits(self):
+        return self.__query_cache_hits
+
+    def increment_cache_hits(self):
+        self.__query_cache_hits += 1
+
+    @property
+    def total_bytes_processed(self):
+        return self.__total_bytes_processed
+
+    def increment_total_bytes_processed(self, total_bytes_processed: int) -> None:
+        self.__total_bytes_processed += total_bytes_processed
+
+    @property
+    def total_bytes_billed(self):
+        return self.__total_bytes_processed
+
+    def increment_total_bytes_billed(self, total_bytes_billed: int) -> None:
+        self.__total_bytes_billed += total_bytes_billed
+
+    @property
+    def copy_fails(self) -> int:
+        return self.__copy_fails
+
+    @property
+    def copy_access(self):
+        return self.__copy_access
+
+    @copy_access.setter
+    def copy_access(self, value):
+        self.__copy_access = value
+
+    def increment_copy_fails(self):
+        self.__copy_fails += 1
+
+    @property
+    def load_fails(self) -> int:
+        return self.__load_fails
+
+    def increment_load_fails(self):
+        self.__load_fails += 1
+
+    @property
+    def extract_fails(self) -> int:
+        return self.__extract_fails
+
+    def increment_extract_fails(self):
+        self.__extract_fails += 1
+
+    @property
+    def check_depth(self):
+        return self.__check_depth
+
+    @check_depth.setter
+    def check_depth(self, value):
+        self.__check_depth = value
+
+    @property
+    def views_failed_sync(self) -> int:
+        return self.__views_failed_sync
+
+    def increment_views_failed_sync(self):
+        self.__views_failed_sync += 1
+
+    @property
+    def tables_failed_sync(self) -> int:
+        return self.__tables_failed_sync
+
+    def increment_tables_failed_sync(self):
+        self.__tables_failed_sync += 1
+
+    @property
+    def tables_avoided(self):
+        return self.__tables_avoided
+
+    def increment_tables_avoided(self):
+        self.__tables_avoided += 1
+
+    @property
+    def view_avoided(self):
+        return self.__view_avoided
+
+    def increment_view_avoided(self):
+        self.__view_avoided += 1
+
+    @property
+    def bytes_synced(self):
+        return self.__bytes_synced
+
+    @property
+    def copy_types(self) -> List[str]:
+        return self.__copy_types
+
+    def add_bytes_synced(self, bytes):
+        self.__bytes_synced += bytes
+
+    def update_job_stats(self, job: QueryJob) -> None:
+        """
+        Given a big query job figure out what stats to process
+        :param job:
+        :return: None
+        """
+        if isinstance(job, bigquery.QueryJob):
+            if job.cache_hit:
+                self.increment_cache_hits()
+            self.increment_total_bytes_billed(job.total_bytes_billed)
+            self.increment_total_bytes_processed(job.total_bytes_processed)
+
+        if isinstance(job, bigquery.CopyJob):
+            if job.error_result is not None:
+                self.increment_copy_fails()
+
+        if isinstance(job, bigquery.LoadJob):
+            if job.error_result:
+                self.increment_load_fails()
+            else:
+                self.increment_load_input_files(job.input_files)
+                self.increment_load_input_file_bytes(job.input_file_bytes)
+                self.increment_load_output_bytes(job.output_bytes)
+
+    @property
+    def rows_synced(self):
+        # as time can be different between these assume avoided is always more accurae
+        if self.rows_avoided > self.__rows_synced:
+            return self.rows_avoided
+        return self.__rows_synced
+
+    def add_rows_synced(self, rows):
+        self.__rows_synced += rows
+
+    @property
+    def bytes_avoided(self):
+        return self.__bytes_avoided
+
+    def add_bytes_avoided(self, bytes):
+        self.__bytes_avoided += bytes
+
+    @property
+    def rows_avoided(self):
+        return self.__rows_avoided
+
+    def add_rows_avoided(self, rows):
+        self.__rows_avoided += rows
+
+    @property
+    def tables_synced(self):
+        return self.__tables_synced
+
+    @property
+    def views_synced(self):
+        return self.__views_synced
+
+    def increment_tables_synced(self) -> None:
+        self.__tables_synced += 1
+
+    def increment_materialized_views_synced(self):
+        self.__materialized_views_synced += 1
+
+    def increment_views_synced(self):
+        self.__views_synced += 1
+
+    @property
+    def copy_q(self):
+        return self.__copy_q
+
+    @copy_q.setter
+    def copy_q(self, value):
+        self.__copy_q = value
+
+    @property
+    def schema_q(self):
+        return self.__schema_q
+
+    @schema_q.setter
+    def schema_q(self, value):
+        self.__schema_q = value
+
+    @property
+    def source_location(self) -> str:
+        return self._source_location
+
+    @property
+    def destination_location(self) -> str:
+        return self._destination_location
+
+    @property
+    def source_bucket(self) -> str:
+        return self._source_bucket
+
+    @property
+    def destination_bucket(self) -> str:
+        return self._destination_bucket
+
+    @property
+    def same_region(self) -> bool:
+        return self._same_region
+
+    @property
+    def source_dataset_impl(self) -> Dataset:
+        source_datasetref = self.source_client.dataset(self.source_dataset)
+        return self.source_client.get_dataset(source_datasetref)
+
+    @property
+    def destination_dataset_impl(self) -> Dataset:
+        destination_datasetref = self.destination_client.dataset(
+            self.destination_dataset
+        )
+        return self.destination_client.get_dataset(destination_datasetref)
+
+    @property
+    def query_client(self) -> Client:
+        """
+        Returns the client to be charged for analysis of comparison could be
+        source could be destination could be another.
+        By default it is the destination but can be overriden by passing a target project
+        :return: A big query client for the project to be charged
+        """
+        warnings.filterwarnings(
+            "ignore", "Your application has authenticated using end user credentials"
+        )
+        """
+        Obtains a source client in the current thread only constructs a client once per thread
+        :return:
+        """
+        source_client = getattr(
+            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None
+        )
+        if source_client is None:
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.__analysisproject,
+                bigquery.Client(project=self.__analysisproject, _http=self.http),
+            )
+        return getattr(DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
+
+    @property
+    def source_client(self) -> Client:
+        warnings.filterwarnings(
+            "ignore", "Your application has authenticated using end user credentials"
+        )
+        """
+        Obtains a source client in the current thread only constructs a client once per thread
+        :return:
+        """
+        source_client = getattr(
+            DefaultBQSyncDriver.threadLocal,
+            self.source_project + self._source_dataset,
+            None,
+        )
+        if source_client is None:
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.source_project + self._source_dataset,
+                bigquery.Client(project=self.source_project, _http=self.http),
+            )
+        return getattr(
+            DefaultBQSyncDriver.threadLocal,
+            self.source_project + self._source_dataset,
+            None,
+        )
+
+    @property
+    def http(self) -> None:
+        """
+        Allow override of http transport per client
+        usefule for proxy handlng but should be handled by sub-classes default is do nothing
+        :return:
+        """
+        return self._http
+
+    @property
+    def destination_client(self) -> Client:
+        """
+        Obtains a s destination client in current thread only constructs a client once per thread
+        :return:
+        """
+        source_client = getattr(
+            DefaultBQSyncDriver.threadLocal,
+            self.destination_project + self.destination_dataset,
+            None,
+        )
+        if source_client is None:
+            setattr(
+                DefaultBQSyncDriver.threadLocal,
+                self.destination_project + self.destination_dataset,
+                bigquery.Client(project=self.destination_project, _http=self.http),
+            )
+        return getattr(
+            DefaultBQSyncDriver.threadLocal,
+            self.destination_project + self.destination_dataset,
+            None,
+        )
+
+    def export_import_format_supported(self, srctable, dsttable=None):
+        """Calculates a suitable export import type based upon schema
+        default mecahnism is to use AVRO and SNAPPY as parallel and fast
+        If though a schema type notsupported by AVRO fall back to jsonnl and gzip
+        """
+        dst_encryption_configuration = None
+        if dsttable is None and srctable.encryption_configuration is not None:
+            dst_encryption_configuration = self.calculate_target_cmek_config(
+                srctable.encryption_configuration
+            )
+        else:
+            dst_encryption_configuration = None
+
+        return ExportImportType(srctable, dsttable, dst_encryption_configuration)
+
+    @property
+    def source_project(self) -> str:
+        return self._source_project
+
+    @property
+    def source_dataset(self) -> str:
+        return self._source_dataset
+
+    @property
+    def jobs(self) -> List[Any]:
+        return self.__jobs
+
+    def add_job(self, job):
+        self.__jobs.append(job)
+
+    @property
+    def destination_project(self) -> str:
+        return self._destination_project
+
+    @property
+    def destination_dataset(self) -> str:
+        return self._destination_dataset
+
+    @property
+    def remove_deleted_tables(self):
+        return self._remove_deleted_tables
+
+    def day_partition_deep_check(self):
+        """
+
+        :return: True if should check rows and bytes counts False if notrequired
+        """
+        return self.__day_partition_deep_check
+
+    def extra_dp_compare_functions(self, table):
+        """
+        Function to allow record comparison checks for a day partition
+        These shoul dbe aggregates for the partition i..e max, min, avg
+        Override when row count if not sufficient. Row count works for
+        tables where rows only added non deleted or removed
+        :return: a comma seperated extension of functions
+        """
+        default = ""
+        retpartition_time = "_PARTITIONTIME"
+
+        if (
+            getattr(table, "time_partitioning", None)
+            and table.time_partitioning.field is not None
+        ):
+            retpartition_time = "TIMESTAMP({})".format(table.time_partitioning.field)
+
+        SCHEMA = list(table.schema)
+
+        # emulate nonlocal variables this works in python 2.7 and python 3.6
+        aliasdict = {"alias": "", "extrajoinpredicates": ""}
+
+        """
+        Use FRAM_FINGERPRINT as hash of each value and then summed
+        basically a merkel function
+        """
+
+        def add_data_check(SCHEMA, prefix=None, depth=0):
+            if prefix is None:
+                prefix = []
+                # add base table alia
+                prefix.append("zzz")
+
+            expression_list = []
+
+            # if we are beyond check depth exit
+            if self.check_depth >= 0 and depth > self.check_depth:
+                return expression_list
+
+            for field in SCHEMA:
+                prefix.append(field.name)
+                if field.mode != "REPEATED":
+                    if self.check_depth >= 0 or (
+                        self.check_depth >= -1
+                        and (
+                            re.search("update.*time", field.name.lower())
+                            or re.search("modifi.*time", field.name.lower())
+                            or re.search("version", field.name.lower())
+                            or re.search("creat.*time", field.name.lower())
+                        )
+                    ):
+                        if field.field_type == "STRING":
+                            expression_list.append(
+                                "IFNULL(`{0}`,'')".format("`.`".join(prefix))
+                            )
+                        elif field.field_type == "TIMESTAMP":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "INTEGER" or field.field_type == "INT64"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "FLOAT"
+                            or field.field_type == "FLOAT64"
+                            or field.field_type == "NUMERIC"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif (
+                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                        elif field.field_type == "BYTES":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(
+                                    "`.`".join(prefix)
+                                )
+                            )
+                    if field.field_type == "RECORD":
+                        SSCHEMA = list(field.fields)
+                        expression_list.extend(
+                            add_data_check(SSCHEMA, prefix=prefix, depth=depth)
+                        )
+                else:
+                    if field.field_type != "RECORD" and (
+                        self.check_depth >= 0
+                        or (
+                            self.check_depth >= -1
+                            and (
+                                re.search("update.*time", field.name.lower())
+                                or re.search("modifi.*time", field.name.lower())
+                                or re.search("version", field.name.lower())
+                                or re.search("creat.*time", field.name.lower())
+                            )
+                        )
+                    ):
+                        # add the unnestof repeated base type can use own field name
+                        fieldname = "{}{}".format(aliasdict["alias"], field.name)
+                        aliasdict[
+                            "extrajoinpredicates"
+                        ] = """{}
+LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
+                            aliasdict["extrajoinpredicates"], field.name, fieldname
+                        )
+                        if field.field_type == "STRING":
+                            expression_list.append("IFNULL(`{0}`,'')".format(fieldname))
+                        elif field.field_type == "TIMESTAMP":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
+                                    fieldname
+                                )
+                            )
+                        elif (
+                            field.field_type == "INTEGER" or field.field_type == "INT64"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(fieldname)
+                            )
+                        elif (
+                            field.field_type == "FLOAT"
+                            or field.field_type == "FLOAT64"
+                            or field.field_type == "NUMERIC"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(fieldname)
+                            )
+                        elif (
+                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
+                        ):
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(fieldname)
+                            )
+                        elif field.field_type == "BYTES":
+                            expression_list.append(
+                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(fieldname)
+                            )
+                    if field.field_type == "RECORD":
+                        # if we want to go deeper in checking
+                        if depth < self.check_depth:
+                            # need to unnest as repeated
+                            if aliasdict["alias"] == "":
+                                # uses this to name space from real columns
+                                # bit hopeful
+                                aliasdict["alias"] = "zzz"
+
+                            aliasdict["alias"] = aliasdict["alias"] + "z"
+
+                            # so need to rest prefix for this record
+                            newprefix = []
+                            newprefix.append(aliasdict["alias"])
+
+                            # add the unnest
+                            aliasdict[
+                                "extrajoinpredicates"
+                            ] = """{}
+LEFT JOIN UNNEST(`{}`) AS {}""".format(
+                                aliasdict["extrajoinpredicates"],
+                                "`.`".join(prefix),
+                                aliasdict["alias"],
+                            )
+
+                            # add the fields
+                            expression_list.extend(
+                                add_data_check(
+                                    SSCHEMA, prefix=newprefix, depth=depth + 1
+                                )
+                            )
+                prefix.pop()
+            return expression_list
+
+        expression_list = add_data_check(SCHEMA)
+
+        if len(expression_list) > 0:
+            # algorithm to compare sets
+            # java uses overflowing sum but big query does not allow in sum
+            # using average as scales sum and available as aggregate
+            # split top end and bottom end of hash
+            # that way we maximise bits and fidelity
+            # and
+            default = """,
+    AVG(FARM_FINGERPRINT(CONCAT({0})) &  0x0000000FFFFFFFF) as avgFingerprintLB,
+    AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
+                ",".join(expression_list)
+            )
+
+        predicates = self.comparison_predicates(table.table_id, retpartition_time)
+        if len(predicates) > 0:
+            aliasdict[
+                "extrajoinpredicates"
+            ] = """{}
+WHERE ({})""".format(
+                aliasdict["extrajoinpredicates"], ") AND (".join(predicates)
+            )
+
+        return retpartition_time, default, aliasdict["extrajoinpredicates"]
+
+    @property
+    def copy_data(self):
+        """
+        True if to copy data not just structure
+        False just keeps structure in sync
+        :return:
+        """
+        return self._copy_data
+
+    def table_data_change(self, srctable, dsttable):
+        """
+        Method to allow customisation of detecting if table differs
+        default method is check rows, numberofbytes and last modified time
+        this exists to allow something like a query to do comparison
+        if you want to force a copy this should retrn True
+        :param srctable:
+        :param dsttable:
+        :return:
+        """
+
+        return False
+
+    def fault_barrier(self, function, *args):
+        """
+        A fault barrie here to ensure functions called in thread
+        do n9t exit prematurely
+        :param function: A function to call
+        :param args: The functions arguments
+        :return:
+        """
+        try:
+            function(*args)
+        except Exception:
+            pretty_printer = pprint.PrettyPrinter()
+            self.get_logger().exception(
+                "Exception calling function {} args {}".format(
+                    function.__name__, pretty_printer.pformat(args)
+                )
+            )
+
+    def update_source_view_definition(self, view_definition, use_standard_sql):
+        view_definition = view_definition.replace(
+            r"`{}.{}.".format(self.source_project, self.source_dataset),
+            "`{}.{}.".format(self.destination_project, self.destination_dataset),
+        )
+        view_definition = view_definition.replace(
+            r"[{}:{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
+        # this should not be required but seems it is
+        view_definition = view_definition.replace(
+            r"[{}.{}.".format(self.source_project, self.source_dataset),
+            "[{}:{}.".format(self.destination_project, self.destination_dataset),
+        )
+        # support short names
+        view_definition = view_definition.replace(
+            r"{}.".format(self.source_dataset), "{}.".format(self.destination_dataset)
+        )
+
+        return view_definition
+
+    def calculate_target_cmek_config(self, encryption_config):
+        assert isinstance(encryption_config, bigquery.EncryptionConfiguration) or (
+            getattr(
+                self.destination_dataset_impl, "default_encryption_configuration", None
+            )
+            is not None
+            and self.destination_dataset_impl.default_encryption_configuration
+            is not None
+        ), (
+            " To recaclculate a new encryption "
+            "config the original config has to be passed in and be of class "
+            "bigquery.EncryptionConfig"
+        )
+
+        # if destination dataset has default kms key already, just use the same
+        if (
+            getattr(
+                self.destination_dataset_impl, "default_encryption_configuration", None
+            )
+            is not None
+            and self.destination_dataset_impl.default_encryption_configuration
+            is not None
+        ):
+            return self.destination_dataset_impl.default_encryption_configuration
+
+        # if a global key or same region we are good to go
+        if (
+            self.same_region
+            or encryption_config.kms_key_name.find("/locations/global/") != -1
+        ):
+            # strip off version if exists
+            return bigquery.EncryptionConfiguration(
+                get_kms_key_name(encryption_config.kms_key_name)
+            )
+
+        # if global key can still be used
+        # if comparing table key get rid fo version
+        parts = get_kms_key_name(encryption_config.kms_key_name).split("/")
+        parts[3] = MAPBQREGION2KMSREGION.get(
+            self.destination_location, self.destination_location.lower()
+        )
+
+        return bigquery.encryption_configuration.EncryptionConfiguration(
+            kms_key_name="/".join(parts)
+        )
+
+    def copy_access_to_destination(self) -> None:
+        # for those not created compare data structures
+        # copy data
+        # compare data
+        # copy views
+        # copy dataset permissions
+        if self.copy_access:
+            src_dataset = self.source_client.get_dataset(
+                self.source_client.dataset(self.source_dataset)
+            )
+            dst_dataset = self.destination_client.get_dataset(
+                self.destination_client.dataset(self.destination_dataset)
+            )
+            access_entries = src_dataset.access_entries
+            dst_access_entries = []
+            for access in access_entries:
+                newaccess = access
+                if access.role is None:
+                    # if not copying views these will fail
+                    if "VIEW" not in self.copy_types:
+                        continue
+                    newaccess = self.create_access_view(access.entity_id)
+                dst_access_entries.append(newaccess)
+            dst_dataset.access_entries = dst_access_entries
+
+            fields = ["access_entries"]
+            if dst_dataset.description != src_dataset.description:
+                dst_dataset.description = src_dataset.description
+                fields.append("description")
+
+            if dst_dataset.friendly_name != src_dataset.friendly_name:
+                dst_dataset.friendly_name = src_dataset.friendly_name
+                fields.append("friendly_name")
+
+            if (
+                dst_dataset.default_table_expiration_ms
+                != src_dataset.default_table_expiration_ms
+            ):
+                dst_dataset.default_table_expiration_ms = (
+                    src_dataset.default_table_expiration_ms
+                )
+                fields.append("default_table_expiration_ms")
+
+            if getattr(dst_dataset, "default_partition_expiration_ms", None):
+                if (
+                    dst_dataset.default_partition_expiration_ms
+                    != src_dataset.default_partition_expiration_ms
+                ):
+                    dst_dataset.default_partition_expiration_ms = (
+                        src_dataset.default_partition_expiration_ms
+                    )
+                    fields.append("default_partition_expiration_ms")
+
+            # compare 2 dictionaries that are simple key, value
+            x = dst_dataset.labels
+            y = src_dataset.labels
+
+            # get shared key values
+            shared_items = {k: x[k] for k in x if k in y and x[k] == y[k]}
+
+            # must be same size and values if not set labels
+            if len(dst_dataset.labels) != len(src_dataset.labels) or len(
+                shared_items
+            ) != len(src_dataset.labels):
+                dst_dataset.labels = src_dataset.labels
+                fields.append("labels")
+
+            if getattr(dst_dataset, "default_encryption_configuration", None):
+                if not (
+                    src_dataset.default_encryption_configuration is None
+                    and dst_dataset.default_encryption_configuration is None
+                ):
+                    # if src_dataset.default_encryption_configuration is None:
+                    #     dst_dataset.default_encryption_configuration = None
+                    # else:
+                    #     dst_dataset.default_encryption_configuration = \
+                    #         self.calculate_target_cmek_config(
+                    #             src_dataset.default_encryption_configuration)
+
+                    # equate dest kms config to src only if it's None
+                    if dst_dataset.default_encryption_configuration is None:
+                        dst_dataset.default_encryption_configuration = (
+                            self.calculate_target_cmek_config(
+                                src_dataset.default_encryption_configuration
+                            )
+                        )
+                    fields.append("default_encryption_configuration")
+
+            try:
+                self.destination_client.update_dataset(dst_dataset, fields)
+            except exceptions.Forbidden:
+                self.logger.error(
+                    "Unable to det permission on {}.{} dataset as Forbidden".format(
+                        self.destination_project, self.destination_dataset
+                    )
+                )
+            except exceptions.BadRequest:
+                self.logger.error(
+                    "Unable to det permission on {}.{} dataset as BadRequest".format(
+                        self.destination_project, self.destination_dataset
+                    )
+                )
+
+    def create_access_view(self, entity_id):
+        """
+        Convert an old view authorised view
+        to a new one i.e. change project id
+
+        :param entity_id:
+        :return: a view {
+        ...     'projectId': 'my-project',
+        ...     'datasetId': 'my_dataset',
+        ...     'tableId': 'my_table'
+        ... }
+        """
+        if (
+            entity_id["projectId"] == self.source_project
+            and entity_id["datasetId"] == self.source_dataset
+        ):
+            entity_id["projectId"] = self.destination_project
+            entity_id["datasetId"] = self.destination_dataset
+
+        return bigquery.AccessEntry(None, "view", entity_id)
+
+    @property
+    def logger(self):
+        return self.__logger
+
+    @logger.setter
+    def logger(self, alogger):
+        self.__logger = alogger
+
+    def get_logger(self):
+        """
+        Returns the python logger to use for logging errors and issues
+        :return:
+        """
+        return self.__logger
+
+
 class BQSyncTask(object):
-    def __init__(self, function, args):
+    def __init__(
+        self, function: Callable, args: List[Union[DefaultBQSyncDriver, str]]
+    ) -> None:
         assert callable(function), "Tasks must be constructed with a function"
         assert isinstance(args, list), "Must have arguments"
         self.__function = function
@@ -386,13 +1647,13 @@ class BQSyncTask(object):
         return self.__function
 
     @property
-    def args(self):
+    def args(self) -> List[Union[DefaultBQSyncDriver, str]]:
         return self.__args
 
-    def __eq__(self, other):
+    def __eq__(self, other: "BQSyncTask") -> bool:
         return self.args == other.args
 
-    def __lt__(self, other):
+    def __lt__(self, other: "BQSyncTask") -> bool:
         return self.args < other.args
 
     def __gt__(self, other):
@@ -601,7 +1862,7 @@ def generate_create_schema_file(filename, resourcelist):
         generate_create_schema(resourcelist, file_handle)
 
 
-def dataset_exists(client, dataset_reference):
+def dataset_exists(client: Client, dataset_reference: DatasetReference) -> bool:
     """Return if a dataset exists.
 
     Args:
@@ -995,7 +2256,7 @@ def to_dict(schema):
     }
     if schema.fields is not None:
         fields_to_append = []
-        for field_item in sorted(schema.fields, key=lambda x : x.name):
+        for field_item in sorted(schema.fields, key=lambda x: x.name):
             fields_to_append.append(to_dict(field_item))
         field_member["fields"] = fields_to_append
     return field_member
@@ -1355,7 +2616,7 @@ SELECT
     def recurse_diff_base(schema, fieldprefix, curtablealias):
         # pretty_printer = pprint.PrettyPrinter(indent=4)
 
-        for schema_item in sorted(schema, key=lambda x : x.name):
+        for schema_item in sorted(schema, key=lambda x: x.name):
             if schema_item.name in fieldsnot4diff:
                 continue
             # field names can only be up o 128 characters long
@@ -2175,7 +3436,7 @@ class ViewCompiler(object):
         return prefix + compiled_sql
 
 
-def compute_region_equals_bqregion(compute_region, bq_region):
+def compute_region_equals_bqregion(compute_region: str, bq_region: str) -> bool:
     if compute_region == bq_region or compute_region.lower() == bq_region.lower():
         bq_compute_region = bq_region.lower()
     else:
@@ -2455,1256 +3716,6 @@ class ExportImportType(object):
         return self.__table.encryption_configuration
 
 
-class DefaultBQSyncDriver(object):
-    """This class provides mechanical input to bqsync functions"""
-
-    threadLocal = threading.local()
-
-    def __init__(
-        self,
-        srcproject,
-        srcdataset,
-        dstdataset,
-        dstproject=None,
-        srcbucket=None,
-        dstbucket=None,
-        remove_deleted_tables=True,
-        copy_data=True,
-        copy_types=None,
-        check_depth=-1,
-        copy_access=True,
-        table_view_filter=None,
-        table_or_views_to_exclude=None,
-        latest_date=None,
-        days_before_latest_day=None,
-        day_partition_deep_check=False,
-        analysis_project=None,
-        query_cmek=None,
-        src_policy_tags=[],
-        dst_policy_tags=[],
-    ):
-        """
-        Constructor for base copy driver all other drivers should inherit from this
-        :param srcproject: The project that is the source for the copy (note all actions are done
-        inc ontext of source project)
-        :param srcdataset: The source dataset
-        :param dstdataset: The destination dataset
-        :param dstproject: The source project if None assumed to be source project
-        :param srcbucket:  The source bucket when copying cross region data is extracted to this
-        bucket rewritten to destination bucket
-        :param dstbucket: The destination bucket where data is loaded from
-        :param remove_deleted_tables: If table exists in destination but not in source should it
-        be deleted
-        :param copy_data: Copy data or just do schema
-        :param copy_types: Copy object types i.e. TABLE,VIEW,ROUTINE,MODEL
-        """
-        assert query_cmek is None or (
-            isinstance(query_cmek, list) and len(query_cmek) == 2
-        ), (
-            "If cmek key is specified has to be a list and MUST be 2 keys with "
-            ""
-            "1st key being source location key and destination key"
-        )
-        self._sessionid = datetime.utcnow().isoformat().replace(":", "-")
-        if copy_types is None:
-            copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
-        if table_view_filter is None:
-            table_view_filter = [".*"]
-        if table_or_views_to_exclude is None:
-            table_or_views_to_exclude = []
-        if dstproject is None:
-            dstproject = srcproject
-
-        self._remove_deleted_tables = remove_deleted_tables
-
-        # check copy makes some basic sense
-        assert srcproject != dstproject or srcdataset != dstdataset, (
-            "Source and destination " "datasets cannot be the same"
-        )
-        assert latest_date is None or isinstance(latest_date, datetime)
-
-        self._source_project = srcproject
-        self._source_dataset = srcdataset
-        self._destination_project = dstproject
-        self._destination_dataset = dstdataset
-        self._copy_data = copy_data
-        self._http = None
-        self.__copy_q = None
-        self.__schema_q = None
-        self.__jobs = []
-        self.__copy_types = copy_types
-        self.reset_stats()
-        self.__logger = logging
-        self.__check_depth = check_depth
-        self.__copy_access = copy_access
-        self.__table_view_filter = table_view_filter
-        self.__table_or_views_to_exclude = table_or_views_to_exclude
-        self.__re_table_view_filter = []
-        self.__re_table_or_views_to_exclude = []
-        self.__base_predicates = []
-        self.__day_partition_deep_check = day_partition_deep_check
-        self.__analysisproject = self._destination_project
-        if analysis_project is not None:
-            self.__analysisproject = analysis_project
-
-        if days_before_latest_day is not None:
-            if latest_date is None:
-                end_date = "TIMESTAMP_ADD(TIMESTAMP_TRUNC(CURRENT_TIMESTAMP(),DAY),INTERVAL 1 DAY)"
-            else:
-                end_date = "TIMESTAMP('{}')".format(latest_date.strftime("%Y-%m-%d"))
-            self.__base_predicates.append(
-                "{{retpartition}} BETWEEN TIMESTAMP_SUB({end_date}, INTERVAL {"
-                "days_before_latest_day} * 24 HOUR) AND {end_date}".format(
-                    end_date=end_date, days_before_latest_day=days_before_latest_day
-                )
-            )
-
-        # now check that from a service the copy makes sense
-        assert dataset_exists(
-            self.source_client, self.source_client.dataset(self.source_dataset)
-        ), ("Source dataset does not exist %r" % self.source_dataset)
-        assert dataset_exists(
-            self.destination_client,
-            self.destination_client.dataset(self.destination_dataset),
-        ), (
-            "Destination dataset does not " "exists %r" % self.destination_dataset
-        )
-
-        # figure out if cross region copy if within region copies optimised to happen in big query
-        # if cross region buckets need to exist to support copy and they need to be in same region
-        source_dataset_impl = self.source_dataset_impl
-        destination_dataset_impl = self.destination_dataset_impl
-        if query_cmek is None:
-            query_cmek = []
-            if destination_dataset_impl.default_encryption_configuration is not None:
-                query_cmek.append(
-                    destination_dataset_impl.default_encryption_configuration.kms_key_name
-                )
-            else:
-                query_cmek.append(None)
-
-            if (
-                not query_cmek
-                and source_dataset_impl.default_encryption_configuration is not None
-            ):
-                query_cmek.append(
-                    source_dataset_impl.default_encryption_configuration.kms_key_name
-                )
-            else:
-                query_cmek.append(None)
-
-        self._query_cmek = query_cmek
-        self._same_region = (
-            source_dataset_impl.location == destination_dataset_impl.location
-        )
-        self._source_location = source_dataset_impl.location
-        self._destination_location = destination_dataset_impl.location
-        self._src_policy_tags = src_policy_tags
-        self._dst_policy_tags = dst_policy_tags
-
-        # if not same region where are the buckets for copying
-        if not self.same_region:
-            assert srcbucket is not None, (
-                "Being asked to copy datasets across region but no "
-                "source bucket is defined these must be in same region "
-                "as source dataset"
-            )
-            assert isinstance(srcbucket, six.string_types), (
-                "Being asked to copy datasets across region but "
-                "no "
-                ""
-                ""
-                "source bucket is not a string"
-            )
-            self._source_bucket = srcbucket
-            assert dstbucket is not None, (
-                "Being asked to copy datasets across region but no "
-                "destination bucket is defined these must be in same "
-                "region "
-                "as destination dataset"
-            )
-            assert isinstance(dstbucket, six.string_types), (
-                "Being asked to copy datasets across region but "
-                "destination bucket is not a string"
-            )
-            self._destination_bucket = dstbucket
-            client = storage.Client(project=self.source_project)
-            src_bucket = client.get_bucket(self.source_bucket)
-            assert compute_region_equals_bqregion(
-                src_bucket.location, source_dataset_impl.location
-            ), (
-                "Source bucket "
-                "location is not "
-                ""
-                ""
-                ""
-                ""
-                ""
-                ""
-                ""
-                ""
-                "same as source "
-                "dataset location"
-            )
-            dst_bucket = client.get_bucket(self.destination_bucket)
-            assert compute_region_equals_bqregion(
-                dst_bucket.location, destination_dataset_impl.location
-            ), "Destination bucket location is not same as destination dataset location"
-
-    @property
-    def session_id(self):
-        """
-        This method returns the uniue identifier for this copy session
-        :return: The copy drivers session
-        """
-        return self._sessionid
-
-    def map_schema_policy_tags(self, schema):
-        """
-        A method that takes as input a big query schema iterates through the schema
-        and reads policy tags and maps them from src to destination.
-        :param schema: The schema to map
-        :return: schema the same schema but with policy tags updated
-        """
-        nschema = []
-        for field in schema:
-            if field.field_type == "RECORD":
-                tmp_field = field.to_api_repr()
-                tmp_field["fields"] = [
-                    i.to_api_repr() for i in self.map_schema_policy_tags(field.fields)
-                ]
-                field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
-            else:
-                _, field = self.map_policy_tag(field)
-            nschema.append(field)
-        return nschema
-
-    def map_policy_tag(self, field, dst_tgt=None):
-        """
-        Method that tages a policy tags and will remap
-        :param field: The field to map
-        :param dst_tgt: The destination tag
-        :return: The new policy tag
-        """
-        change = 0
-        if field.field_type == "RECORD":
-            schema = self.map_schema_policy_tags(field.fields)
-            if field.fields != schema:
-                change = 1
-            tmp_field = field.to_api_repr()
-            tmp_field["fields"] = [i.to_api_repr() for i in schema]
-            field = bigquery.schema.SchemaField.from_api_repr(tmp_field)
-        else:
-            if field.policy_tags is not None:
-                field_api_repr = field.to_api_repr()
-                tags = field_api_repr["policyTags"]["names"]
-                ntag = []
-                for tag in tags:
-                    new_tag = self.map_policy_tag_string(tag)
-                    if new_tag is None:
-                        field_api_repr.pop("policyTags", None)
-                        break
-                    ntag.append(new_tag)
-                if "policyTags" in field_api_repr:
-                    field_api_repr["policyTags"]["names"] = ntag
-                field = bigquery.schema.SchemaField.from_api_repr(field_api_repr)
-                if dst_tgt is None or dst_tgt.policy_tags != field.policy_tags:
-                    change = 1
-                return change, bigquery.schema.SchemaField.from_api_repr(field_api_repr)
-
-        return change, field
-
-    def map_policy_tag_string(self, src_tag):
-        """
-        This method maps a source tag to a destination policy tag
-        :param src_tag: The starting table column tags
-        :return: The expected destination tags
-        """
-        # if same region and src has atag just simply reuse the tag
-        if self._same_region and not self._src_policy_tags:
-            return src_tag
-        try:
-            # look for the tag in the src destination map
-            return self._dst_policy_tags[self._src_policy_tags.index(src_tag)]
-        # if it doesnt return None as the tag
-        except ValueError:
-            return None
-
-    def base_predicates(self, retpartition):
-        actual_basepredicates = []
-        for predicate in self.__base_predicates:
-            actual_basepredicates.append(predicate.format(retpartition=retpartition))
-        return actual_basepredicates
-
-    def comparison_predicates(self, table_name, retpartition="_PARTITIONTIME"):
-        return self.base_predicates(retpartition)
-
-    def istableincluded(self, table_name):
-        """
-        This method when passed a table_name returns true if it should be processed in a copy action
-        :param table_name:
-        :return: boolean True then it should be include False then no
-        """
-        if len(self.__re_table_view_filter) == 0:
-            for filter in self.__table_view_filter:
-                self.__re_table_view_filter.append(re.compile(filter))
-            for filter in self.__table_or_views_to_exclude:
-                self.__re_table_or_views_to_exclude.append(re.compile(filter))
-
-        result = False
-
-        for regexp2check in self.__re_table_view_filter:
-            if regexp2check.search(table_name):
-                result = True
-                break
-
-        if result:
-            for regexp2check in self.__re_table_or_views_to_exclude:
-                if regexp2check.search(table_name):
-                    result = False
-                    break
-
-        return result
-
-    def reset_stats(self):
-        self.__bytes_synced = 0
-        self.__rows_synced = 0
-        self.__bytes_avoided = 0
-        self.__rows_avoided = 0
-        self.__tables_synced = 0
-        self.__materialized_views_synced = 0
-        self.__views_synced = 0
-        self.__routines_synced = 0
-        self.__routines_failed_sync = 0
-        self.__routines_avoided = 0
-        self.__models_synced = 0
-        self.__models_failed_sync = 0
-        self.__models_avoided = 0
-        self.__views_failed_sync = 0
-        self.__tables_failed_sync = 0
-        self.__tables_avoided = 0
-        self.__view_avoided = 0
-        self.__extract_fails = 0
-        self.__load_fails = 0
-        self.__copy_fails = 0
-        self.__query_cache_hits = 0
-        self.__total_bytes_processed = 0
-        self.__total_bytes_billed = 0
-        self.__start_time = None
-        self.__end_time = None
-        self.__load_input_file_bytes = 0
-        self.__load_input_files = 0
-        self.__load_output_bytes = 0
-        self.__blob_rewrite_retried_exceptions = 0
-        self.__blob_rewrite_unretryable_exceptions = 0
-
-    @property
-    def blob_rewrite_retried_exceptions(self):
-        return self.__blob_rewrite_retried_exceptions
-
-    @property
-    def blob_rewrite_unretryable_exceptions(self):
-        return self.__blob_rewrite_unretryable_exceptions
-
-    def increment_blob_rewrite_retried_exceptions(self):
-        self.__blob_rewrite_retried_exceptions += 1
-
-    def increment_blob_rewrite_unretryable_exceptions(self):
-        self.__blob_rewrite_unretryable_exceptions += 1
-
-    @property
-    def models_synced(self):
-        return self.__models_synced
-
-    def increament_models_synced(self):
-        self.__models_synced += 1
-
-    @property
-    def models_failed_sync(self):
-        return self.__models_failed_sync
-
-    def increment_models_failed_sync(self):
-        self.__models_failed_sync += 1
-
-    @property
-    def models_avoided(self):
-        return self.__models_avoided
-
-    def increment_models_avoided(self):
-        self.__models_avoided += 1
-
-    @property
-    def routines_synced(self):
-        return self.__routines_synced
-
-    @property
-    def query_cmek(self):
-        return self._query_cmek
-
-    def increment_routines_synced(self):
-        self.__routines_synced += 1
-
-    def increment_routines_avoided(self):
-        self.__routines_avoided += 1
-
-    @property
-    def routines_failed_sync(self):
-        return self.__routines_failed_sync
-
-    @property
-    def routines_avoided(self):
-        return self.__routines_avoided
-
-    def increment_rows_avoided(self):
-        self.__routines_avoided += 1
-
-    def increment_routines_failed_sync(self):
-        self.__routines_failed_sync += 1
-
-    @property
-    def bytes_copied_across_region(self):
-        return self.__load_input_file_bytes
-
-    @property
-    def files_copied_across_region(self):
-        return self.__load_input_files
-
-    @property
-    def bytes_copied(self):
-        return self.__load_output_bytes
-
-    def increment_load_input_file_bytes(self, value):
-        self.__load_input_file_bytes += value
-
-    def increment_load_input_files(self, value):
-        self.__load_input_files += value
-
-    def increment_load_output_bytes(self, value):
-        self.__load_output_bytes += value
-
-    @property
-    def start_time(self):
-        return self.__start_time
-
-    @property
-    def end_time(self):
-        if self.__end_time is None and self.__start_time is not None:
-            return datetime.utcnow()
-        return self.__end_time
-
-    @property
-    def sync_time_seconds(self):
-        if self.__start_time is None:
-            return None
-        return (self.__end_time - self.__start_time).seconds
-
-    def start_sync(self):
-        self.__start_time = datetime.utcnow()
-
-    def end_sync(self):
-        self.__end_time = datetime.utcnow()
-
-    @property
-    def query_cache_hits(self):
-        return self.__query_cache_hits
-
-    def increment_cache_hits(self):
-        self.__query_cache_hits += 1
-
-    @property
-    def total_bytes_processed(self):
-        return self.__total_bytes_processed
-
-    def increment_total_bytes_processed(self, total_bytes_processed):
-        self.__total_bytes_processed += total_bytes_processed
-
-    @property
-    def total_bytes_billed(self):
-        return self.__total_bytes_processed
-
-    def increment_total_bytes_billed(self, total_bytes_billed):
-        self.__total_bytes_billed += total_bytes_billed
-
-    @property
-    def copy_fails(self):
-        return self.__copy_fails
-
-    @property
-    def copy_access(self):
-        return self.__copy_access
-
-    @copy_access.setter
-    def copy_access(self, value):
-        self.__copy_access = value
-
-    def increment_copy_fails(self):
-        self.__copy_fails += 1
-
-    @property
-    def load_fails(self):
-        return self.__load_fails
-
-    def increment_load_fails(self):
-        self.__load_fails += 1
-
-    @property
-    def extract_fails(self):
-        return self.__extract_fails
-
-    def increment_extract_fails(self):
-        self.__extract_fails += 1
-
-    @property
-    def check_depth(self):
-        return self.__check_depth
-
-    @check_depth.setter
-    def check_depth(self, value):
-        self.__check_depth = value
-
-    @property
-    def views_failed_sync(self):
-        return self.__views_failed_sync
-
-    def increment_views_failed_sync(self):
-        self.__views_failed_sync += 1
-
-    @property
-    def tables_failed_sync(self):
-        return self.__tables_failed_sync
-
-    def increment_tables_failed_sync(self):
-        self.__tables_failed_sync += 1
-
-    @property
-    def tables_avoided(self):
-        return self.__tables_avoided
-
-    def increment_tables_avoided(self):
-        self.__tables_avoided += 1
-
-    @property
-    def view_avoided(self):
-        return self.__view_avoided
-
-    def increment_view_avoided(self):
-        self.__view_avoided += 1
-
-    @property
-    def bytes_synced(self):
-        return self.__bytes_synced
-
-    @property
-    def copy_types(self):
-        return self.__copy_types
-
-    def add_bytes_synced(self, bytes):
-        self.__bytes_synced += bytes
-
-    def update_job_stats(self, job):
-        """
-        Given a big query job figure out what stats to process
-        :param job:
-        :return: None
-        """
-        if isinstance(job, bigquery.QueryJob):
-            if job.cache_hit:
-                self.increment_cache_hits()
-            self.increment_total_bytes_billed(job.total_bytes_billed)
-            self.increment_total_bytes_processed(job.total_bytes_processed)
-
-        if isinstance(job, bigquery.CopyJob):
-            if job.error_result is not None:
-                self.increment_copy_fails()
-
-        if isinstance(job, bigquery.LoadJob):
-            if job.error_result:
-                self.increment_load_fails()
-            else:
-                self.increment_load_input_files(job.input_files)
-                self.increment_load_input_file_bytes(job.input_file_bytes)
-                self.increment_load_output_bytes(job.output_bytes)
-
-    @property
-    def rows_synced(self):
-        # as time can be different between these assume avoided is always more accurae
-        if self.rows_avoided > self.__rows_synced:
-            return self.rows_avoided
-        return self.__rows_synced
-
-    def add_rows_synced(self, rows):
-        self.__rows_synced += rows
-
-    @property
-    def bytes_avoided(self):
-        return self.__bytes_avoided
-
-    def add_bytes_avoided(self, bytes):
-        self.__bytes_avoided += bytes
-
-    @property
-    def rows_avoided(self):
-        return self.__rows_avoided
-
-    def add_rows_avoided(self, rows):
-        self.__rows_avoided += rows
-
-    @property
-    def tables_synced(self):
-        return self.__tables_synced
-
-    @property
-    def views_synced(self):
-        return self.__views_synced
-
-    def increment_tables_synced(self):
-        self.__tables_synced += 1
-
-    def increment_materialized_views_synced(self):
-        self.__materialized_views_synced += 1
-
-    def increment_views_synced(self):
-        self.__views_synced += 1
-
-    @property
-    def copy_q(self):
-        return self.__copy_q
-
-    @copy_q.setter
-    def copy_q(self, value):
-        self.__copy_q = value
-
-    @property
-    def schema_q(self):
-        return self.__schema_q
-
-    @schema_q.setter
-    def schema_q(self, value):
-        self.__schema_q = value
-
-    @property
-    def source_location(self):
-        return self._source_location
-
-    @property
-    def destination_location(self):
-        return self._destination_location
-
-    @property
-    def source_bucket(self):
-        return self._source_bucket
-
-    @property
-    def destination_bucket(self):
-        return self._destination_bucket
-
-    @property
-    def same_region(self):
-        return self._same_region
-
-    @property
-    def source_dataset_impl(self):
-        source_datasetref = self.source_client.dataset(self.source_dataset)
-        return self.source_client.get_dataset(source_datasetref)
-
-    @property
-    def destination_dataset_impl(self):
-        destination_datasetref = self.destination_client.dataset(
-            self.destination_dataset
-        )
-        return self.destination_client.get_dataset(destination_datasetref)
-
-    @property
-    def query_client(self):
-        """
-        Returns the client to be charged for analysis of comparison could be
-        source could be destination could be another.
-        By default it is the destination but can be overriden by passing a target project
-        :return: A big query client for the project to be charged
-        """
-        warnings.filterwarnings(
-            "ignore", "Your application has authenticated using end user credentials"
-        )
-        """
-        Obtains a source client in the current thread only constructs a client once per thread
-        :return:
-        """
-        source_client = getattr(
-            DefaultBQSyncDriver.threadLocal, self.__analysisproject, None
-        )
-        if source_client is None:
-            setattr(
-                DefaultBQSyncDriver.threadLocal,
-                self.__analysisproject,
-                bigquery.Client(project=self.__analysisproject, _http=self.http),
-            )
-        return getattr(DefaultBQSyncDriver.threadLocal, self.__analysisproject, None)
-
-    @property
-    def source_client(self):
-        warnings.filterwarnings(
-            "ignore", "Your application has authenticated using end user credentials"
-        )
-        """
-        Obtains a source client in the current thread only constructs a client once per thread
-        :return:
-        """
-        source_client = getattr(
-            DefaultBQSyncDriver.threadLocal,
-            self.source_project + self._source_dataset,
-            None,
-        )
-        if source_client is None:
-            setattr(
-                DefaultBQSyncDriver.threadLocal,
-                self.source_project + self._source_dataset,
-                bigquery.Client(project=self.source_project, _http=self.http),
-            )
-        return getattr(
-            DefaultBQSyncDriver.threadLocal,
-            self.source_project + self._source_dataset,
-            None,
-        )
-
-    @property
-    def http(self):
-        """
-        Allow override of http transport per client
-        usefule for proxy handlng but should be handled by sub-classes default is do nothing
-        :return:
-        """
-        return self._http
-
-    @property
-    def destination_client(self):
-        """
-        Obtains a s destination client in current thread only constructs a client once per thread
-        :return:
-        """
-        source_client = getattr(
-            DefaultBQSyncDriver.threadLocal,
-            self.destination_project + self.destination_dataset,
-            None,
-        )
-        if source_client is None:
-            setattr(
-                DefaultBQSyncDriver.threadLocal,
-                self.destination_project + self.destination_dataset,
-                bigquery.Client(project=self.destination_project, _http=self.http),
-            )
-        return getattr(
-            DefaultBQSyncDriver.threadLocal,
-            self.destination_project + self.destination_dataset,
-            None,
-        )
-
-    def export_import_format_supported(self, srctable, dsttable=None):
-        """Calculates a suitable export import type based upon schema
-        default mecahnism is to use AVRO and SNAPPY as parallel and fast
-        If though a schema type notsupported by AVRO fall back to jsonnl and gzip
-        """
-        dst_encryption_configuration = None
-        if dsttable is None and srctable.encryption_configuration is not None:
-            dst_encryption_configuration = self.calculate_target_cmek_config(
-                srctable.encryption_configuration
-            )
-        else:
-            dst_encryption_configuration = None
-
-        return ExportImportType(srctable, dsttable, dst_encryption_configuration)
-
-    @property
-    def source_project(self):
-        return self._source_project
-
-    @property
-    def source_dataset(self):
-        return self._source_dataset
-
-    @property
-    def jobs(self):
-        return self.__jobs
-
-    def add_job(self, job):
-        self.__jobs.append(job)
-
-    @property
-    def destination_project(self):
-        return self._destination_project
-
-    @property
-    def destination_dataset(self):
-        return self._destination_dataset
-
-    @property
-    def remove_deleted_tables(self):
-        return self._remove_deleted_tables
-
-    def day_partition_deep_check(self):
-        """
-
-        :return: True if should check rows and bytes counts False if notrequired
-        """
-        return self.__day_partition_deep_check
-
-    def extra_dp_compare_functions(self, table):
-        """
-        Function to allow record comparison checks for a day partition
-        These shoul dbe aggregates for the partition i..e max, min, avg
-        Override when row count if not sufficient. Row count works for
-        tables where rows only added non deleted or removed
-        :return: a comma seperated extension of functions
-        """
-        default = ""
-        retpartition_time = "_PARTITIONTIME"
-
-        if (
-            getattr(table, "time_partitioning", None)
-            and table.time_partitioning.field is not None
-        ):
-            retpartition_time = "TIMESTAMP({})".format(table.time_partitioning.field)
-
-        SCHEMA = list(table.schema)
-
-        # emulate nonlocal variables this works in python 2.7 and python 3.6
-        aliasdict = {"alias": "", "extrajoinpredicates": ""}
-
-        """
-        Use FRAM_FINGERPRINT as hash of each value and then summed
-        basically a merkel function
-        """
-
-        def add_data_check(SCHEMA, prefix=None, depth=0):
-            if prefix is None:
-                prefix = []
-                # add base table alia
-                prefix.append("zzz")
-
-            expression_list = []
-
-            # if we are beyond check depth exit
-            if self.check_depth >= 0 and depth > self.check_depth:
-                return expression_list
-
-            for field in SCHEMA:
-                prefix.append(field.name)
-                if field.mode != "REPEATED":
-                    if self.check_depth >= 0 or (
-                        self.check_depth >= -1
-                        and (
-                            re.search("update.*time", field.name.lower())
-                            or re.search("modifi.*time", field.name.lower())
-                            or re.search("version", field.name.lower())
-                            or re.search("creat.*time", field.name.lower())
-                        )
-                    ):
-                        if field.field_type == "STRING":
-                            expression_list.append(
-                                "IFNULL(`{0}`,'')".format("`.`".join(prefix))
-                            )
-                        elif field.field_type == "TIMESTAMP":
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
-                                    "`.`".join(prefix)
-                                )
-                            )
-                        elif (
-                            field.field_type == "INTEGER" or field.field_type == "INT64"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(
-                                    "`.`".join(prefix)
-                                )
-                            )
-                        elif (
-                            field.field_type == "FLOAT"
-                            or field.field_type == "FLOAT64"
-                            or field.field_type == "NUMERIC"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(
-                                    "`.`".join(prefix)
-                                )
-                            )
-                        elif (
-                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(
-                                    "`.`".join(prefix)
-                                )
-                            )
-                        elif field.field_type == "BYTES":
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(
-                                    "`.`".join(prefix)
-                                )
-                            )
-                    if field.field_type == "RECORD":
-                        SSCHEMA = list(field.fields)
-                        expression_list.extend(
-                            add_data_check(SSCHEMA, prefix=prefix, depth=depth)
-                        )
-                else:
-                    if field.field_type != "RECORD" and (
-                        self.check_depth >= 0
-                        or (
-                            self.check_depth >= -1
-                            and (
-                                re.search("update.*time", field.name.lower())
-                                or re.search("modifi.*time", field.name.lower())
-                                or re.search("version", field.name.lower())
-                                or re.search("creat.*time", field.name.lower())
-                            )
-                        )
-                    ):
-                        # add the unnestof repeated base type can use own field name
-                        fieldname = "{}{}".format(aliasdict["alias"], field.name)
-                        aliasdict[
-                            "extrajoinpredicates"
-                        ] = """{}
-LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
-                            aliasdict["extrajoinpredicates"], field.name, fieldname
-                        )
-                        if field.field_type == "STRING":
-                            expression_list.append("IFNULL(`{0}`,'')".format(fieldname))
-                        elif field.field_type == "TIMESTAMP":
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,TIMESTAMP('1970-01-01')) AS STRING)".format(
-                                    fieldname
-                                )
-                            )
-                        elif (
-                            field.field_type == "INTEGER" or field.field_type == "INT64"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,0) AS STRING)".format(fieldname)
-                            )
-                        elif (
-                            field.field_type == "FLOAT"
-                            or field.field_type == "FLOAT64"
-                            or field.field_type == "NUMERIC"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,0.0) AS STRING)".format(fieldname)
-                            )
-                        elif (
-                            field.field_type == "BOOL" or field.field_type == "BOOLEAN"
-                        ):
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,false) AS STRING)".format(fieldname)
-                            )
-                        elif field.field_type == "BYTES":
-                            expression_list.append(
-                                "CAST(IFNULL(`{0}`,'') AS STRING)".format(fieldname)
-                            )
-                    if field.field_type == "RECORD":
-                        # if we want to go deeper in checking
-                        if depth < self.check_depth:
-                            # need to unnest as repeated
-                            if aliasdict["alias"] == "":
-                                # uses this to name space from real columns
-                                # bit hopeful
-                                aliasdict["alias"] = "zzz"
-
-                            aliasdict["alias"] = aliasdict["alias"] + "z"
-
-                            # so need to rest prefix for this record
-                            newprefix = []
-                            newprefix.append(aliasdict["alias"])
-
-                            # add the unnest
-                            aliasdict[
-                                "extrajoinpredicates"
-                            ] = """{}
-LEFT JOIN UNNEST(`{}`) AS {}""".format(
-                                aliasdict["extrajoinpredicates"],
-                                "`.`".join(prefix),
-                                aliasdict["alias"],
-                            )
-
-                            # add the fields
-                            expression_list.extend(
-                                add_data_check(
-                                    SSCHEMA, prefix=newprefix, depth=depth + 1
-                                )
-                            )
-                prefix.pop()
-            return expression_list
-
-        expression_list = add_data_check(SCHEMA)
-
-        if len(expression_list) > 0:
-            # algorithm to compare sets
-            # java uses overflowing sum but big query does not allow in sum
-            # using average as scales sum and available as aggregate
-            # split top end and bottom end of hash
-            # that way we maximise bits and fidelity
-            # and
-            default = """,
-    AVG(FARM_FINGERPRINT(CONCAT({0})) &  0x0000000FFFFFFFF) as avgFingerprintLB,
-    AVG((FARM_FINGERPRINT(CONCAT({0})) & 0xFFFFFFF00000000) >> 32) as avgFingerprintHB,""".format(
-                ",".join(expression_list)
-            )
-
-        predicates = self.comparison_predicates(table.table_id, retpartition_time)
-        if len(predicates) > 0:
-            aliasdict[
-                "extrajoinpredicates"
-            ] = """{}
-WHERE ({})""".format(
-                aliasdict["extrajoinpredicates"], ") AND (".join(predicates)
-            )
-
-        return retpartition_time, default, aliasdict["extrajoinpredicates"]
-
-    @property
-    def copy_data(self):
-        """
-        True if to copy data not just structure
-        False just keeps structure in sync
-        :return:
-        """
-        return self._copy_data
-
-    def table_data_change(self, srctable, dsttable):
-        """
-        Method to allow customisation of detecting if table differs
-        default method is check rows, numberofbytes and last modified time
-        this exists to allow something like a query to do comparison
-        if you want to force a copy this should retrn True
-        :param srctable:
-        :param dsttable:
-        :return:
-        """
-
-        return False
-
-    def fault_barrier(self, function, *args):
-        """
-        A fault barrie here to ensure functions called in thread
-        do n9t exit prematurely
-        :param function: A function to call
-        :param args: The functions arguments
-        :return:
-        """
-        try:
-            function(*args)
-        except Exception:
-            pretty_printer = pprint.PrettyPrinter()
-            self.get_logger().exception(
-                "Exception calling function {} args {}".format(
-                    function.__name__, pretty_printer.pformat(args)
-                )
-            )
-
-    def update_source_view_definition(self, view_definition, use_standard_sql):
-        view_definition = view_definition.replace(
-            r"`{}.{}.".format(self.source_project, self.source_dataset),
-            "`{}.{}.".format(self.destination_project, self.destination_dataset),
-        )
-        view_definition = view_definition.replace(
-            r"[{}:{}.".format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset),
-        )
-        # this should not be required but seems it is
-        view_definition = view_definition.replace(
-            r"[{}.{}.".format(self.source_project, self.source_dataset),
-            "[{}:{}.".format(self.destination_project, self.destination_dataset),
-        )
-        # support short names
-        view_definition = view_definition.replace(
-            r"{}.".format(self.source_dataset), "{}.".format(self.destination_dataset)
-        )
-
-        return view_definition
-
-    def calculate_target_cmek_config(self, encryption_config):
-        assert isinstance(encryption_config, bigquery.EncryptionConfiguration) or (
-            getattr(
-                self.destination_dataset_impl, "default_encryption_configuration", None
-            )
-            is not None
-            and self.destination_dataset_impl.default_encryption_configuration
-            is not None
-        ), (
-            " To recaclculate a new encryption "
-            "config the original config has to be passed in and be of class "
-            "bigquery.EncryptionConfig"
-        )
-
-        # if destination dataset has default kms key already, just use the same
-        if (
-            getattr(
-                self.destination_dataset_impl, "default_encryption_configuration", None
-            )
-            is not None
-            and self.destination_dataset_impl.default_encryption_configuration
-            is not None
-        ):
-            return self.destination_dataset_impl.default_encryption_configuration
-
-        # if a global key or same region we are good to go
-        if (
-            self.same_region
-            or encryption_config.kms_key_name.find("/locations/global/") != -1
-        ):
-            # strip off version if exists
-            return bigquery.EncryptionConfiguration(
-                get_kms_key_name(encryption_config.kms_key_name)
-            )
-
-        # if global key can still be used
-        # if comparing table key get rid fo version
-        parts = get_kms_key_name(encryption_config.kms_key_name).split("/")
-        parts[3] = MAPBQREGION2KMSREGION.get(
-            self.destination_location, self.destination_location.lower()
-        )
-
-        return bigquery.encryption_configuration.EncryptionConfiguration(
-            kms_key_name="/".join(parts)
-        )
-
-    def copy_access_to_destination(self):
-        # for those not created compare data structures
-        # copy data
-        # compare data
-        # copy views
-        # copy dataset permissions
-        if self.copy_access:
-            src_dataset = self.source_client.get_dataset(
-                self.source_client.dataset(self.source_dataset)
-            )
-            dst_dataset = self.destination_client.get_dataset(
-                self.destination_client.dataset(self.destination_dataset)
-            )
-            access_entries = src_dataset.access_entries
-            dst_access_entries = []
-            for access in access_entries:
-                newaccess = access
-                if access.role is None:
-                    # if not copying views these will fail
-                    if "VIEW" not in self.copy_types:
-                        continue
-                    newaccess = self.create_access_view(access.entity_id)
-                dst_access_entries.append(newaccess)
-            dst_dataset.access_entries = dst_access_entries
-
-            fields = ["access_entries"]
-            if dst_dataset.description != src_dataset.description:
-                dst_dataset.description = src_dataset.description
-                fields.append("description")
-
-            if dst_dataset.friendly_name != src_dataset.friendly_name:
-                dst_dataset.friendly_name = src_dataset.friendly_name
-                fields.append("friendly_name")
-
-            if (
-                dst_dataset.default_table_expiration_ms
-                != src_dataset.default_table_expiration_ms
-            ):
-                dst_dataset.default_table_expiration_ms = (
-                    src_dataset.default_table_expiration_ms
-                )
-                fields.append("default_table_expiration_ms")
-
-            if getattr(dst_dataset, "default_partition_expiration_ms", None):
-                if (
-                    dst_dataset.default_partition_expiration_ms
-                    != src_dataset.default_partition_expiration_ms
-                ):
-                    dst_dataset.default_partition_expiration_ms = (
-                        src_dataset.default_partition_expiration_ms
-                    )
-                    fields.append("default_partition_expiration_ms")
-
-            # compare 2 dictionaries that are simple key, value
-            x = dst_dataset.labels
-            y = src_dataset.labels
-
-            # get shared key values
-            shared_items = {k: x[k] for k in x if k in y and x[k] == y[k]}
-
-            # must be same size and values if not set labels
-            if len(dst_dataset.labels) != len(src_dataset.labels) or len(
-                shared_items
-            ) != len(src_dataset.labels):
-                dst_dataset.labels = src_dataset.labels
-                fields.append("labels")
-
-            if getattr(dst_dataset, "default_encryption_configuration", None):
-                if not (
-                    src_dataset.default_encryption_configuration is None
-                    and dst_dataset.default_encryption_configuration is None
-                ):
-                    # if src_dataset.default_encryption_configuration is None:
-                    #     dst_dataset.default_encryption_configuration = None
-                    # else:
-                    #     dst_dataset.default_encryption_configuration = \
-                    #         self.calculate_target_cmek_config(
-                    #             src_dataset.default_encryption_configuration)
-
-                    # equate dest kms config to src only if it's None
-                    if dst_dataset.default_encryption_configuration is None:
-                        dst_dataset.default_encryption_configuration = (
-                            self.calculate_target_cmek_config(
-                                src_dataset.default_encryption_configuration
-                            )
-                        )
-                    fields.append("default_encryption_configuration")
-
-            try:
-                self.destination_client.update_dataset(dst_dataset, fields)
-            except exceptions.Forbidden:
-                self.logger.error(
-                    "Unable to det permission on {}.{} dataset as Forbidden".format(
-                        self.destination_project, self.destination_dataset
-                    )
-                )
-            except exceptions.BadRequest:
-                self.logger.error(
-                    "Unable to det permission on {}.{} dataset as BadRequest".format(
-                        self.destination_project, self.destination_dataset
-                    )
-                )
-
-    def create_access_view(self, entity_id):
-        """
-        Convert an old view authorised view
-        to a new one i.e. change project id
-
-        :param entity_id:
-        :return: a view {
-        ...     'projectId': 'my-project',
-        ...     'datasetId': 'my_dataset',
-        ...     'tableId': 'my_table'
-        ... }
-        """
-        if (
-            entity_id["projectId"] == self.source_project
-            and entity_id["datasetId"] == self.source_dataset
-        ):
-            entity_id["projectId"] = self.destination_project
-            entity_id["datasetId"] = self.destination_dataset
-
-        return bigquery.AccessEntry(None, "view", entity_id)
-
-    @property
-    def logger(self):
-        return self.__logger
-
-    @logger.setter
-    def logger(self, alogger):
-        self.__logger = alogger
-
-    def get_logger(self):
-        """
-        Returns the python logger to use for logging errors and issues
-        :return:
-        """
-        return self.__logger
-
-
 class MultiBQSyncCoordinator(object):
     """
     Class to copy many datasets from one region to another and reset associated views
@@ -3719,28 +3730,28 @@ class MultiBQSyncCoordinator(object):
 
     def __init__(
         self,
-        srcproject_and_dataset_list,
-        dstproject_and_dataset_list,
-        srcbucket=None,
-        dstbucket=None,
-        remove_deleted_tables=True,
-        copy_data=True,
-        copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
-        check_depth=-1,
-        copy_access=True,
-        table_view_filter=(".*"),
-        table_or_views_to_exclude=None,
-        latest_date=None,
-        days_before_latest_day=None,
-        day_partition_deep_check=False,
-        analysis_project=None,
-        cloud_logging_and_monitoring=False,
-        src_ref_project_datasets=None,
-        dst_ref_project_datasets=(),
-        query_cmek=None,
-        src_policy_tags=[],
-        dst_policy_tags=[],
-    ):
+        srcproject_and_dataset_list: List[str],
+        dstproject_and_dataset_list: List[str],
+        srcbucket: Optional[str] = None,
+        dstbucket: Optional[str] = None,
+        remove_deleted_tables: bool = True,
+        copy_data: bool = True,
+        copy_types: Optional[List[str]] = None,
+        check_depth: int = -1,
+        copy_access: bool = True,
+        table_view_filter: Optional[List[str]] = None,
+        table_or_views_to_exclude: Optional[List[str]] = None,
+        latest_date: Optional[datetime] = None,
+        days_before_latest_day: Optional[int] = None,
+        day_partition_deep_check: bool = False,
+        analysis_project: str = None,
+        cloud_logging_and_monitoring: bool = False,
+        src_ref_project_datasets: Optional[List[Any]] = None,
+        dst_ref_project_datasets: List[Any] = (),
+        query_cmek: Optional[List[str]] = None,
+        src_policy_tags: Optional[List[str]] = [],
+        dst_policy_tags: Optional[List[str]] = [],
+    ) -> None:
         if copy_types is None:
             copy_types = ["TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"]
         if table_view_filter is None:
@@ -3804,7 +3815,7 @@ class MultiBQSyncCoordinator(object):
             self.__copy_drivers.append(copy_driver)
 
     @property
-    def cloud_logging_and_monitoring(self):
+    def cloud_logging_and_monitoring(self) -> bool:
         return self.__cloud_logging_and_monitoring
 
     @property
@@ -3927,7 +3938,7 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
-    def views_failed_sync(self):
+    def views_failed_sync(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.views_failed_sync
@@ -3948,7 +3959,7 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
-    def routines_failed_sync(self):
+    def routines_failed_sync(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.routines_failed_sync
@@ -3970,7 +3981,7 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
-    def models_failed_sync(self):
+    def models_failed_sync(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.models_failed_sync
@@ -3978,7 +3989,7 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
-    def tables_failed_sync(self):
+    def tables_failed_sync(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.tables_failed_sync
@@ -3999,21 +4010,21 @@ class MultiBQSyncCoordinator(object):
         return total
 
     @property
-    def extract_fails(self):
+    def extract_fails(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.extract_fails
         return total
 
     @property
-    def load_fails(self):
+    def load_fails(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.load_fails
         return total
 
     @property
-    def copy_fails(self):
+    def copy_fails(self) -> int:
         total = 0
         for copy_driver in self.__copy_drivers:
             total += copy_driver.copy_fails
@@ -4073,7 +4084,7 @@ class MultiBQSyncCoordinator(object):
         self.logger.info("=============== Sync Completed ================")
         self.log_stats()
 
-    def sync(self):
+    def sync(self) -> None:
         """
         Synchronise all the datasets in the driver
         :return:
@@ -4260,28 +4271,28 @@ class MultiBQSyncCoordinator(object):
 class MultiBQSyncDriver(DefaultBQSyncDriver):
     def __init__(
         self,
-        srcproject,
-        srcdataset,
-        dstdataset,
-        dstproject=None,
-        srcbucket=None,
-        dstbucket=None,
-        remove_deleted_tables=True,
-        copy_data=True,
-        copy_types=("TABLE", "VIEW", "ROUTINE", "MODEL", "MATERIALIZEDVIEW"),
-        check_depth=-1,
-        copy_access=True,
-        coordinator=None,
-        table_view_filter=(".*"),
-        table_or_views_to_exclude=(),
-        latest_date=None,
-        days_before_latest_day=None,
-        day_partition_deep_check=False,
-        analysis_project=None,
-        query_cmek=None,
-        src_policy_tags=[],
-        dst_policy_tags=[],
-    ):
+        srcproject: str,
+        srcdataset: str,
+        dstdataset: str,
+        dstproject: Optional[str] = None,
+        srcbucket: Optional[str] = None,
+        dstbucket: Optional[str] = None,
+        remove_deleted_tables: bool = True,
+        copy_data: bool = True,
+        copy_types: Optional[List[str]] = None,
+        check_depth: int = -1,
+        copy_access: bool = True,
+        coordinator: Optional[MultiBQSyncCoordinator] = None,
+        table_view_filter: Optional[List[str]] = None,
+        table_or_views_to_exclude: List[str] = (),
+        latest_date: Optional[datetime] = None,
+        days_before_latest_day: Optional[int] = None,
+        day_partition_deep_check: bool = False,
+        analysis_project: str = None,
+        query_cmek: Optional[List[str]] = None,
+        src_policy_tags: Optional[List[str]] = [],
+        dst_policy_tags: Optional[List[str]] = [],
+    ) -> None:
         DefaultBQSyncDriver.__init__(
             self,
             srcproject,
@@ -5527,9 +5538,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
             # None is ThreadPoolExecutor max_workers default. 1 is single-threaded.
             # this fires up a number of background threads to rewrite all the blobs
             # we keep storage client work withi
-            with ThreadPoolExecutor(
-                max_workers=max_workers
-            ) as executor:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [
                     executor.submit(rewrite_blob, new_name=blob_name)
                     for blob_name in generate_cp_files()
@@ -5822,26 +5831,33 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
             copy_driver.get_logger().exception(
                 f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
             )
-            if dstroutine_ref.type_ == "SCALAR_FUNCTION" and dstroutine_ref.language == "SQL":
-                copy_driver.get_logger().info("As scalar function and SQL attempting adding as query")
+            if (
+                dstroutine_ref.type_ == "SCALAR_FUNCTION"
+                and dstroutine_ref.language == "SQL"
+            ):
+                copy_driver.get_logger().info(
+                    "As scalar function and SQL attempting adding as query"
+                )
                 function_as_query = f"""CREATE OR REPLACE FUNCTION `{dstroutine_ref.project}.{dstroutine_ref.dataset_id}.{dstroutine_ref.routine_id}` ({",".join([arg.name + " " + arg.data_type.type_kind for arg in dstroutine_ref.arguments])})   AS
 ({dstroutine_ref.body})
 {"RETURNS " + dstroutine_ref.return_type.type_kind if dstroutine_ref.return_type else ""}
 OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description else ""}")"""
                 try:
                     for result in run_query(
-                            copy_driver.query_client,
-                            function_as_query,
-                            copy_driver.get_logger(),
-                            "Apply SQL scalar function",
-                            location=copy_driver.destination_location,
-                            callback_on_complete=copy_driver.update_job_stats,
-                            labels=BQSYNCQUERYLABELS,
-                            # ddl statements cannot use CMEK
-                            query_cmek=None,
+                        copy_driver.query_client,
+                        function_as_query,
+                        copy_driver.get_logger(),
+                        "Apply SQL scalar function",
+                        location=copy_driver.destination_location,
+                        callback_on_complete=copy_driver.update_job_stats,
+                        labels=BQSYNCQUERYLABELS,
+                        # ddl statements cannot use CMEK
+                        query_cmek=None,
                     ):
                         pass
-                    copy_driver.get_logger().info(f"Running as query did work function {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} created")
+                    copy_driver.get_logger().info(
+                        f"Running as query did work function {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} created"
+                    )
                 except Exception:
                     copy_driver.increment_routines_failed_sync()
                     copy_driver.get_logger().exception(
@@ -5995,7 +6011,7 @@ def patch_destination_view(copy_driver, table_name, view_input):
             )
         else:
             copy_driver.increment_view_avoided()
-    except exceptions.PreconditionFailed :
+    except exceptions.PreconditionFailed:
         copy_driver.increment_views_failed_sync()
         copy_driver.get_logger().exception(
             "Pre conditionfailed patching view {}.{}.{}".format(
@@ -6024,7 +6040,11 @@ def patch_destination_view(copy_driver, table_name, view_input):
         )
 
 
-def sync_bq_datset(copy_driver, schema_threads=10, copy_data_threads=50):
+def sync_bq_datset(
+    copy_driver: MultiBQSyncDriver,
+    schema_threads: int = 10,
+    copy_data_threads: int = 50,
+) -> None:
     """
     Function to use copy driver  to copy tables from 1 dataset to another
     :param copy_driver:
