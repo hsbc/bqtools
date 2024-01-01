@@ -4,6 +4,7 @@
 - Update dependencies (dependabot) absl-py and bigquery
 - Enhance head views to include streaming buffer
 - For scalar SQL routines when syncing if fail with Bad Request attempt to use DDL instead of API to apply
+- Started to add types to apis of bqtools to help with documentation
 
 1.0.5 April 10th 2023
 - Adjust jinja dependency so will allow Jina2 version3
