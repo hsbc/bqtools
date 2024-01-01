@@ -5823,10 +5823,10 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
                 f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
             )
             if dstroutine_ref.type_ == "SCALAR_FUNCTION" and dstroutine_ref.language == "SQL":
-                copy_driver.get_logger().info(f"As scalar function and SQL attempting adding as query")
+                copy_driver.get_logger().info("As scalar function and SQL attempting adding as query")
                 function_as_query = f"""CREATE OR REPLACE FUNCTION `{dstroutine_ref.project}.{dstroutine_ref.dataset_id}.{dstroutine_ref.routine_id}` ({",".join([arg.name + " " + arg.data_type.type_kind for arg in dstroutine_ref.arguments])})   AS
 ({dstroutine_ref.body})
-{ "RETURNS " +  dstroutine_ref.return_type.type_kind if dstroutine_ref.return_type else ""}
+{"RETURNS " + dstroutine_ref.return_type.type_kind if dstroutine_ref.return_type else ""}
 OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description else ""}")"""
                 try:
                     for result in run_query(
@@ -5839,7 +5839,7 @@ OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description 
                             labels=BQSYNCQUERYLABELS,
                             # ddl statements cannot use CMEK
                             query_cmek=None,
-                        ):
+                    ):
                         pass
                     copy_driver.get_logger().info(f"Running as query did work function {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} created")
                 except Exception:
