@@ -1288,11 +1288,11 @@ class DefaultBQSyncDriver(object):
                     ):
                         # add the unnestof repeated base type can use own field name
                         fieldname = "{}{}".format(aliasdict["alias"], field.name)
-                        aliasdict[
-                            "extrajoinpredicates"
-                        ] = """{}
+                        aliasdict["extrajoinpredicates"] = (
+                            """{}
 LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
-                            aliasdict["extrajoinpredicates"], field.name, fieldname
+                                aliasdict["extrajoinpredicates"], field.name, fieldname
+                            )
                         )
                         if field.field_type == "STRING":
                             expression_list.append("IFNULL(`{0}`,'')".format(fieldname))
@@ -1342,13 +1342,13 @@ LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
                             newprefix.append(aliasdict["alias"])
 
                             # add the unnest
-                            aliasdict[
-                                "extrajoinpredicates"
-                            ] = """{}
+                            aliasdict["extrajoinpredicates"] = (
+                                """{}
 LEFT JOIN UNNEST(`{}`) AS {}""".format(
-                                aliasdict["extrajoinpredicates"],
-                                "`.`".join(prefix),
-                                aliasdict["alias"],
+                                    aliasdict["extrajoinpredicates"],
+                                    "`.`".join(prefix),
+                                    aliasdict["alias"],
+                                )
                             )
 
                             # add the fields
@@ -1377,11 +1377,11 @@ LEFT JOIN UNNEST(`{}`) AS {}""".format(
 
         predicates = self.comparison_predicates(table.table_id, retpartition_time)
         if len(predicates) > 0:
-            aliasdict[
-                "extrajoinpredicates"
-            ] = """{}
+            aliasdict["extrajoinpredicates"] = (
+                """{}
 WHERE ({})""".format(
-                aliasdict["extrajoinpredicates"], ") AND (".join(predicates)
+                    aliasdict["extrajoinpredicates"], ") AND (".join(predicates)
+                )
             )
 
         return retpartition_time, default, aliasdict["extrajoinpredicates"]
@@ -5791,6 +5791,42 @@ def patch_destination_routine(copy_driver, routine_name, routine_input):
     create_destination_routine(copy_driver, routine_name, routine_input)
 
 
+def create_sql_arg_type(arg):
+    return f"`{arg.name}`" + " " + create_sql_type(arg.data_type)
+
+
+def create_sql_struct_type(arg):
+    return f"`{arg.name}`" + " " + create_sql_type(arg.type)
+
+
+def create_sql_type(data_type):
+    if data_type.type_kind not in [
+        bigquery.enums.StandardSqlTypeNames.ARRAY,
+        bigquery.enums.StandardSqlTypeNames.STRUCT,
+    ]:
+        return data_type.type_kind
+    if data_type.type_kind == bigquery.enums.StandardSqlTypeNames.STRUCT:
+        retval = (
+            data_type.type_kind
+            + "<"
+            + ",".join(
+                [
+                    create_sql_struct_type(field)
+                    for field in data_type.struct_type.fields
+                ]
+            )
+            + ">"
+        )
+    else:
+        retval = (
+            data_type.type_kind
+            + "<"
+            + create_sql_type(data_type.array_element_type)
+            + ">"
+        )
+    return retval
+
+
 def create_destination_routine(copy_driver, routine_name, routine_input):
     """
     Create a routine based on source routine
@@ -5832,22 +5868,29 @@ def create_destination_routine(copy_driver, routine_name, routine_input):
                 f"Unable to create routine {routine_name} in {copy_driver.destination_project}.{copy_driver.destination_dataset} definition {routine_input['routine_definition']}"
             )
             if (
-                dstroutine_ref.type_ == "SCALAR_FUNCTION"
+                dstroutine_ref.type_ in ["SCALAR_FUNCTION", "TABLE_VALUED_FUNCTION"]
                 and dstroutine_ref.language == "SQL"
             ):
                 copy_driver.get_logger().info(
-                    "As scalar function and SQL attempting adding as query"
+                    "As scalar/table function and SQL attempting adding as query"
                 )
-                function_as_query = f"""CREATE OR REPLACE FUNCTION `{dstroutine_ref.project}.{dstroutine_ref.dataset_id}.{dstroutine_ref.routine_id}` ({",".join([arg.name + " " + arg.data_type.type_kind for arg in dstroutine_ref.arguments])})   AS
+                type = ""
+                if dstroutine_ref.type_ == "TABLE_VALUED_FUNCTION":
+                    type = "TABLE"
+                language = ""
+                if dstroutine_ref.language == "JS":
+                    language = "\nLANGUAGE js\n"
+                function_as_query = f"""CREATE OR REPLACE {type} FUNCTION `{dstroutine_ref.project}.{dstroutine_ref.dataset_id}.{dstroutine_ref.routine_id}` ({",".join([create_sql_arg_type(arg) for arg in dstroutine_ref.arguments])}) {language} 
+                 {"RETURNS " + create_sql_type(dstroutine_ref.return_type) if dstroutine_ref.return_type else ""}
+OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description else ""}") AS
 ({dstroutine_ref.body})
-{"RETURNS " + dstroutine_ref.return_type.type_kind if dstroutine_ref.return_type else ""}
-OPTIONS (description="{dstroutine_ref.description if dstroutine_ref.description else ""}")"""
+"""
                 try:
                     for result in run_query(
                         copy_driver.query_client,
                         function_as_query,
                         copy_driver.get_logger(),
-                        "Apply SQL scalar function",
+                        "Apply SQL scalar/table function",
                         location=copy_driver.destination_location,
                         callback_on_complete=copy_driver.update_job_stats,
                         labels=BQSYNCQUERYLABELS,
