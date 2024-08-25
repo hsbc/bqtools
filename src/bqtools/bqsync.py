@@ -281,7 +281,6 @@ def main(argv):
         os.environ["HTTP_PROXY"] = proxy
         os.environ["HTTPS_PROXY"] = proxy
 
-
     # convert args to lists
     src_project_datasets_list = FLAGS.src_project_datasets
     dst_project_datasets_list = FLAGS.dst_project_datasets
