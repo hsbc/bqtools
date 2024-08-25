@@ -1,3 +1,8 @@
+1.0.7 Aug 25 2024
+- Add support for table functions
+- Add support for complex arguments and return types for routines when have to drop back to SQL mode
+- Drop boto as dependency as not supported in python 3.12
+
 1.0.6 Jan 1st 2024
 - Move to pyproject.toml from setup.py to make package more modern
 - Updates and improve testing and add tox actions on pull requests

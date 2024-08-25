@@ -6,7 +6,7 @@ name = "bqtools-json"  # Required
 #
 # For a discussion on single-sourcing the version, see
 # https://packaging.python.org/guides/single-sourcing-package-version/
-version = "1.0.6"  # Required
+version = "1.0.7"  # Required
 
 # This is a one-line description or tagline of what your project does. This
 # corresponds to the "Summary" metadata field:
@@ -90,7 +90,6 @@ dependencies = [ # Optional
     "google-cloud-storage>=1.0.0,<3.0",
     "google-cloud-logging>=3.0,<4.0",
     "absl-py>=1,<3",
-    "boto<3.0",
     "google-api-python-client>=2.0.0,<3.0",
     "grpcio~=1.0"
 ]
@@ -137,6 +136,9 @@ bqsync = "bqtools:bqsync"
 
 [tool.black]
 line-length = 88
+
+[tool.check-manifest]
+ignore = ["renovate.json"]
 
 [build-system]
 # These are the assumed default build requirements from pip:

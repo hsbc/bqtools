@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 
-import boto
+from urllib.parse import urlparse
 import google.cloud.logging
 from absl import app
 from absl import flags
@@ -255,26 +255,27 @@ def main(argv):
             exit(-255)
 
     # deal with if we have proxies, intercept certificates etc
-    ca_certificates_file = boto.config.get("Boto", "ca_certificates_file", "system")
+    url = urlparse(os.environ.get("https_proxy", os.environ.get("HTTPS_PROXY", None)))
 
+    ca_certificates_file = os.environ.get("REQUESTS_CA_BUNDLE", "system")
     if ca_certificates_file != "system":
         os.environ["REQUESTS_CA_BUNDLE"] = ca_certificates_file
-
-    proxy_user = boto.config.get("Boto", "proxy_user", None)
-    proxy_host = boto.config.get("Boto", "proxy", None)
+    ca_certificates_file = None
+    proxy_user = url.username
+    proxy_host = url.hostname
     proxy = ""
     if proxy_user is not None:
         proxy = "http://{}:{}@{}:{}".format(
-            boto.config.get("Boto", "proxy_user", None),
-            boto.config.get("Boto", "proxy_pass", None),
-            boto.config.get("Boto", "proxy", None),
-            boto.config.getint("Boto", "proxy_port", 0),
+            url.username,
+            url.password,
+            url.hostname,
+            url.port,
         )
     else:
         if proxy_host is not None:
             proxy = "http://{}:{}".format(
-                boto.config.get("Boto", "proxy", None),
-                boto.config.getint("Boto", "proxy_port", 0),
+                url.hostname,
+                url.port,
             )
     if proxy != "":
         os.environ["HTTP_PROXY"] = proxy
