@@ -1203,6 +1203,7 @@ class DefaultBQSyncDriver(object):
         """
 
         def add_data_check(SCHEMA, prefix=None, depth=0):
+            nonlocal aliasdict
             if prefix is None:
                 prefix = []
                 # add base table alia
@@ -1216,6 +1217,7 @@ class DefaultBQSyncDriver(object):
 
             for field in SCHEMA:
                 prefix.append(field.name)
+
                 if field.mode != "REPEATED":
                     if self.check_depth >= 0 or (
                         self.check_depth >= -1
@@ -1270,9 +1272,22 @@ class DefaultBQSyncDriver(object):
                             )
                     if field.field_type == "RECORD":
                         SSCHEMA = list(field.fields)
+                        save_alias_dict = aliasdict.copy()
+                        if aliasdict["alias"] == "":
+                            # uses this to name space from real columns
+                            # bit hopeful
+                            aliasdict["alias"] = "zzz." + field.name + "."
+                        else:
+                            aliasdict["alias"] = aliasdict["alias"] + "." + field.name + "."
+
+                        # save_extra_join_predicates = aliasdict["extrajoinpredicates"]
+                        # aliasdict['extrajoinpredicates'] = ".".join(prefix[:-1])
                         expression_list.extend(
                             add_data_check(SSCHEMA, prefix=prefix, depth=depth)
                         )
+                        # aliasdict["extrajoinpredicates"] = save_extra_join_predicates
+                        aliasdict = save_alias_dict
+
                 else:
                     if field.field_type != "RECORD" and (
                         self.check_depth >= 0
