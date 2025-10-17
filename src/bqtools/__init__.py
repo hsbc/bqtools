@@ -1203,7 +1203,7 @@ class DefaultBQSyncDriver(object):
         """
 
         def add_data_check(SCHEMA, prefix=None, depth=0):
-            nonlocal aliasdict
+            nonlocal aliasdict  # noqa F824
             if prefix is None:
                 prefix = []
                 # add base table alia
@@ -2302,6 +2302,8 @@ def trunc_field_depth(fieldlist, maxdepth, depth=0):
 
 
 def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=None):
+    if isinstance(schema, tuple):
+        schema = list(schema)
     pretty_printer = pprint.PrettyPrinter(indent=4)
     poplist = {}
 
