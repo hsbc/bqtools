@@ -1296,12 +1296,14 @@ class DefaultBQSyncDriver(object):
                         )
                     ):
                         # add the unnestof repeated base type can use own field name
-                        
+
                         fieldname = "".join(prefix)
                         aliasdict["extrajoinpredicates"] = (
                             """{}
 LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
-                                aliasdict["extrajoinpredicates"], "`.`".join(prefix), fieldname
+                                aliasdict["extrajoinpredicates"],
+                                "`.`".join(prefix),
+                                fieldname,
                             )
                         )
                         if field.field_type == "STRING":
