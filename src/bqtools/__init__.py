@@ -1198,7 +1198,7 @@ class DefaultBQSyncDriver(object):
         aliasdict = {"alias": "", "extrajoinpredicates": ""}
 
         """
-        Use FRAM_FINGERPRINT as hash of each value and then summed
+        Use FARM_FINGERPRINT as hash of each value and then summed
         basically a merkel function
         """
 
@@ -1272,13 +1272,8 @@ class DefaultBQSyncDriver(object):
                             )
                     if field.field_type == "RECORD":
                         SSCHEMA = list(field.fields)
-                        save_alias_dict = aliasdict.copy()
-                        if aliasdict["alias"] == "":
-                            # uses this to name space from real columns
-                            # bit hopeful
-                            aliasdict["alias"] = "zzz." + field.name + "."
-                        else:
-                            aliasdict["alias"] = aliasdict["alias"] + "." + field.name + "."
+                        save_alias_dict = aliasdict
+                        aliasdict["alias"] = ".".join(prefix)
 
                         # save_extra_join_predicates = aliasdict["extrajoinpredicates"]
                         # aliasdict['extrajoinpredicates'] = ".".join(prefix[:-1])
@@ -1286,8 +1281,7 @@ class DefaultBQSyncDriver(object):
                             add_data_check(SSCHEMA, prefix=prefix, depth=depth)
                         )
                         # aliasdict["extrajoinpredicates"] = save_extra_join_predicates
-                        aliasdict = save_alias_dict
-
+                        aliasdict["alias"] = save_alias_dict["alias"]
                 else:
                     if field.field_type != "RECORD" and (
                         self.check_depth >= 0
@@ -1302,11 +1296,12 @@ class DefaultBQSyncDriver(object):
                         )
                     ):
                         # add the unnestof repeated base type can use own field name
-                        fieldname = "{}{}".format(aliasdict["alias"], field.name)
+                        
+                        fieldname = "".join(prefix)
                         aliasdict["extrajoinpredicates"] = (
                             """{}
 LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
-                                aliasdict["extrajoinpredicates"], field.name, fieldname
+                                aliasdict["extrajoinpredicates"], "`.`".join(prefix), fieldname
                             )
                         )
                         if field.field_type == "STRING":
