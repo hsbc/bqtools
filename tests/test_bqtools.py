@@ -268,7 +268,7 @@ class TestScannerMethods(unittest.TestCase):
 
         # print("Schema2 as dict")
         # self.pp.pprint(sa2)
-        expectedSchema2 = (
+        expectedSchema2 = [
             bigquery.SchemaField(
                 "anotherarray",
                 "RECORD",
@@ -300,7 +300,7 @@ class TestScannerMethods(unittest.TestCase):
                 ),
             ),
             bigquery.SchemaField("string", "STRING"),
-        )
+        ]
         sa = []
         for bqi in sorted(expectedSchema2, key=lambda x: x.name):
             i = bqtools.to_dict(bqi)
@@ -528,7 +528,124 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolve",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
         diff = dict(diff)
 
         print(
@@ -542,24 +659,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolve",
-                        "type": "INTEGER",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -570,6 +670,7 @@ class TestScannerMethods(unittest.TestCase):
             {
                 "string": "hello",
                 "integer": 52,
+                # new field here
                 "hellomike": 3.1415926,
                 "record": {
                     "string2": "hello2",
@@ -599,7 +700,117 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_result_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_result_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 2 diff start  "
@@ -612,17 +823,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[2]": {
-                        "description": None,
-                        "fields": [],
-                        "mode": "NULLABLE",
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                    }
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -632,32 +833,43 @@ class TestScannerMethods(unittest.TestCase):
         # Plus child objects with 2 different changes in them
         # plus another with both
         copyoforigschema = copy.deepcopy(savedSchema)
-        evolved = bqtools.match_and_addtoschema(
-            {
-                "string": "hello",
-                "integer": 52,
-                "hellomike": 3.1415926,
-                "record": {
-                    "string2": "hello2",
-                    "float": 1.3,
-                    "boolean2": False,
-                    "appended1": "another string",
-                },
-                "array": [
-                    {"string3": "hello", "integer3": 42, "foo": 3.141},
-                    {"integer3": 42, "foo": 3.141},
-                ],
-                "anotherarray": [
-                    {"test1": 52, "test2": False, "fred": "I am an evolution"},
-                    {"test1": 52, "test2": True, "iamanotherevolution": 1.3},
-                    {
-                        "test1": 52,
-                        "test2": True,
-                        "iamanotherevolution": 1.3,
-                        "fred": "I am same previous " "evolution",
-                    },
-                ],
+        new_schema = {
+            "string": "hello",
+            "integer": 52,
+            "hellomike": 3.1415926,
+            "record": {
+                "string2": "hello2",
+                "float": 1.3,
+                "boolean2": False,
+                "appended1": "another string",
             },
+            "array": [
+                {"string3": "hello", "integer3": 42, "foo": 3.141},
+                {"integer3": 42, "foo": 3.141},
+            ],
+            "anotherarray": [
+                {
+                    "test1": 52,
+                    "test2": False,
+                    # added fred
+                    "fred": "I am an evolution",
+                },
+                {
+                    "test1": 52,
+                    "test2": True,
+                    # add iamanotherevolution
+                    "iamanotherevolution": 1.3,
+                },
+                {
+                    "test1": 52,
+                    "test2": True,
+                    "iamanotherevolution": 1.3,
+                    "fred": "I am same previous " "evolution",
+                },
+            ],
+        }
+        evolved = bqtools.match_and_addtoschema(
+            new_schema,
             copyoforigschema,
             logger=logger,
         )
@@ -671,7 +883,131 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_result_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolution",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_result_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 3 diff start  "
@@ -684,31 +1020,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolution",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[2]": {
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -749,7 +1061,131 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolution",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 4 diff start  "
@@ -762,31 +1198,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolution",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[5]": {
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -832,22 +1244,14 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
-
-        print(
-            "============================================ evolve test 5 diff start  "
-            "===================================="
-        )
-        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
-        print(
-            "============================================ evolve test 5 diff end  "
-            "===================================="
-        )
-
-        self.assertEqual(
+        expected_sa2 = [
             {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
                         "name": "bill",
                         "type": "RECORD",
                         "description": None,
@@ -862,29 +1266,137 @@ class TestScannerMethods(unittest.TestCase):
                             }
                         ],
                     },
-                    "root[0]['fields'][1]": {
+                    {
                         "name": "fred",
                         "type": "STRING",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[0]['fields'][2]": {
+                    {
                         "name": "iamanotherevolution",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[2]": {
-                        "name": "hellomike",
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                }
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
             },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 5 diff start  "
+            "===================================="
+        )
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 5 diff end  "
+            "===================================="
+        )
+
+        self.assertEqual(
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -931,22 +1443,14 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
-
-        print(
-            "============================================ evolve test 6 diff start  "
-            "===================================="
-        )
-        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
-        print(
-            "============================================ evolve test 6 diff end  "
-            "===================================="
-        )
-
-        self.assertEqual(
+        expected_sa2 = [
             {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
                         "name": "bill",
                         "type": "RECORD",
                         "description": None,
@@ -961,29 +1465,137 @@ class TestScannerMethods(unittest.TestCase):
                             }
                         ],
                     },
-                    "root[0]['fields'][1]": {
+                    {
                         "name": "fred",
                         "type": "STRING",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[0]['fields'][2]": {
+                    {
                         "name": "iamanotherevolution",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[2]": {
-                        "name": "hellomike",
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                }
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
             },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 6 diff start  "
+            "===================================="
+        )
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 6 diff end  "
+            "===================================="
+        )
+
+        self.assertEqual(
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -1341,7 +1953,7 @@ class TestScannerMethods(unittest.TestCase):
             sa2.append(i)
         # print("Schema2 as dict")
         # self.pp.pprint(sa2)
-        expectedSchema2 = (
+        expectedSchema2 = [
             bigquery.SchemaField("string", "STRING"),
             bigquery.SchemaField("integer", "INTEGER"),
             bigquery.SchemaField(
@@ -1373,7 +1985,7 @@ class TestScannerMethods(unittest.TestCase):
                     bigquery.SchemaField("test2", "BOOLEAN"),
                 ),
             ),
-        )
+        ]
         sa = []
         for bqi in expectedSchema2:
             i = bqtools.to_dict(bqi)
@@ -1600,7 +2212,124 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolve",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
         diff = dict(diff)
 
         print(
@@ -1614,24 +2343,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolve",
-                        "type": "INTEGER",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -1671,7 +2383,117 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 2 diff start  "
@@ -1684,17 +2506,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[2]": {
-                        "description": None,
-                        "fields": [],
-                        "mode": "NULLABLE",
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                    }
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -1742,8 +2554,131 @@ class TestScannerMethods(unittest.TestCase):
             i = bqtools.to_dict(bqi)
             # self.pp.pprint(i)
             sa2.append(i)
-
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolution",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 3 diff start  "
@@ -1756,31 +2691,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolution",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[2]": {
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected {}".format(self.pp.pformat(diff)),
         )
@@ -1821,7 +2732,131 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
+        expected_sa2 = [
+            {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "fred",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "iamanotherevolution",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
 
         print(
             "============================================ evolve test 4 diff start  "
@@ -1834,31 +2869,7 @@ class TestScannerMethods(unittest.TestCase):
         )
 
         self.assertEqual(
-            {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
-                        "name": "fred",
-                        "type": "STRING",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[0]['fields'][1]": {
-                        "name": "iamanotherevolution",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                    "root[2]": {
-                        "name": "hellomike",
-                        "type": "FLOAT",
-                        "description": None,
-                        "mode": "NULLABLE",
-                        "fields": [],
-                    },
-                }
-            },
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -1904,22 +2915,14 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
-
-        print(
-            "============================================ evolve test 5 diff start  "
-            "===================================="
-        )
-        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
-        print(
-            "============================================ evolve test 5 diff end  "
-            "===================================="
-        )
-
-        self.assertEqual(
+        expected_sa2 = [
             {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
                         "name": "bill",
                         "type": "RECORD",
                         "description": None,
@@ -1934,29 +2937,137 @@ class TestScannerMethods(unittest.TestCase):
                             }
                         ],
                     },
-                    "root[0]['fields'][1]": {
+                    {
                         "name": "fred",
                         "type": "STRING",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[0]['fields'][2]": {
+                    {
                         "name": "iamanotherevolution",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[2]": {
-                        "name": "hellomike",
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                }
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
             },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 5 diff start  "
+            "===================================="
+        )
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 5 diff end  "
+            "===================================="
+        )
+
+        self.assertEqual(
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -2003,22 +3114,14 @@ class TestScannerMethods(unittest.TestCase):
             # self.pp.pprint(i)
             sa2.append(i)
 
-        diff = DeepDiff(sa, sa2, ignore_order=True)
-
-        print(
-            "============================================ evolve test 6 diff start  "
-            "===================================="
-        )
-        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
-        print(
-            "============================================ evolve test 6 diff end  "
-            "===================================="
-        )
-
-        self.assertEqual(
+        expected_sa2 = [
             {
-                "iterable_item_added": {
-                    "root[0]['fields'][0]": {
+                "name": "anotherarray",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
                         "name": "bill",
                         "type": "RECORD",
                         "description": None,
@@ -2033,29 +3136,137 @@ class TestScannerMethods(unittest.TestCase):
                             }
                         ],
                     },
-                    "root[0]['fields'][1]": {
+                    {
                         "name": "fred",
                         "type": "STRING",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[0]['fields'][2]": {
+                    {
                         "name": "iamanotherevolution",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                    "root[2]": {
-                        "name": "hellomike",
+                    {
+                        "name": "test1",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "test2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "array",
+                "type": "RECORD",
+                "description": None,
+                "mode": "REPEATED",
+                "fields": [
+                    {
+                        "name": "foo",
                         "type": "FLOAT",
                         "description": None,
                         "mode": "NULLABLE",
                         "fields": [],
                     },
-                }
+                    {
+                        "name": "integer3",
+                        "type": "INTEGER",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string3",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
             },
+            {
+                "name": "hellomike",
+                "type": "FLOAT",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "integer",
+                "type": "INTEGER",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+            {
+                "name": "record",
+                "type": "RECORD",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [
+                    {
+                        "name": "appended1",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "boolean2",
+                        "type": "BOOLEAN",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "float",
+                        "type": "FLOAT",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                    {
+                        "name": "string2",
+                        "type": "STRING",
+                        "description": None,
+                        "mode": "NULLABLE",
+                        "fields": [],
+                    },
+                ],
+            },
+            {
+                "name": "string",
+                "type": "STRING",
+                "description": None,
+                "mode": "NULLABLE",
+                "fields": [],
+            },
+        ]
+        diff = DeepDiff(expected_sa2, sa2, ignore_order=True)
+
+        print(
+            "============================================ evolve test 6 diff start  "
+            "===================================="
+        )
+        print("Patched schema diff {} change{}".format(self.pp.pformat(diff), evolved))
+        print(
+            "============================================ evolve test 6 diff end  "
+            "===================================="
+        )
+
+        self.assertEqual(
+            {},
             diff,
             "Schema evolution not as expected",
         )
@@ -3113,11 +4324,11 @@ where 1=0""",
             for rule in rules:
                 if isinstance(rule, dict):
                     if (
-                            "condition" in rule
-                            and "age" in rule["condition"]
-                            and rule["condition"]["age"] == 1
-                            and "isLive" in rule["condition"]
-                            and rule["condition"]["isLive"]
+                        "condition" in rule
+                        and "age" in rule["condition"]
+                        and rule["condition"]["age"] == 1
+                        and "isLive" in rule["condition"]
+                        and rule["condition"]["isLive"]
                     ):
                         found1daydeletrule = True
                 nrules.append(rule)
@@ -3172,7 +4383,7 @@ where 1=0""",
         test_source_configs.append(
             {
                 "description": "a dataset with a day partitioned table with  clustering not using "
-                               "a specific partition column name so  just ingest time",
+                "a specific partition column name so  just ingest time",
                 "dataset_name": "new_york_subway",
                 "table_filter_regexp": ["geo_nyc_borough_boundaries"],
                 "max_last_days": 365,
@@ -3182,7 +4393,7 @@ where 1=0""",
         test_source_configs.append(
             {
                 "description": "a dataset with view referencing it self to demo simple view "
-                               "copying",
+                "copying",
                 "dataset_name": "noaa_goes16",
                 "table_filter_regexp": [".*"],
                 "max_last_days": 365,
@@ -3224,7 +4435,7 @@ where 1=0""",
         test_source_configs.append(
             {
                 "description": "a dataset with a day partitioned table with clustering using a "
-                               "specific partition column name so not just ingest time",
+                "specific partition column name so not just ingest time",
                 "dataset_name": "human_genome_variants",
                 "table_filter_regexp": [
                     "platinum_genomes_deepvariant_variants_20180823"
@@ -3821,7 +5032,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of week of underlying table bob description: A "
-                               "test schema",
+                "test schema",
             },
             "bobdiffmonth": {
                 "query": """#standardSQL
@@ -3909,7 +5120,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of month of underlying table bob description: A "
-                               "test schema",
+                "test schema",
             },
             "bobdifffortnight": {
                 "query": """#standardSQL
@@ -3997,7 +5208,7 @@ ON
     AND l.recordstring2=o.recordstring2
     AND l.string=o.string""",
                 "description": "Diff of fortnight of underlying table bob "
-                               "description: A test schema",
+                "description: A test schema",
             },
         }
         for vi in views:
@@ -4173,32 +5384,34 @@ AND word_count >= @min_word_count
 ORDER BY word_count DESC;
                 """
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="romeo and juliet",
-                    params={"corpus": "romeoandjuliet", "min_word_count": 250},
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="romeo and juliet",
+                params={"corpus": "romeoandjuliet", "min_word_count": 250},
+                location="US",
             ):
                 dict(row)
             query = "SELECT @struct_value AS s;"
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="struct",
-                    params={"struct_value": {"x": 1, "y": "foo"}},
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="struct",
+                params={"struct_value": {"x": 1, "y": "foo"}},
+                location="US",
             ):
                 dict(row)
             query = "SELECT TIMESTAMP_ADD(@ts_value, INTERVAL 1 HOUR);"
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="datetime",
-                    params={"ts_value": datetime.datetime(2016, 12, 7, 8, 0, tzinfo=pytz.UTC)},
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="datetime",
+                params={
+                    "ts_value": datetime.datetime(2016, 12, 7, 8, 0, tzinfo=pytz.UTC)
+                },
+                location="US",
             ):
                 dict(row)
 
@@ -4212,54 +5425,54 @@ ORDER BY count DESC
 LIMIT 10;
         """
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="array",
-                    params={"gender": "M", "states": ["WA", "WI", "WV", "WY"]},
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="array",
+                params={"gender": "M", "states": ["WA", "WI", "WV", "WY"]},
+                location="US",
             ):
                 dict(row)
             query = """
 SELECT * from unnest(@array_name)"""
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="array list",
-                    params={"array_name": ["WA", "WI", "WV", "WY"]},
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="array list",
+                params={"array_name": ["WA", "WI", "WV", "WY"]},
+                location="US",
             ):
                 dict(row)
             query = """
 SELECT * from unnest(@array_name)"""
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="array dict",
-                    params={
-                        "array_name": [
-                            {"state": "WA"},
-                            {"state": "WI"},
-                            {"state": "WV"},
-                            {"state": "WY"},
-                        ]
-                    },
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="array dict",
+                params={
+                    "array_name": [
+                        {"state": "WA"},
+                        {"state": "WI"},
+                        {"state": "WV"},
+                        {"state": "WY"},
+                    ]
+                },
+                location="US",
             ):
                 dict(row)
             query = """
  SELECT * from unnest(?)"""
             for row in bqtools.run_query(
-                    client,
-                    query,
-                    logging,
-                    desctext="array dict positional",
-                    params=[
-                        [{"state": "WA"}, {"state": "WI"}, {"state": "WV"}, {"state": "WY"}]
-                    ],
-                    location="US",
+                client,
+                query,
+                logging,
+                desctext="array dict positional",
+                params=[
+                    [{"state": "WA"}, {"state": "WI"}, {"state": "WV"}, {"state": "WY"}]
+                ],
+                location="US",
             ):
                 dict(row)
 
