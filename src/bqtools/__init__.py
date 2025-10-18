@@ -2304,11 +2304,18 @@ def trunc_field_depth(fieldlist, maxdepth, depth=0):
 def update_schema_fields(schema, new_fields):
     """
     Update the fields of a schema with new fields
+    handles differnt version of googl.cloud-bigquery
     :param schema: schema to update
     :param new_fields: new fields to add
     :return: nothing schema is modified in place
     """
-    schema._properties["fields"] = [field.to_api_repr() for field in new_fields]
+    # 0.28.0 changed schema fields to be immutable tuple
+    # with undelrying _fields property
+    if getattr(schema, "_fields", None):
+        schema._fields = new_fields
+    # 3.28.0 changed schema fields to be calculated from underlying _properties
+    else:
+        schema._properties["fields"] = [field.to_api_repr() for field in new_fields]
 
 
 def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=None):
