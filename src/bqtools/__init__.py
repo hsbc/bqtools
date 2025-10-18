@@ -2301,9 +2301,19 @@ def trunc_field_depth(fieldlist, maxdepth, depth=0):
     return new_field
 
 
+def update_schema_fields(schema, new_fields):
+    """
+    Update the fields of a schema with new fields
+    :param schema: schema to update
+    :param new_fields: new fields to add
+    :return: nothing schema is modified in place
+    """
+    schema._properties["fields"] = [field.to_api_repr() for field in new_fields]
+
+
 def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=None):
     if isinstance(schema, tuple):
-        schema = list(schema)
+        raise ValueError("Schema passed in cannot be a tuple must be a list")
     pretty_printer = pprint.PrettyPrinter(indent=4)
     poplist = {}
 
@@ -2337,13 +2347,16 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
                             # TODO hack to modify fields as .fields is immutable since version
                             #  0.28 and later but not
                             #  in docs!!
-                            schema_item._fields = list(schema_item.fields)
+                            fields = list(schema_item.fields)
                             tsubevolve = match_and_addtoschema(
                                 listi,
-                                schema_item.fields,
+                                fields,
                                 evolved=evolved,
                                 path=path + "." + thekey,
                             )
+                            if tsubevolve:
+                                # another hack now schem_item._fields has been replaced with getting properties
+                                update_schema_fields(schema_item, fields)
                             if not subevolve and tsubevolve:
                                 subevolve = tsubevolve
                         evolved = subevolve
@@ -2351,10 +2364,12 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
                         # TODO hack to modify fields as .fields is immutable since version 0.28
                         #  and later but not in
                         #  docs!!
-                        schema_item._fields = list(schema_item.fields)
+                        fields = list(schema_item.fields)
                         evolved = match_and_addtoschema(
-                            objtomatch[keyi], schema_item.fields, evolved=evolved
+                            objtomatch[keyi], fields, evolved=evolved
                         )
+                        if evolved:
+                            update_schema_fields(schema_item, fields)
                 matchstruct = True
                 break
         if matchstruct:
