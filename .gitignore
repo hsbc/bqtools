@@ -183,5 +183,3 @@ fabric.properties
 # miss out hard coded virtual env
 .idea/misc.xml
 
-# vscode internals
-.vscode

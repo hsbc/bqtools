@@ -1,0 +1,85 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: bqsync metadata mq",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/venv-bqsync/bin/bqsync",
+            "console": "integratedTerminal",
+            "args": [
+                "--gcp_logging_monitoring",
+                "--src_project_datasets=methodical-bee-162815.billing_demo3,methodical-bee-162815.eimforseti3,methodical-bee-162815.forseti3,methodical-bee-162815.int_configManagementInterface_v13,methodical-bee-162815.int_crypto_v13,methodical-bee-162815.int_dataarch_v13,methodical-bee-162815.int_tomTeam3,methodical-bee-162815.int_oceanInterface_v13,methodical-bee-162815.int_cloudControlReporting_v13,methodical-bee-162815.int_coretomation_v13,methodical-bee-162815.int_HREMprivilegedActivityReporting_v13,methodical-bee-162815.int_cyber_vault_feed_v13,methodical-bee-162815.int_cloudPortalReporting_v13,methodical-bee-162815.int_cloudExceptionsPortal_v13,methodical-bee-162815.int_userSessionEnforcerdatasetreaders_v13,methodical-bee-162815.int_ciisReporting_v13",
+                "--dst_project_datasets=methodical-bee-162815.billing_demo,methodical-bee-162815.eimforseti2,methodical-bee-162815.forseti2,methodical-bee-162815.int_configManagementInterface_v1,methodical-bee-162815.int_crypto_v1,methodical-bee-162815.int_dataarch_v1,methodical-bee-162815.int_tomTeam,methodical-bee-162815.int_oceanInterface_v1,methodical-bee-162815.int_cloudControlReporting_v1,methodical-bee-162815.int_coretomation_v1,methodical-bee-162815.int_HREMprivilegedActivityReporting_v1,methodical-bee-162815.int_cyber_vault_feed_v1,methodical-bee-162815.int_cloudPortalReporting_v1,methodical-bee-162815.int_cloudExceptionsPortal_v1,methodical-bee-162815.int_userSessionEnforcerdatasetreaders_v1,methodical-bee-162815.int_ciisReporting_v1",
+                "--src_bucket=methodical-bee-162815-sync-europe-west2",
+                "--dst_bucket=methodical-bee-162815-sync-eu",
+                "--nocopy_data",
+                "--check_depth=-2",
+                "--table_or_views_to_exclude=groupWho,scannerBQHealthStatus,spannerLocationCountry,googleEIMapps_v2,tomViolationsPart[0-9],viewDependencies,resourceBindingsWho,resourceProjectBindingsWho,resourceProjectBindingsWhoPart1,resourceProjectBindingsWhoPart2,projectBindingsTerraformDiff,scannerBQScannerAnalysisCostCheck,assetResource.*SnapShot.*,scannerBQMonitorHealthStatus",
+                "--src_policy_tags=projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/2572262347460850134,projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/6685964027764406218,projects/methodical-bee-162815/locations/europe-west2/taxonomies/2006456733876144867/policyTags/9005551177920275567,projects/methodical-bee-162815/locations/europe-west2/taxonomies/5461573494470443363/policyTags/7053988693320723315,projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/8338932289616530336",
+                "--dst_policy_tags=projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/3606722542516184925,projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/3675951670910694938,projects/methodical-bee-162815/locations/eu/taxonomies/435691315837171807/policyTags/5374226231929759456,projects/methodical-bee-162815/locations/eu/taxonomies/7283348712254483742/policyTags/5639710208888029438,projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/8836294523007043312"
+            ]
+        },
+        {
+            "name": "Python Debugger: bqsync  mq",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/venv-bqsync/bin/bqsync",
+            "console": "integratedTerminal",
+            "args": [
+                "--gcp_logging_monitoring",
+                "--src_project_datasets=methodical-bee-162815.billing_demo3,methodical-bee-162815.eimforseti3,methodical-bee-162815.forseti3",
+                "--dst_project_datasets=methodical-bee-162815.billing_demo,methodical-bee-162815.eimforseti2,methodical-bee-162815.forseti2",
+                "--src_bucket=methodical-bee-162815-sync-europe-west2",
+                "--dst_bucket=methodical-bee-162815-sync-eu",
+                "--copy_data",
+                "--copy_types=TABLE",
+                "--nocopy_access",
+                "--check_depth=-1",
+                "--days_before_latest_day=30",
+                "--table_or_views_to_exclude=groupWho,spannerLocationCountry,googleEIMapps_v2,tomViolationsPart[0-9],viewDependencies,resourceBindingsWho,resourceProjectBindingsWho,resourceProjectBindingsWhoPart1,resourceProjectBindingsWhoPart2,projectBindingsTerraformDiff,scannerBQScannerAnalysisCostCheck,computeinstancesinsert,preemptiblecomputeinstancesinsert,gcpVulns_v3,assetResource.*SnapShot.*",
+                "--src_policy_tags=projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/2572262347460850134,projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/6685964027764406218,projects/methodical-bee-162815/locations/europe-west2/taxonomies/2006456733876144867/policyTags/9005551177920275567,projects/methodical-bee-162815/locations/europe-west2/taxonomies/5461573494470443363/policyTags/7053988693320723315,projects/methodical-bee-162815/locations/europe-west2/taxonomies/8681353232614879771/policyTags/8338932289616530336",
+                "--dst_policy_tags=projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/3606722542516184925,projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/3675951670910694938,projects/methodical-bee-162815/locations/eu/taxonomies/435691315837171807/policyTags/5374226231929759456,projects/methodical-bee-162815/locations/eu/taxonomies/7283348712254483742/policyTags/5639710208888029438,projects/methodical-bee-162815/locations/eu/taxonomies/5322389238527522324/policyTags/8836294523007043312"
+            ]
+        },
+        {
+            "name": "Python: pytest (workspace)",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["-q"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                // Ensure local package source directory is importable when running tests from the workspace root
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
+        },
+        {
+            "name": "Python: pytest (current file)",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${file}", "-q"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src"
+            }
+        },
+        {
+            "name": "Python: Attach",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "port": 5678,
+                "host": "localhost"
+            }
+        }
+    ]
+}
