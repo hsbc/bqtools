@@ -8,7 +8,7 @@
             "name": "Python Debugger: bqsync metadata mq",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/venv-bqsync/bin/bqsync",
+            "program": "${workspaceFolder}/.venv/bin/bqsync",
             "console": "integratedTerminal",
             "args": [
                 "--gcp_logging_monitoring",
@@ -27,7 +27,7 @@
             "name": "Python Debugger: bqsync  mq",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/venv-bqsync/bin/bqsync",
+            "program": "${workspaceFolder}/.venv/bin/bqsync",
             "console": "integratedTerminal",
             "args": [
                 "--gcp_logging_monitoring",
