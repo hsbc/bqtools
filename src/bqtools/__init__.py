@@ -1198,11 +1198,12 @@ class DefaultBQSyncDriver(object):
         aliasdict = {"alias": "", "extrajoinpredicates": ""}
 
         """
-        Use FRAM_FINGERPRINT as hash of each value and then summed
+        Use FARM_FINGERPRINT as hash of each value and then summed
         basically a merkel function
         """
 
         def add_data_check(SCHEMA, prefix=None, depth=0):
+            nonlocal aliasdict  # noqa F824
             if prefix is None:
                 prefix = []
                 # add base table alia
@@ -1216,6 +1217,7 @@ class DefaultBQSyncDriver(object):
 
             for field in SCHEMA:
                 prefix.append(field.name)
+
                 if field.mode != "REPEATED":
                     if self.check_depth >= 0 or (
                         self.check_depth >= -1
@@ -1270,9 +1272,16 @@ class DefaultBQSyncDriver(object):
                             )
                     if field.field_type == "RECORD":
                         SSCHEMA = list(field.fields)
+                        save_alias_dict = aliasdict
+                        aliasdict["alias"] = ".".join(prefix)
+
+                        # save_extra_join_predicates = aliasdict["extrajoinpredicates"]
+                        # aliasdict['extrajoinpredicates'] = ".".join(prefix[:-1])
                         expression_list.extend(
                             add_data_check(SSCHEMA, prefix=prefix, depth=depth)
                         )
+                        # aliasdict["extrajoinpredicates"] = save_extra_join_predicates
+                        aliasdict["alias"] = save_alias_dict["alias"]
                 else:
                     if field.field_type != "RECORD" and (
                         self.check_depth >= 0
@@ -1287,11 +1296,14 @@ class DefaultBQSyncDriver(object):
                         )
                     ):
                         # add the unnestof repeated base type can use own field name
-                        fieldname = "{}{}".format(aliasdict["alias"], field.name)
+
+                        fieldname = "".join(prefix)
                         aliasdict["extrajoinpredicates"] = (
                             """{}
 LEFT JOIN UNNEST(`{}`) AS `{}`""".format(
-                                aliasdict["extrajoinpredicates"], field.name, fieldname
+                                aliasdict["extrajoinpredicates"],
+                                "`.`".join(prefix),
+                                fieldname,
                             )
                         )
                         if field.field_type == "STRING":
@@ -2289,7 +2301,19 @@ def trunc_field_depth(fieldlist, maxdepth, depth=0):
     return new_field
 
 
+def update_schema_fields(schema, new_fields):
+    """
+    Update the fields of a schema with new fields
+    :param schema: schema to update
+    :param new_fields: new fields to add
+    :return: nothing schema is modified in place
+    """
+    schema._properties["fields"] = [field.to_api_repr() for field in new_fields]
+
+
 def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=None):
+    if isinstance(schema, tuple):
+        raise ValueError("Schema passed in cannot be a tuple must be a list")
     pretty_printer = pprint.PrettyPrinter(indent=4)
     poplist = {}
 
@@ -2323,13 +2347,16 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
                             # TODO hack to modify fields as .fields is immutable since version
                             #  0.28 and later but not
                             #  in docs!!
-                            schema_item._fields = list(schema_item.fields)
+                            fields = list(schema_item.fields)
                             tsubevolve = match_and_addtoschema(
                                 listi,
-                                schema_item.fields,
+                                fields,
                                 evolved=evolved,
                                 path=path + "." + thekey,
                             )
+                            if tsubevolve:
+                                # another hack now schem_item._fields has been replaced with getting properties
+                                update_schema_fields(schema_item, fields)
                             if not subevolve and tsubevolve:
                                 subevolve = tsubevolve
                         evolved = subevolve
@@ -2337,10 +2364,12 @@ def match_and_addtoschema(objtomatch, schema, evolved=False, path="", logger=Non
                         # TODO hack to modify fields as .fields is immutable since version 0.28
                         #  and later but not in
                         #  docs!!
-                        schema_item._fields = list(schema_item.fields)
+                        fields = list(schema_item.fields)
                         evolved = match_and_addtoschema(
-                            objtomatch[keyi], schema_item.fields, evolved=evolved
+                            objtomatch[keyi], fields, evolved=evolved
                         )
+                        if evolved:
+                            update_schema_fields(schema_item, fields)
                 matchstruct = True
                 break
         if matchstruct:
