@@ -298,6 +298,8 @@ def main(argv):
 
     logging.basicConfig(stream=sys.stdout, level=loglevel)
 
+    cloud_logging_client = None
+
     # if cloud logging is set
     # TBD:This uses httplib2 which ignore env variable :-(
     # so to work behind proxy a transport is required
@@ -306,8 +308,8 @@ def main(argv):
     # on compute host with no proxy so I don't have an urgent need to
     # resolve this issue
     if FLAGS.gcp_logging_monitoring:
-        client = google.cloud.logging.Client()
-        handler = CloudLoggingHandler(client, name="bqsync")
+        cloud_logging_client = google.cloud.logging.Client()
+        handler = CloudLoggingHandler(cloud_logging_client, name="bqsync")
         cloud_logger = logging.getLogger()
         cloud_logger.setLevel(loglevel)
         cloud_logger.addHandler(handler)
@@ -354,6 +356,10 @@ def main(argv):
         or multi_bq_copy.models_failed_sync > 0
     ):
         exitcode = -1
+
+    if cloud_logging_client is not None:
+        cloud_logging_client.flush()
+        cloud_logging_client.close()
 
     sys.exit(exitcode)
 
