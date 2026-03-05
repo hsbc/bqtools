@@ -15,6 +15,7 @@ import google.cloud.logging
 from absl import app
 from absl import flags
 from google.cloud.logging.handlers import CloudLoggingHandler
+from google.cloud.logging.handlers import StructuredLogHandler
 
 import bqtools
 
@@ -80,6 +81,12 @@ flags.DEFINE_bool(
     True,
     """Default is True bqsync will copy data if set to False will only copy 
 schemas""",
+)
+
+flags.DEFINE_bool(
+    "structured_logging",
+    False,
+    """Default is False bqsync uses google structured logger for output""",
 )
 
 flags.DEFINE_list(
@@ -313,6 +320,11 @@ def main(argv):
         cloud_logger = logging.getLogger()
         cloud_logger.setLevel(loglevel)
         cloud_logger.addHandler(handler)
+
+    # structured logging used for parsing in service like cloud run
+    if FLAGS.structured_logging:
+        cloud_logging_handler = StructuredLogHandler()
+        logging.getLogger().addHandler(cloud_logging_handler)
 
     # set up sync
     multi_bq_copy = bqtools.MultiBQSyncCoordinator(
