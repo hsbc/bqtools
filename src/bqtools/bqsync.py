@@ -15,6 +15,8 @@ import google.cloud.logging
 from absl import app
 from absl import flags
 from google.cloud.logging.handlers import CloudLoggingHandler
+from google.cloud.logging.handlers import StructuredLogHandler
+from google.cloud.logging_v2.handlers.transports import SyncTransport
 
 import bqtools
 
@@ -198,6 +200,9 @@ This list and the dst_policy_tags MUST be the same length.""",
 def main(argv):
     del argv  # Unused.
 
+    cloud_logging_client = None
+    cloud_logging_handler = None
+
     # always do this if asked as soon as possible
     if FLAGS.version:
         print("Version:{}".format(bqtools.__version__))
@@ -305,55 +310,83 @@ def main(argv):
     # but based on demand will fix in general I am running bqsync
     # on compute host with no proxy so I don't have an urgent need to
     # resolve this issue
-    if FLAGS.gcp_logging_monitoring:
-        client = google.cloud.logging.Client()
-        handler = CloudLoggingHandler(client, name="bqsync")
-        cloud_logger = logging.getLogger()
-        cloud_logger.setLevel(loglevel)
-        cloud_logger.addHandler(handler)
-
-    # set up sync
-    multi_bq_copy = bqtools.MultiBQSyncCoordinator(
-        src_project_datasets_list,
-        dst_project_datasets_list,
-        FLAGS.src_bucket,
-        FLAGS.dst_bucket,
-        FLAGS.remove_deleted_tables,
-        FLAGS.copy_data,
-        FLAGS.copy_types,
-        check_depth=FLAGS.check_depth,
-        table_view_filter=FLAGS.table_or_views_to_copy,
-        table_or_views_to_exclude=FLAGS.table_or_views_to_exclude,
-        latest_date=latest_date,
-        copy_access=FLAGS.copy_access,
-        days_before_latest_day=FLAGS.days_before_latest_day,
-        day_partition_deep_check=FLAGS.do_day_partition_deep_check,
-        analysis_project=FLAGS.analysis_project,
-        cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring,
-        src_ref_project_datasets=FLAGS.src_ref_project_datasets,
-        dst_ref_project_datasets=FLAGS.dst_ref_project_datasets,
-        query_cmek=FLAGS.query_cmek,
-        src_policy_tags=FLAGS.src_policy_tags,
-        dst_policy_tags=FLAGS.dst_policy_tags,
-    )
-
-    multi_bq_copy.logger = logging
-
-    # actually do the sync
-    multi_bq_copy.sync()
-
     exitcode = 0
+    try:
+        if FLAGS.gcp_logging_monitoring:
+            # When available, and always flush/close explicitly at the end
+            try:
+                # Structured logs to stdout are natively captured by cloud run/cloud logging.
+                cloud_logging_handler = StructuredLogHandler()
+            except Exception:
+                cloud_logging_client = google.cloud.logging.Client()
+                try:
+                    cloud_logging_handler = CloudLoggingHandler(cloud_logging_client, name="bqsync", transports=SyncTransport)
+                except Exception:
+                    cloud_logging_handler = CloudLoggingHandler(cloud_logging_client, name="bqsync")
+            cloud_logger = logging.getLogger()
+            cloud_logger.setLevel(loglevel)
+            cloud_logger.addHandler(cloud_logging_handler)
+            
+        # set up sync
+        multi_bq_copy = bqtools.MultiBQSyncCoordinator(
+            src_project_datasets_list,
+            dst_project_datasets_list,
+            FLAGS.src_bucket,
+            FLAGS.dst_bucket,
+            FLAGS.remove_deleted_tables,
+            FLAGS.copy_data,
+            FLAGS.copy_types,
+            check_depth=FLAGS.check_depth,
+            table_view_filter=FLAGS.table_or_views_to_copy,
+            table_or_views_to_exclude=FLAGS.table_or_views_to_exclude,
+            latest_date=latest_date,
+            copy_access=FLAGS.copy_access,
+            days_before_latest_day=FLAGS.days_before_latest_day,
+            day_partition_deep_check=FLAGS.do_day_partition_deep_check,
+            analysis_project=FLAGS.analysis_project,
+            cloud_logging_and_monitoring=FLAGS.gcp_logging_monitoring,
+            src_ref_project_datasets=FLAGS.src_ref_project_datasets,
+            dst_ref_project_datasets=FLAGS.dst_ref_project_datasets,
+            query_cmek=FLAGS.query_cmek,
+            src_policy_tags=FLAGS.src_policy_tags,
+            dst_policy_tags=FLAGS.dst_policy_tags,
+        )
 
-    if (
-        multi_bq_copy.tables_failed_sync > 0
-        or multi_bq_copy.views_failed_sync > 0
-        or multi_bq_copy.extract_fails > 0
-        or multi_bq_copy.load_fails > 0
-        or multi_bq_copy.copy_fails > 0
-        or multi_bq_copy.routines_failed_sync > 0
-        or multi_bq_copy.models_failed_sync > 0
-    ):
+        multi_bq_copy.logger = logging
+
+        # actually do the sync
+        multi_bq_copy.sync()
+
+        # exitcode = 0
+
+        if (
+            multi_bq_copy.tables_failed_sync > 0
+            or multi_bq_copy.views_failed_sync > 0
+            or multi_bq_copy.extract_fails > 0
+            or multi_bq_copy.load_fails > 0
+            or multi_bq_copy.copy_fails > 0
+            or multi_bq_copy.routines_failed_sync > 0
+            or multi_bq_copy.models_failed_sync > 0
+        ):
+            exitcode = -1
+    except Exception as e:
+        logging.exception("Unhandled excpetion running bqsync: " + {str(e)})
         exitcode = -1
+    finally:
+        if cloud_logging_handler is not None:
+            try:
+                cloud_logging_handler.flush()
+            except Exception:
+                pass
+            try:
+                cloud_logging_handler.close()
+            except Exception:
+                pass
+        if cloud_logging_client is not None:
+            try:
+                cloud_logging_client.close()
+            except Exception:
+                pass
 
     sys.exit(exitcode)
 
