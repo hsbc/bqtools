@@ -1,3 +1,15 @@
+1.0.11 Mar 5 2026
+- Drop python 3.9
+- When using cloud logging flush and close the log before exit
+
+1.0.10 Oct 18 2025
+- Handle older versions of bigquery libraries
+
+1.0.9 Oct 18 2025
+
+- Fix bqsync for nested primitive arrays fix copy logic for unnests. Also handle possible clashe sin field names by using flattend wrapped field paths.
+- Fix issues where how fields in schem in tables can be mutated as changed from using underling property ._fields to ._properties["fields"] this would cause match_and_add_to_schema tests also to fail.
+
 1.0.7 Aug 25 2024
 - Add support for table functions
 - Add support for complex arguments and return types for routines when have to drop back to SQL mode
