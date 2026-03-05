@@ -1,3 +1,7 @@
+1.0.12 Mar 5 2026
+- Add support to bqsync for structured logs suitable for us ein cloud run 
+
+
 1.0.11 Mar 5 2026
 - Drop python 3.9
 - When using cloud logging flush and close the log before exit
