@@ -5567,9 +5567,10 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                     except UnboundLocalError:
                         pass
                 finally:
-                    client.close()
-                except Exception:
-                    pass
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
             # set worker for small 1 is good enough as volume grows cap the max
             # grows dynamically up to 100 then caps at 20
