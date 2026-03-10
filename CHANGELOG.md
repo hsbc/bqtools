@@ -1,3 +1,6 @@
+1.0.13 Mar 10 2026
+- Update scripts to reuse storage client to avoid connection limit
+
 1.0.12 Mar 5 2026
 - Add support to bqsync for structured logs suitable for us ein cloud run 
 
