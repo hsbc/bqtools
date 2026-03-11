@@ -368,9 +368,10 @@ def main(argv):
         or multi_bq_copy.models_failed_sync > 0
     ):
         exitcode = -1
-
+        
+    if handler is not None:
+        handler.flush()
     if cloud_logging_client is not None:
-        cloud_logging_client.flush()
         cloud_logging_client.close()
 
     sys.exit(exitcode)
