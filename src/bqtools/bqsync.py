@@ -369,8 +369,9 @@ def main(argv):
     ):
         exitcode = -1
 
+    if handler is not None:
+        handler.flush()
     if cloud_logging_client is not None:
-        cloud_logging_client.flush()
         cloud_logging_client.close()
 
     sys.exit(exitcode)

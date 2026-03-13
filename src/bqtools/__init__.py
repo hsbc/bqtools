@@ -5499,11 +5499,11 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                 bytes_rewritten = 0
                 retry = True
                 loop = 0
-
+                # Move this client outside the retry logic to reuse the connection and avoid hitting connection limits. The client will be closed at the end.
+                client = storage.Client(project=copy_driver.source_project)
                 while retry:
                     retry = False
-                    try:
-                        client = storage.Client(project=copy_driver.source_project)
+                    try:                      
 
                         src_bucket = client.get_bucket(copy_driver.source_bucket)
                         dst_bucket = client.get_bucket(copy_driver.destination_bucket)
@@ -5566,6 +5566,11 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                         src_blob.delete()
                     except UnboundLocalError:
                         pass
+
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
             # set worker for small 1 is good enough as volume grows cap the max
             # grows dynamically up to 100 then caps at 20
