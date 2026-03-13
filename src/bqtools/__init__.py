@@ -5566,7 +5566,7 @@ def cross_region_copy(copy_driver, table_name, export_import_type, partition_pat
                         src_blob.delete()
                     except UnboundLocalError:
                         pass
-   
+
                 try:
                     client.close()
                 except Exception:
